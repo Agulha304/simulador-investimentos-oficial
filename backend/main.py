@@ -15,6 +15,7 @@ from backend.services.asset_catalog import seed_assets
 from backend.workers.scheduler import shutdown_scheduler, start_scheduler
 
 settings = get_settings()
+settings.check_production()
 setup_logging(settings.log_level)
 log = logging.getLogger("backend")
 

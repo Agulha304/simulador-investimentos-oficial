@@ -3,6 +3,7 @@ from decimal import Decimal
 from functools import lru_cache
 from pathlib import Path
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -10,6 +11,9 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=ROOT_DIR / ".env", extra="ignore")
+
+    # "production" liga as checagens de segurança de check_production() (segredo JWT forte etc.)
+    environment: str = "development"
 
     database_url: str = "postgresql+psycopg://simulador@localhost:5433/simulador"
     test_database_url: str = "postgresql+psycopg://simulador@localhost:5433/simulador_test"
@@ -30,6 +34,27 @@ class Settings(BaseSettings):
 
     cors_origins: str = "http://localhost:5173"
     log_level: str = "INFO"
+
+    @field_validator("database_url", "test_database_url", mode="before")
+    @classmethod
+    def _use_psycopg_driver(cls, v):
+        """Provedores (Render, Neon, Railway...) entregam postgres:// ou postgresql://; o SQLAlchemy precisa do driver."""
+        if isinstance(v, str):
+            for prefix in ("postgres://", "postgresql://"):
+                if v.startswith(prefix):
+                    return "postgresql+psycopg://" + v[len(prefix):]
+        return v
+
+    def check_production(self) -> None:
+        """Em produção, recusa subir com configuração insegura."""
+        if self.environment.lower() != "production":
+            return
+        weak = {"dev-secret-change-me", "troque-este-valor", ""}
+        if self.jwt_secret in weak or len(self.jwt_secret) < 32:
+            raise RuntimeError("JWT_SECRET fraco ou padrão: defina um segredo aleatório com 32+ caracteres "
+                               "(python -c \"import secrets; print(secrets.token_urlsafe(48))\").")
+        if "localhost" in self.database_url or "127.0.0.1" in self.database_url:
+            raise RuntimeError("DATABASE_URL aponta para localhost em produção.")
 
     @property
     def cors_origin_list(self) -> list[str]:

@@ -1,0 +1,14 @@
+.env
+.venv
+.pgdata
+.tools
+.git
+.wrangler
+node_modules
+frontend
+worker
+tests
+docs
+__pycache__
+*.pyc
+.pytest_cache

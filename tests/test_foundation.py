@@ -60,3 +60,25 @@ def test_money_helpers():
     assert to_decimal(0.1) + to_decimal(0.2) == Decimal("0.3")
     assert quantize_money(Decimal("2.345")) == Decimal("2.34")   # half-even
     assert quantize_quantity(Decimal("500") / Decimal("500000")) == Decimal("0.001")
+
+
+# ------------------------------------------------------------------ configuração para produção
+
+def test_database_url_gets_the_psycopg_driver():
+    from backend.config import Settings
+    assert Settings(database_url="postgres://u:p@db.example.com/app").database_url == "postgresql+psycopg://u:p@db.example.com/app"
+    assert Settings(database_url="postgresql://u:p@db.example.com/app?sslmode=require").database_url == \
+        "postgresql+psycopg://u:p@db.example.com/app?sslmode=require"
+    ready = "postgresql+psycopg://u:p@h/db"
+    assert Settings(database_url=ready).database_url == ready
+
+
+def test_production_refuses_weak_configuration():
+    from backend.config import Settings
+    good = dict(environment="production", jwt_secret="x" * 40, database_url="postgresql://u:p@db.example.com/app")
+    Settings(**good).check_production()                                           # configuração boa passa
+    for bad in ({"jwt_secret": "dev-secret-change-me"}, {"jwt_secret": "curto"}, {"jwt_secret": ""},
+                {"database_url": "postgresql://u:p@localhost/app"}):
+        with pytest.raises(RuntimeError):
+            Settings(**{**good, **bad}).check_production()
+    Settings(environment="development", jwt_secret="dev-secret-change-me").check_production()   # dev não é barrado

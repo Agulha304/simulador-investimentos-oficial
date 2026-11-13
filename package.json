@@ -1,0 +1,14 @@
+{
+  "name": "simulador-investimentos",
+  "private": true,
+  "version": "0.9.0",
+  "description": "Raiz do projeto: scripts e dependências para publicar o frontend no Cloudflare. O app React está em frontend/.",
+  "scripts": {
+    "build": "npm ci --prefix frontend && npm run build --prefix frontend",
+    "deploy": "wrangler deploy",
+    "cf:dev": "wrangler dev"
+  },
+  "devDependencies": {
+    "wrangler": "^4.162.0"
+  }
+}

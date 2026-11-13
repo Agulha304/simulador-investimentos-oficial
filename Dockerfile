@@ -1,0 +1,18 @@
+# Backend do Simulador de Investimentos (FastAPI + workers APScheduler no mesmo processo).
+# Rode UMA instância só: os workers (stop loss, proventos, renda fixa, snapshots) vivem dentro do app.
+FROM python:3.12-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    ENVIRONMENT=production
+
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install -r requirements.txt
+
+COPY alembic.ini .
+COPY backend backend
+
+# a maioria dos hosts define $PORT; as migrations rodam antes de abrir a porta
+CMD ["sh", "-c", "alembic upgrade head && exec uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-8000}"]

@@ -13,8 +13,10 @@ __pycache__/
 # Ferramentas locais (Node portátil)
 .tools/
 
+# Dependências (raiz e frontend)
+node_modules/
+
 # Frontend
-frontend/node_modules/
 frontend/dist/
 
 # Editor / SO
@@ -23,3 +25,7 @@ frontend/dist/
 *:Zone.Identifier
 .DS_Store
 frontend/*.tsbuildinfo
+
+# Cloudflare / Wrangler
+.wrangler/
+.dev.vars
