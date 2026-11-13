@@ -50,6 +50,10 @@ class BCBProvider:
         for _ in range(3):
             try:
                 r = httpx.get(self.URL.format(code=self.SERIES[name]), params=params, timeout=30.0)
+                if r.status_code == 404:          # o SGS responde 404 quando não há valores no intervalo
+                    return []
+                if 400 <= r.status_code < 500 and r.status_code != 429:
+                    raise IndexDataUnavailable(f"{name}: consulta recusada pelo Banco Central ({r.status_code})")
                 r.raise_for_status()
                 out = []
                 for row in r.json():
@@ -77,6 +81,8 @@ def sync(db: Session, today: date, names: list[IndexName] | None = None, history
         start = (last + timedelta(days=1)) if last else today - timedelta(days=365 * history_years)
         if name in MONTHLY and last:
             start = last                       # o último mês pode ter sido revisado/ainda incompleto
+        if start > today:                      # já estamos em dia: nada a consultar
+            continue
         try:
             rows = _provider.fetch(name, start, today)
         except IndexDataUnavailable as exc:

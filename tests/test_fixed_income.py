@@ -378,3 +378,43 @@ def test_scheduler_registers_fixed_income_jobs():
         assert {"fixed_income_sync", "fixed_income_events"} <= {j.id for j in sch.get_jobs()}
     finally:
         shutdown_scheduler()
+
+
+# ------------------------------------------------------------------ fonte de índices (Banco Central)
+
+def test_index_sync_skips_the_query_when_already_up_to_date(client, db, _fake_fixed_income_sources):
+    from backend.models import IndexName, IndexRate
+    idx_provider, _ = _fake_fixed_income_sources
+    index_data.sync(db, TODAY)
+    last = db.scalar(select(func.max(IndexRate.ref_date)).where(IndexRate.index_name == IndexName.CDI))
+    calls = []
+    original = idx_provider.fetch
+    idx_provider.fetch = lambda name, start, end: (calls.append((name, start, end)), original(name, start, end))[1]
+    index_data.sync(db, last)                                   # "hoje" = último dado já gravado
+    assert [c for c in calls if c[0] in (IndexName.CDI, IndexName.SELIC)] == []          # sem consulta com início > fim
+    assert all(start <= end for _, start, end in calls)
+
+
+def test_bcb_provider_treats_no_data_as_empty_and_does_not_retry_client_errors(monkeypatch):
+    import httpx
+    hits = []
+
+    def fake_get(status):
+        def _get(*a, **k):
+            hits.append(status)
+            return httpx.Response(status, json=[], request=httpx.Request("GET", "http://bcb.test"))
+        return _get
+
+    provider = index_data.BCBProvider()
+    monkeypatch.setattr(index_data.httpx, "get", fake_get(404))
+    assert provider.fetch(index_data.IndexName.CDI, TODAY, TODAY) == []
+    monkeypatch.setattr(index_data.httpx, "get", fake_get(400))
+    hits.clear()
+    with pytest.raises(index_data.IndexDataUnavailable):
+        provider.fetch(index_data.IndexName.SELIC, TODAY, TODAY)
+    assert hits == [400]                                         # erro do cliente: uma tentativa só
+    monkeypatch.setattr(index_data.httpx, "get", fake_get(500))
+    hits.clear()
+    with pytest.raises(index_data.IndexDataUnavailable):
+        provider.fetch(index_data.IndexName.CDI, TODAY, TODAY)
+    assert hits == [500, 500, 500]                               # erro do servidor: tenta de novo

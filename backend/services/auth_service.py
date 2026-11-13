@@ -45,6 +45,12 @@ def register_user(db: Session, *, email: str, name: str, password: str) -> User:
     )
     db.commit()
     db.refresh(user)
+    try:                                   # o novo usuário já aparece no ranking e no gráfico de evolução
+        from backend.services import performance_service, portfolio_service
+        performance_service.take_snapshot(db, portfolio_service.load_portfolio(db, portfolio.id))
+    except Exception:
+        db.rollback()
+        log.exception("snapshot inicial não registrado (carteira %s)", portfolio.id)
     log.info("usuário criado id=%s portfolio=%s", user.id, portfolio.id)
     return user
 

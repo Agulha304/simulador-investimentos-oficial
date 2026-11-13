@@ -7,6 +7,9 @@ const NAV = [
   { to: "/mercado", label: "Mercado", ready: true },
   { to: "/carteira", label: "Carteira", ready: true },
   { to: "/renda-fixa", label: "Renda Fixa", ready: true },
+  { to: "/desempenho", label: "Desempenho", ready: true },
+  { to: "/ranking", label: "Ranking", ready: true },
+  { to: "/aulas", label: "Aulas", ready: true },
   { to: "/historico", label: "Histórico", ready: true },
 ];
 

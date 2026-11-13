@@ -1,16 +1,20 @@
-import { useEffect, useState } from "react";
+import { Suspense, lazy, useEffect, useState } from "react";
 import { StatCard } from "../components/StatCard";
-import { api, type PortfolioSummary, type Transaction } from "../services/api";
+import { api, type Performance, type PortfolioSummary, type Transaction } from "../services/api";
 import { useAuth } from "../services/auth";
 import { fmtBRL, fmtDate, fmtPct, fmtQty, TX_LABEL, trend } from "../lib/format";
+
+const EquityChart = lazy(() => import("../components/charts/PerfCharts").then((m) => ({ default: m.EquityChart })));
 
 export function DashboardPage() {
   const { user } = useAuth();
   const [data, setData] = useState<PortfolioSummary | null>(null);
   const [txs, setTxs] = useState<Transaction[]>([]);
+  const [perf, setPerf] = useState<Performance | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    api.performance("7d").then(setPerf).catch(() => undefined);      // o gráfico é um extra: não bloqueia o painel
     Promise.all([api.portfolio(), api.transactions(10)])
       .then(([p, t]) => { setData(p); setTxs(t); })
       .catch((e: Error) => setError(e.message));
@@ -37,6 +41,8 @@ export function DashboardPage() {
         <StatCard label="Renda fixa (líquido est.)" value={fmtBRL(data.fixed_income_value_brl)} sub={`aplicado ${fmtBRL(data.fixed_income_invested_brl)}`} />
         <StatCard label="Lucro / prejuízo" value={fmtBRL(data.pnl_brl)} sub={fmtPct(data.pnl_pct)} tone={pnlTone} />
       </section>
+
+      {perf && <Suspense fallback={<div className="card muted">Carregando gráfico…</div>}><EquityChart points={perf.series} /></Suspense>}
 
       <section className="card">
         <h2>Ativos da carteira</h2>

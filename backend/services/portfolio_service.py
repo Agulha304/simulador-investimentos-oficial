@@ -47,6 +47,13 @@ def get_portfolio_for_user(db: Session, user_id: int) -> Portfolio:
     ).scalar_one()
 
 
+def load_portfolio(db: Session, portfolio_id: int) -> Portfolio:
+    return db.execute(
+        select(Portfolio).where(Portfolio.id == portfolio_id)
+        .options(selectinload(Portfolio.holdings).selectinload(Holding.asset))
+    ).scalar_one()
+
+
 def _pct(part: Decimal, whole: Decimal) -> Decimal | None:
     if whole == 0:
         return None

@@ -20,6 +20,12 @@ ações, ETFs, FIIs, REITs, criptomoedas e renda fixa (Tesouro Direto, CDB, LCI,
 - **Proventos:** dividendos, rendimentos de FIIs e distribuições de REITs/ETFs, com direito reconstruído pelas transações.
 - **Renda fixa:** Tesouro Direto (dados reais), CDB, LCI, LCA, CRI, CRA e debêntures, com simulação, resgate antecipado,
   cupons, vencimento, IR regressivo e IOF.
+- **Aulas:** 7 módulos e 29 aulas (fundamentos, renda fixa, ações, ETFs/FIIs/REITs, cripto, análise técnica, gestão de risco),
+  cada uma com exemplos, ligação com as telas do simulador e um quiz corrigido no servidor. Progresso, pontos e nível por usuário.
+- **Desempenho:** evolução do patrimônio, rentabilidade contra o CDI, queda desde o pico, composição da carteira, resultado por mês,
+  estatísticas das operações (acerto, ganho/perda médios, fator de lucro), nota de diversificação, disciplina, conquistas e dicas
+  que apontam para a aula certa.
+- **Ranking:** "mais ricos" e "maior rentabilidade", no geral, 30 e 7 dias, com apelido e opção de ocultar-se.
 
 ## Stack
 
@@ -52,7 +58,7 @@ scripts/dev.sh                  # Postgres local (porta 5433) + migrations + bac
 
 ```bash
 scripts/dev_db.sh start
-.venv/bin/pytest -q                       # 103 testes, sem rede (fontes de dados falsas)
+.venv/bin/pytest -q                       # 143 testes, sem rede (fontes de dados falsas)
 (cd frontend && npm run typecheck)
 ```
 
@@ -76,6 +82,22 @@ tests/         pytest (banco simulador_test)
 Serviços principais: `ledger_service` (único ponto que altera o saldo), `trading_service`, `market_data` (fonte isolada),
 `indicators`, `risk_service` (SL/TP), `distribution_service`, `tax_service`, `index_data` e `treasury_data` (fontes
 isoladas), `fixed_income_math` (contas puras), `fixed_income_catalog`, `fixed_income_service`.
+
+## Aulas, Desempenho e Ranking
+
+- **Conteúdo das aulas** fica em `backend/content/` (um arquivo por módulo, texto em blocos tipados). Os quizzes são corrigidos em
+  `learn_service`: o gabarito só é revelado depois da tentativa. Testes verificam a integridade do conteúdo (ids, quizzes, links).
+- **Snapshots do patrimônio:** uma foto por hora e por carteira (`portfolio_snapshots`), registrada por worker (30 min), no cadastro e
+  sob demanda ao abrir Desempenho/Ranking. Se faltar cotação de alguma posição, a foto é adiada para não registrar uma queda falsa.
+  O gráfico de evolução começa na data do primeiro registro: **não há reconstrução histórica** do patrimônio.
+- **Patrimônio do ranking e do desempenho** = patrimônio − aportes virtuais extras. Depositar mais saldo fictício não vira lucro nem
+  sobe no ranking; o ponto de partida é o saldo inicial do cadastro. As estatísticas de operações vêm do livro-razão e existem desde o
+  primeiro dia.
+- **Privacidade:** o ranking mostra apenas apelido (padrão: primeiro nome + inicial do sobrenome), nunca e-mail ou id. O usuário pode
+  mudar o apelido ou sair do ranking.
+- **Gráficos** (Recharts) seguem um guia de visualização: cores validadas contra o fundo do app (azul e laranja passam nos testes de
+  daltonismo), grade recessiva, composição em barras ordenadas (sem pizza), sinal de ganho/perda também por direção e ▲/▼ (nunca só
+  por cor) e uma visão em tabela de cada gráfico.
 
 ## Decisões de arquitetura
 
@@ -110,6 +132,7 @@ isoladas), `fixed_income_math` (contas puras), `fixed_income_catalog`, `fixed_in
 | `distribution_pay` | 15 min | paga proventos cuja data chegou |
 | `fixed_income_sync` | 6 h | índices (BCB), Tesouro Direto, desativa vencidos, reprecifica exemplos |
 | `fixed_income_events` | 15 min | paga cupons e vencimentos |
+| `performance_snapshot` | 30 min | registra a foto horária do patrimônio de todas as carteiras |
 
 ## Renda fixa: regras e simplificações
 
@@ -134,6 +157,7 @@ isoladas), `fixed_income_math` (contas puras), `fixed_income_catalog`, `fixed_in
 - A data de pagamento de proventos é **estimada** (a fonte só informa a data EX).
 - O Yahoo Finance não é oficial; se bloquear, as telas mostram "indisponível" e as operações são recusadas, sem quebrar.
 - Edição de desenhos limita-se a selecionar e excluir (não há arrastar de pontos).
+- O gráfico de patrimônio só tem pontos a partir do cadastro (ou da primeira visita à aba Desempenho, para contas antigas).
 - Interface testada por tipos, build e chamadas reais à API; não há testes automatizados de navegador.
 
 ## Roadmap
@@ -146,3 +170,4 @@ isoladas), `fixed_income_math` (contas puras), `fixed_income_catalog`, `fixed_in
 - [x] Fase 6: Proventos
 - [x] Fase 7: Cripto, FIIs, REITs e ETFs
 - [x] Fase 8: Renda fixa
+- [x] Extra: abas Aulas, Desempenho e Ranking

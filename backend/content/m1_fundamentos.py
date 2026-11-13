@@ -1,0 +1,87 @@
+from backend.content.schema import Lesson, Module, Q
+
+DISCLAIMER = ("warn", "Conteúdo educacional. Não é recomendação de investimento. Regras e taxas mudam: confirme sempre a legislação vigente.")
+
+MODULE = Module(
+    id="m1", title="Primeiros passos", level="Iniciante",
+    description="Por que investir, como os juros compostos trabalham a seu favor e como funcionam risco, retorno e liquidez.",
+    lessons=(
+        Lesson("m1-l1", "Por que investir?", 6, "Inflação, poder de compra e o que é ganho real.", (
+            ("p", "Guardar dinheiro e **investir** dinheiro são coisas diferentes. Dinheiro parado na conta perde **poder de compra** com o tempo por causa da inflação: os preços sobem e o mesmo valor compra cada vez menos."),
+            ("h", "O que é inflação"),
+            ("p", "No Brasil, a inflação oficial é medida pelo **IPCA** (IBGE). Se o IPCA do ano é 5%, algo que custava R$ 100 passa a custar R$ 105. Para manter o poder de compra, seu dinheiro precisa render pelo menos 5%. O que sobra acima disso é o **ganho real**."),
+            ("formula", "Ganho real ≈ (1 + rendimento) ÷ (1 + inflação) − 1"),
+            ("table", ["Onde está o dinheiro", "Rendimento no ano", "Inflação", "Ganho real"], [
+                ["Conta corrente (sem rendimento)", "0%", "5%", "−4,8%"],
+                ["Aplicação que rende 10%", "10%", "5%", "+4,8%"],
+                ["Aplicação que rende 15%", "15%", "5%", "+9,5%"]]),
+            ("h", "Para que investir"),
+            ("ul", ["**Reserva de emergência:** de 3 a 12 meses de despesas, em algo seguro e de resgate rápido.",
+                    "**Objetivos de curto e médio prazo:** viagem, carro, entrada de um imóvel.",
+                    "**Longo prazo:** aposentadoria e independência financeira, onde o tempo trabalha a seu favor."]),
+            ("tip", "Neste simulador você começa com R$ 100.000 virtuais. Na aba Desempenho você compara seu resultado com o CDI, o rendimento de referência da renda fixa."),
+            ("sim", "/renda-fixa", "Ver produtos de renda fixa"), DISCLAIMER),
+            (Q("Seu dinheiro rende 4% ao ano e a inflação é de 6% ao ano. O que acontece com seu poder de compra?",
+               ["Aumenta", "Diminui", "Fica igual", "Depende do banco"], 1, "Rendimento abaixo da inflação significa ganho real negativo: você compra menos do que antes."),
+             Q("O que é ganho real?", ["O rendimento depois de descontar a inflação", "O rendimento bruto antes do imposto", "O lucro de uma venda na bolsa", "O valor protegido pelo FGC"], 0,
+               "Ganho real é o quanto seu dinheiro rendeu acima da inflação."),
+             Q("Qual é um bom primeiro passo antes de investir em ativos de maior risco?", ["Apostar em um ativo que subiu muito", "Formar uma reserva de emergência em algo seguro e líquido", "Pegar dinheiro emprestado", "Esperar o mercado cair"], 1,
+               "A reserva evita que você precise vender investimentos de risco na hora errada para cobrir uma emergência."))),
+
+        Lesson("m1-l2", "Juros compostos", 7, "Juros sobre juros: por que o tempo é o ingrediente mais importante.", (
+            ("p", "Nos **juros simples**, o rendimento incide sempre sobre o valor inicial. Nos **juros compostos**, os juros de cada período passam a render também: é o efeito \"bola de neve\"."),
+            ("formula", "Valor final = Capital × (1 + taxa)^tempo"),
+            ("p", "Com R$ 1.000 a 10% ao ano, em juros simples você teria R$ 2.000 após 10 anos. Em juros compostos, R$ 2.593,74."),
+            ("table", ["Anos", "Valor de R$ 1.000 a 10% a.a. (compostos)"], [["5", "R$ 1.610,51"], ["10", "R$ 2.593,74"], ["20", "R$ 6.727,50"], ["30", "R$ 17.449,40"]]),
+            ("h", "A regra dos 72"),
+            ("p", "Um atalho para estimar em quanto tempo o dinheiro dobra: divida 72 pela taxa anual (em %). A 12% ao ano, dobra em cerca de 6 anos; a 6%, em cerca de 12."),
+            ("formula", "Anos para dobrar ≈ 72 ÷ taxa anual (%)"),
+            ("h", "O poder dos aportes mensais"),
+            ("p", "Investir R$ 500 por mês a 0,8% ao mês (cerca de 10% ao ano) por 10 anos soma R$ 60 mil aportados, mas o saldo passa de **R$ 100 mil**. Quanto mais cedo você começa, mais tempo os juros têm para trabalhar."),
+            ("warn", "O efeito também vale ao contrário: dívidas com juros altos (cartão de crédito, cheque especial) crescem em bola de neve contra você."),
+            ("tip", "Na simulação de renda fixa, o simulador mostra o valor líquido no vencimento com juros compostos reais, em dias úteis (base 252)."),
+            ("sim", "/renda-fixa", "Simular uma aplicação")),
+            (Q("R$ 1.000 a 10% ao ano em juros compostos por 2 anos viram:", ["R$ 1.200", "R$ 1.210", "R$ 1.100", "R$ 1.020"], 1, "1.000 × 1,10 × 1,10 = R$ 1.210. Os juros do 2º ano incidem sobre R$ 1.100."),
+             Q("Pela regra dos 72, a 12% ao ano o dinheiro dobra em cerca de:", ["3 anos", "8 anos", "12 anos", "6 anos"], 3, "72 ÷ 12 = 6 anos."),
+             Q("O que mais potencializa os juros compostos?", ["Tempo investido e aportes regulares", "Trocar de ativo toda semana", "Evitar aportes", "Escolher só ativos famosos"], 0, "Quanto mais tempo e mais aportes, maior a base sobre a qual os juros incidem."))),
+
+        Lesson("m1-l3", "Risco, retorno e liquidez", 6, "O triângulo que está por trás de toda decisão de investimento.", (
+            ("p", "Todo investimento equilibra três coisas: **retorno** (quanto pode render), **risco** (chance de perder ou render menos que o esperado) e **liquidez** (rapidez para transformar em dinheiro sem grande perda). Em geral, não existe investimento com muito retorno, nenhum risco e liquidez total."),
+            ("h", "Principais tipos de risco"),
+            ("ul", ["**Mercado:** o preço do ativo oscila (ações, cripto, fundos).",
+                    "**Crédito:** o emissor não pagar o que prometeu (empresas, bancos).",
+                    "**Liquidez:** dificuldade de vender sem aceitar um preço muito menor.",
+                    "**Inflação:** o rendimento não acompanhar os preços.",
+                    "**Câmbio:** variação do dólar em ativos internacionais.",
+                    "**Concentração:** colocar tudo em poucos ativos."]),
+            ("table", ["Investimento", "Risco", "Retorno esperado", "Liquidez"], [
+                ["Tesouro Selic", "Muito baixo", "Segue a Selic", "Diária"],
+                ["CDB de banco", "Baixo", "Perto do CDI", "Varia: diária ou no vencimento"],
+                ["Debêntures e CRI/CRA", "Médio", "Acima do CDI", "Baixa"],
+                ["Ações e FIIs", "Alto", "Variável", "Alta (mas o preço oscila)"],
+                ["Criptomoedas", "Muito alto", "Muito variável", "Alta (24 horas)"]]),
+            ("tip", "Seu **perfil de investidor** (conservador, moderado ou arrojado) depende de quanto de oscilação você tolera e do prazo do seu objetivo. Quanto mais curto o prazo, menos risco faz sentido."),
+            ("sim", "/mercado", "Explorar ativos por classe"), DISCLAIMER),
+            (Q("Liquidez é:", ["A rapidez e a facilidade de transformar o investimento em dinheiro sem grande perda", "O lucro do investimento", "A chance de perder dinheiro", "A taxa cobrada pelo banco"], 0, "Um ativo líquido pode ser vendido rápido sem desconto relevante."),
+             Q("Em geral, quanto maior o retorno esperado de um investimento:", ["Menor o risco", "Mais isento de imposto", "Maior o risco", "Mais líquido"], 2, "Retorno esperado maior costuma compensar um risco maior."),
+             Q("O risco de crédito é o risco de:", ["O dólar subir", "A inflação subir", "O preço da ação oscilar no dia", "O emissor não pagar o que prometeu"], 3, "Está ligado à capacidade do emissor (banco, empresa) de honrar a dívida."))),
+
+        Lesson("m1-l4", "Como usar este simulador", 5, "Um passeio pelas abas e pelas regras do jogo.", (
+            ("p", "O simulador é um ambiente de **prática**: o dinheiro é virtual, mas os preços, taxas e regras são baseados em dados reais."),
+            ("ul", ["**Mercado e busca:** encontre ações, ETFs, FIIs, REITs e criptomoedas. Ativos em dólar são convertidos para reais na hora da compra.",
+                    "**Página do ativo:** gráfico com candles e indicadores, ferramentas de desenho, compra e venda, Stop Loss e Take Profit.",
+                    "**Renda fixa:** Tesouro Direto com dados reais e ofertas de exemplo de CDB, LCI, LCA, CRI, CRA e debêntures.",
+                    "**Carteira e Histórico:** posições, preço médio, proventos recebidos e todas as transações.",
+                    "**Desempenho:** evolução do patrimônio, comparação com o CDI, estatísticas das suas operações e conquistas.",
+                    "**Ranking:** compara você com outros usuários. Depósitos virtuais extras **não** contam."]),
+            ("h", "Boas práticas"),
+            ("ul", ["Comece com poucas posições e entenda cada uma antes de adicionar outras.",
+                    "Use Stop Loss para treinar disciplina e limitar perdas.",
+                    "Cotações têm um pequeno atraso e a execução é sempre a preço de mercado, sem corretagem.",
+                    "Use o Histórico para revisar suas decisões, inclusive as erradas."]),
+            ("sim", "/mercado", "Ir para o Mercado"), DISCLAIMER),
+            (Q("O dinheiro do simulador é real?", ["Sim, é uma conta real", "Só nos fins de semana", "Depende do ativo", "Não: é virtual e educacional"], 3, "Nenhuma operação envolve dinheiro real."),
+             Q("Onde você acompanha a evolução do patrimônio e compara com o CDI?", ["Aba Desempenho", "Aba Mercado", "Só no Histórico", "Em lugar nenhum"], 0, "A aba Desempenho reúne a evolução, o benchmark e suas estatísticas."),
+             Q("Depositar saldo virtual extra faz você subir no ranking?", ["Sim, imediatamente", "Só se for acima de R$ 1 milhão", "Sim, mas só no ranking semanal", "Não: aportes extras não contam"], 3, "O ranking considera o saldo inicial mais os seus resultados."))),
+    ),
+)

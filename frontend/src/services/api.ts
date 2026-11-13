@@ -93,6 +93,40 @@ export interface FiInvestment {
 }
 export interface FiIndexes { cdi_annual: Decimal; selic_annual: Decimal; ipca_12m: Decimal; igpm_12m: Decimal; last_cdi_date: string | null }
 
+export interface PerfPoint {
+  t: string; equity: Decimal; wealth: Decimal; cash: Decimal; assets: Decimal; fixed_income: Decimal; net_deposits: Decimal;
+  return_pct: Decimal; cdi_pct: Decimal; drawdown_pct: Decimal;
+}
+export interface Performance {
+  range: string; series: PerfPoint[];
+  series_stats: { period_return_pct: Decimal | null; cdi_pct: Decimal | null; vs_cdi_pp: Decimal | null; max_drawdown_pct: Decimal | null; best_day_pct: Decimal | null; worst_day_pct: Decimal | null };
+  summary: { equity_brl: Decimal; wealth_brl: Decimal; initial_brl: Decimal; pnl_brl: Decimal; total_return_pct: Decimal | null;
+    diversification_score: number | null; top_position: { name: string; pct: Decimal } | null; discipline_pct: Decimal | null; positions: number; days_tracked: number };
+  trades: { buys: number; sells: number; fixed_income_applications: number; closed_trades: number; wins: number; losses: number; win_rate_pct: Decimal | null;
+    avg_win_brl: Decimal | null; avg_loss_brl: Decimal | null; payoff_ratio: Decimal | null; profit_factor: Decimal | null; total_realized_brl: Decimal;
+    income_total_brl: Decimal; best_trade_brl: Decimal | null; best_trade_label: string | null; worst_trade_brl: Decimal | null; worst_trade_label: string | null };
+  allocation: { label: string; value: Decimal; pct: Decimal }[];
+  monthly: { month: string; realized: Decimal; income: Decimal; trades: number }[];
+  realized_cumulative: { date: string; cumulative: Decimal }[];
+  achievements: { id: string; title: string; description: string; unlocked: boolean; current: number; target: number; detail: string }[];
+  insights: { tone: "good" | "warn" | "info"; text: string; lesson_id: string | null }[];
+}
+export interface RankEntry { rank: number; nickname: string; wealth_brl: Decimal; gain_brl: Decimal; return_pct: Decimal; is_me: boolean }
+export interface Ranking { board: string; period: string; participants: number; entries: RankEntry[]; me: RankEntry | null; me_hidden: boolean; note: string }
+export interface RankingSettings { show_in_ranking: boolean; nickname: string | null; default_nickname: string | null }
+export interface LessonBrief { id: string; title: string; minutes: number; summary: string; completed: boolean; best_score: number | null }
+export interface LearnModule { id: string; title: string; description: string; level: string; lessons: LessonBrief[]; completed: number; total: number }
+export interface LearnOverview { modules: LearnModule[]; completed: number; total: number; percent: number; points: number; level: string; next_lesson_id: string | null }
+export type Block = [string, ...unknown[]];
+export interface Lesson {
+  id: string; module_id: string; module_title: string; title: string; minutes: number; blocks: Block[];
+  quiz: { text: string; options: string[] }[]; completed: boolean; best_score: number | null; prev_id: string | null; next_id: string | null;
+}
+export interface QuizResult {
+  score: number; passed: boolean; pass_score: number; results: { correct: boolean; correct_index: number; explanation: string }[];
+  completed: boolean; next_lesson_id: string | null; overview: LearnOverview;
+}
+
 export interface QuoteBrief { asset_id: number; price: Decimal; currency: string; price_brl: Decimal; change_pct: Decimal | null }
 
 export interface User { id: number; email: string; name: string; created_at: string }
@@ -163,6 +197,15 @@ export const api = {
   fiInvestments: () => request<FiInvestment[]>("/fixed-income/investments"),
   fiRedeem: (id: number) => request<FiInvestment>(`/fixed-income/investments/${id}/redeem`, { method: "POST" }),
   fiRefresh: () => request<{ refreshed: boolean }>("/fixed-income/refresh", { method: "POST" }),
+  performance: (range: string) => request<Performance>(`/performance?range=${range}`),
+  ranking: (board: string, period: string) => request<Ranking>(`/ranking?board=${board}&period=${period}`),
+  rankingSettings: () => request<RankingSettings>("/ranking/settings"),
+  saveRankingSettings: (show_in_ranking: boolean, nickname: string | null) =>
+    request<RankingSettings>("/ranking/settings", { method: "PUT", body: JSON.stringify({ show_in_ranking, nickname }) }),
+  learn: () => request<LearnOverview>("/learn"),
+  lesson: (id: string) => request<Lesson>(`/learn/lessons/${id}`),
+  submitQuiz: (id: string, answers: number[]) =>
+    request<QuizResult>(`/learn/lessons/${id}/quiz`, { method: "POST", body: JSON.stringify({ answers }) }),
   deposit: (amount: string) => request<Transaction>("/portfolio/deposit", { method: "POST", body: JSON.stringify({ amount }) }),
   portfolio: () => request<PortfolioSummary>("/portfolio"),
   transactions: (limit = 20) => request<Transaction[]>(`/portfolio/transactions?limit=${limit}`),
