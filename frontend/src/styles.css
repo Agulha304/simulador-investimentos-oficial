@@ -166,3 +166,7 @@ kbd { font-family: var(--mono); font-size: 11px; border: 1px solid var(--border)
 
 /* Fase 5 */
 .side-stack { display: flex; flex-direction: column; gap: 16px; }
+
+/* Fase 6 */
+.tabs { align-self: flex-start; }
+.tag.paid { background: color-mix(in srgb, var(--up) 20%, transparent); color: var(--up); }

@@ -1,11 +1,11 @@
 """Schemas de saída. Decimal é serializado como STRING no JSON, para que o
 frontend não perca precisão (ex.: quantidades de cripto com 18 casas)."""
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict
 
-from backend.models import AssetClass, Currency, TransactionSource, TransactionType
+from backend.models import AssetClass, Currency, DistributionKind, EligibilityStatus, TransactionSource, TransactionType
 
 
 class AssetBrief(BaseModel):
@@ -63,3 +63,26 @@ class TransactionOut(BaseModel):
     realized_pnl_brl: Decimal | None = None
     note: str | None
     created_at: datetime
+
+
+class DividendItemOut(BaseModel):
+    id: int                              # id da elegibilidade
+    asset: AssetBrief
+    kind: DistributionKind
+    ex_date: date
+    pay_date: date
+    pay_date_estimated: bool
+    status: EligibilityStatus
+    quantity: Decimal
+    amount_per_unit: Decimal
+    currency: Currency
+    expected_gross_native: Decimal       # quantidade × valor, na moeda do ativo
+    gross_brl: Decimal | None = None     # preenchidos após o pagamento
+    tax_brl: Decimal | None = None
+    net_brl: Decimal | None = None
+    paid_at: datetime | None = None
+
+
+class DividendSyncOut(BaseModel):
+    new_rights: int
+    paid: int

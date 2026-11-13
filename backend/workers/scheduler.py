@@ -5,11 +5,12 @@ distribuições, renda fixa). Os jobs devem ser idempotentes — a proteção
 final contra duplicidade é a `idempotency_key` única em Transaction.
 """
 import logging
+from datetime import UTC, datetime, timedelta
 
 from apscheduler.schedulers.background import BackgroundScheduler
 
 from backend.config import get_settings
-from backend.workers import risk_worker
+from backend.workers import distribution_worker, risk_worker
 
 log = logging.getLogger(__name__)
 
@@ -31,6 +32,10 @@ def start_scheduler() -> BackgroundScheduler:
     _scheduler.add_job(heartbeat, "interval", minutes=5, id="heartbeat", replace_existing=True)
     _scheduler.add_job(risk_worker.run, "interval", seconds=get_settings().risk_check_interval_seconds,
                        id="stop_loss_take_profit", replace_existing=True)
+    _scheduler.add_job(distribution_worker.discover, "interval", hours=6, id="distribution_discover",
+                       next_run_time=datetime.now(UTC) + timedelta(minutes=1), replace_existing=True)
+    _scheduler.add_job(distribution_worker.pay, "interval", minutes=15, id="distribution_pay",
+                       next_run_time=datetime.now(UTC) + timedelta(minutes=2), replace_existing=True)
     _scheduler.start()
     log.info("scheduler iniciado com jobs: %s", [j.id for j in _scheduler.get_jobs()])
     return _scheduler

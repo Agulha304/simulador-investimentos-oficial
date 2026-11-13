@@ -32,3 +32,11 @@ export const CLASS_LABEL: Record<string, string> = {
 
 const usd = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 4 });
 export const fmtMoney = (v: string, currency: string) => (currency === "USD" ? usd.format(Number(v)) : fmtBRL(v));
+
+export const SOURCE_LABEL: Record<string, string> = {
+  USER: "Manual", SYSTEM: "Sistema", STOP_LOSS: "Stop Loss", TAKE_PROFIT: "Take Profit",
+  DISTRIBUTION_WORKER: "Automático", FIXED_INCOME_WORKER: "Automático",
+};
+export const KIND_LABEL: Record<string, string> = { DIVIDEND: "Dividendo", JCP: "JCP", RENDIMENTO: "Rendimento" };
+export const STATUS_LABEL: Record<string, string> = { PENDING: "A receber", PAID: "Pago", CANCELLED: "Cancelado" };
+export const fmtDay = (iso: string) => new Intl.DateTimeFormat("pt-BR").format(new Date(`${iso}T12:00:00`));

@@ -37,3 +37,15 @@ class TransactionSource(StrEnum):
     TAKE_PROFIT = "TAKE_PROFIT"
     DISTRIBUTION_WORKER = "DISTRIBUTION_WORKER"
     FIXED_INCOME_WORKER = "FIXED_INCOME_WORKER"
+
+
+class DistributionKind(StrEnum):
+    DIVIDEND = "DIVIDEND"        # dividendos (ações, ETFs, REITs)
+    JCP = "JCP"                  # juros sobre capital próprio
+    RENDIMENTO = "RENDIMENTO"    # rendimentos de FIIs
+
+
+class EligibilityStatus(StrEnum):
+    PENDING = "PENDING"          # direito reconhecido, aguardando pagamento
+    PAID = "PAID"
+    CANCELLED = "CANCELLED"      # valor líquido zero (ex.: arredondou para R$ 0,00)

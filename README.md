@@ -97,6 +97,6 @@ A fonte é não oficial e pode limitar requisições; os testes usam um provedor
 - [x] **Fase 3: Gráficos.** Candles/linha (lightweight-charts v5), 7 períodos, 10 indicadores calculados no backend (`services/indicators.py`), painéis separados, layout salvo por usuário e ativo
 - [x] **Fase 4: Ferramentas de desenho.** Tendência, raio, horizontal, suporte, resistência e marcação, ancorados em (tempo, preço) via primitivas do gráfico; salvos no banco por usuário e ativo
 - [x] **Fase 5: Stop Loss / Take Profit.** Níveis na moeda do ativo, worker a cada 2 min, venda total a mercado, revalidação sob lock + chave idempotente (`sltp:{holding}:{versão}`)
-- [ ] Fase 6: Proventos. Descoberta, elegibilidade histórica e pagamentos
+- [x] **Fase 6: Proventos.** Descoberta (fonte), elegibilidade reconstruída pelas transações na data EX, pagamento com câmbio e imposto (`tax_service`), constraints únicas e chave idempotente; página Histórico
 - [ ] Fase 7: Cripto, FIIs, REITs e ETFs
 - [ ] Fase 8: Renda fixa (Tesouro, CDB, LCI/LCA, CRI/CRA, debêntures) e IR

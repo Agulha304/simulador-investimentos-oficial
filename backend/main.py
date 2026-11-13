@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from backend.config import get_settings
 from backend.core.logging import setup_logging
 from backend.database import SessionLocal, check_connection
-from backend.routers import assets, auth, health, portfolio, trades
+from backend.routers import assets, auth, distributions, health, portfolio, trades
 from backend.services.asset_catalog import seed_assets
 from backend.workers.scheduler import shutdown_scheduler, start_scheduler
 
@@ -35,7 +35,7 @@ async def lifespan(_: FastAPI):
 app = FastAPI(
     title="Simulador de Investimentos",
     description="Simulador educacional — nenhuma operação envolve dinheiro real.",
-    version="0.2.0",
+    version="0.6.0",
     lifespan=lifespan,
 )
 app.add_middleware(
@@ -50,5 +50,6 @@ API_PREFIX = "/api"
 app.include_router(health.router, prefix=API_PREFIX)
 app.include_router(auth.router, prefix=API_PREFIX)
 app.include_router(portfolio.router, prefix=API_PREFIX)
+app.include_router(distributions.router, prefix=API_PREFIX)
 app.include_router(assets.router, prefix=API_PREFIX)
 app.include_router(trades.router, prefix=API_PREFIX)

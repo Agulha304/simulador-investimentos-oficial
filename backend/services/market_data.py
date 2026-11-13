@@ -7,7 +7,7 @@ import logging
 import threading
 import time
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Protocol
 
@@ -56,6 +56,12 @@ class Candle:
     volume: Decimal
 
 
+@dataclass(frozen=True)
+class DividendEvent:
+    ex_date: date
+    amount: Decimal                   # por unidade, na moeda do ativo
+
+
 # período -> (range, interval) na fonte
 HISTORY_RANGES: dict[str, tuple[str, str]] = {
     "1d": ("1d", "5m"), "5d": ("5d", "15m"), "1mo": ("1mo", "1d"), "6mo": ("6mo", "1d"),
@@ -67,6 +73,7 @@ INTRADAY_RANGES = {"1d", "5d"}
 class MarketDataProvider(Protocol):
     def get_quote(self, provider_symbol: str) -> Quote: ...
     def get_history(self, provider_symbol: str, period: str) -> list[Candle]: ...
+    def get_dividends(self, provider_symbol: str) -> list[DividendEvent]: ...
     def search(self, query: str) -> list[SearchHit]: ...
 
 
@@ -134,6 +141,22 @@ class YahooProvider:
             raise MarketDataUnavailable(f"histórico vazio para {provider_symbol}")
         return candles
 
+    def get_dividends(self, provider_symbol: str) -> list[DividendEvent]:
+        """Distribuições dos últimos 5 anos. A fonte informa a data EX e o valor por unidade."""
+        data = self._get(self.CHART.format(symbol=provider_symbol),
+                         {"range": "5y", "interval": "1mo", "events": "div"})
+        try:
+            result = data["chart"]["result"][0]
+        except (KeyError, IndexError, TypeError) as exc:
+            raise MarketDataUnavailable(f"sem dividendos para {provider_symbol}") from exc
+        events = (result.get("events") or {}).get("dividends") or {}
+        out = []
+        for ev in events.values():
+            amount = to_decimal(ev["amount"]).quantize(Decimal("0.000001"))
+            if amount > 0:
+                out.append(DividendEvent(datetime.fromtimestamp(ev["date"], UTC).date(), amount))
+        return sorted(out, key=lambda e: e.ex_date)
+
     def search(self, query: str) -> list[SearchHit]:
         data = self._get(self.SEARCH, {"q": query, "quotesCount": 8, "newsCount": 0})
         hits = []
@@ -170,6 +193,7 @@ def clear_cache() -> None:
     with _lock:
         _cache.clear()
         _hist_cache.clear()
+        _div_cache.clear()
 
 
 def _cached_quote(provider_symbol: str, ttl: float) -> Quote:
@@ -247,6 +271,21 @@ def get_history(asset: Asset, period: str) -> list[Candle]:
     with _lock:
         _hist_cache[key] = (now, candles)
     return candles
+
+
+_div_cache: dict[str, tuple[float, list[DividendEvent]]] = {}
+
+
+def get_dividends(asset: Asset) -> list[DividendEvent]:
+    key, now = asset.provider_symbol, time.monotonic()
+    with _lock:
+        hit = _div_cache.get(key)
+        if hit and now - hit[0] < 3600:
+            return hit[1]
+    events = _provider.get_dividends(key)          # MarketDataUnavailable sobe: o worker tenta de novo depois
+    with _lock:
+        _div_cache[key] = (now, events)
+    return events
 
 
 def search_remote(query: str) -> list[SearchHit]:

@@ -29,7 +29,7 @@ def _migrate():
 def _clean_db():
     yield
     with engine.begin() as conn:
-        conn.execute(text("TRUNCATE chart_layouts, transactions, holdings, portfolios, assets, users RESTART IDENTITY CASCADE"))
+        conn.execute(text("TRUNCATE dividend_payments, dividend_eligibilities, dividends, chart_layouts, transactions, holdings, portfolios, assets, users RESTART IDENTITY CASCADE"))
 
 
 @pytest.fixture
@@ -67,7 +67,10 @@ class FakeProvider:
         self.prices = {   # cópia por teste: os testes podem alterar preços
             "USDBRL=X": ("5.20", Currency.BRL), "AAPL": ("300", Currency.USD),
             "PETR4.SA": ("40", Currency.BRL), "BTC-USD": ("100000", Currency.USD),
+            "HGLG11.SA": ("160", Currency.BRL),
         }
+        self.dividends = {}          # provider_symbol -> [DividendEvent]
+        self.dividends_down = set()  # símbolos cuja consulta de dividendos falha
 
     def get_quote(self, provider_symbol):
         if provider_symbol not in self.prices:
@@ -84,6 +87,11 @@ class FakeProvider:
             close = base + Decimal((i % 10) - 5) + Decimal(i) / 10
             out.append(market_data.Candle(1_700_000_000 + i * 86_400, close - 1, close + 2, close - 2, close, Decimal(1000 + i)))
         return out
+
+    def get_dividends(self, provider_symbol):
+        if provider_symbol in self.dividends_down:
+            raise market_data.MarketDataUnavailable(provider_symbol)
+        return list(self.dividends.get(provider_symbol, []))
 
     def search(self, query):
         return []

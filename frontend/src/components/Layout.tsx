@@ -6,7 +6,7 @@ const NAV = [
   { to: "/", label: "Dashboard", ready: true },
   { to: "/carteira", label: "Carteira", ready: true },
   { to: "/renda-fixa", label: "Renda Fixa", ready: false },
-  { to: "/historico", label: "Histórico", ready: false },
+  { to: "/historico", label: "Histórico", ready: true },
 ];
 
 export function Layout() {

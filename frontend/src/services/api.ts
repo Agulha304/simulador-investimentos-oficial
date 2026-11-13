@@ -36,12 +36,24 @@ export interface Transaction {
   source: string;
   asset: AssetBrief | null;
   quantity: Decimal | null;
+  unit_price: Decimal | null;
+  price_currency: string | null;
+  fx_rate: Decimal | null;
   unit_price_brl: Decimal | null;
   gross_amount_brl: Decimal;
+  tax_brl: Decimal;
+  realized_pnl_brl: Decimal | null;
   cash_amount_brl: Decimal;
   cash_balance_after: Decimal;
   note: string | null;
   created_at: string;
+}
+
+export interface DividendItem {
+  id: number; asset: AssetBrief; kind: "DIVIDEND" | "JCP" | "RENDIMENTO";
+  ex_date: string; pay_date: string; pay_date_estimated: boolean;
+  status: "PENDING" | "PAID" | "CANCELLED"; quantity: Decimal; amount_per_unit: Decimal; currency: string;
+  expected_gross_native: Decimal; gross_brl: Decimal | null; tax_brl: Decimal | null; net_brl: Decimal | null; paid_at: string | null;
 }
 
 export interface Asset extends AssetBrief {
@@ -110,6 +122,8 @@ export const api = {
   setRisk: (asset_id: number, stop_loss: string | null, take_profit: string | null) =>
     request<{ asset_id: number; currency: string; stop_loss: Decimal | null; take_profit: Decimal | null }>(
       `/trades/risk/${asset_id}`, { method: "PUT", body: JSON.stringify({ stop_loss, take_profit }) }),
+  dividends: () => request<DividendItem[]>("/portfolio/dividends"),
+  syncDividends: () => request<{ new_rights: number; paid: number }>("/portfolio/dividends/sync", { method: "POST" }),
   deposit: (amount: string) => request<Transaction>("/portfolio/deposit", { method: "POST", body: JSON.stringify({ amount }) }),
   portfolio: () => request<PortfolioSummary>("/portfolio"),
   transactions: (limit = 20) => request<Transaction[]>(`/portfolio/transactions?limit=${limit}`),
