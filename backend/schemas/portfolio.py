@@ -41,6 +41,8 @@ class PortfolioSummaryOut(BaseModel):
     total_deposits_brl: Decimal
     pnl_brl: Decimal
     pnl_pct: Decimal | None
+    fixed_income_invested_brl: Decimal
+    fixed_income_value_brl: Decimal
     holdings: list[HoldingOut]
 
 

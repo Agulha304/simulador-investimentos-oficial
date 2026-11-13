@@ -30,6 +30,7 @@ export function PortfolioPage() {
         <StatCard label="Patrimônio" value={fmtBRL(data.total_equity_brl)} emphasis />
         <StatCard label="Saldo disponível" value={fmtBRL(data.cash_balance)} />
         <StatCard label="Posições (valor atual)" value={fmtBRL(data.market_value_brl)} sub={`custo ${fmtBRL(data.invested_brl)}`} />
+        <StatCard label="Renda fixa (líquido est.)" value={fmtBRL(data.fixed_income_value_brl)} sub={`aplicado ${fmtBRL(data.fixed_income_invested_brl)}`} />
         <StatCard label="Lucro / prejuízo" value={fmtBRL(data.pnl_brl)} sub={fmtPct(data.pnl_pct)} tone={trend(data.pnl_brl)} />
       </section>
 

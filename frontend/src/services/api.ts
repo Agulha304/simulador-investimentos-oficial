@@ -25,6 +25,8 @@ export interface PortfolioSummary {
   market_value_brl: Decimal;
   total_equity_brl: Decimal;
   total_deposits_brl: Decimal;
+  fixed_income_invested_brl: Decimal;
+  fixed_income_value_brl: Decimal;
   pnl_brl: Decimal;
   pnl_pct: Decimal | null;
   holdings: Holding[];
@@ -69,6 +71,27 @@ export interface Candle { time: number; open: Decimal; high: Decimal; low: Decim
 export interface IndicatorData { kind: "overlay" | "pane"; series: Record<string, (Decimal | null)[]> }
 export interface ChartData { asset_id: number; period: string; currency: string; candles: Candle[]; indicators: Record<string, IndicatorData> }
 export interface ChartLayout { indicators: string[]; drawings: Record<string, unknown>[] }
+
+export interface FiProduct {
+  id: number; name: string; issuer: string; product_type: string; indexer: string; rate_mode: string; rate: Decimal; rate_label: string;
+  maturity_date: string; min_investment_brl: Decimal; liquidity: "DAILY" | "AT_MATURITY" | "SPECIFIC_DATES"; grace_days: number;
+  liquidity_dates: string[]; early_redemption: boolean; secondary_discount_pct: Decimal; uses_mtm: boolean;
+  payment_frequency: "AT_MATURITY" | "MONTHLY" | "SEMIANNUAL" | "ANNUAL"; tax_regime: "REGRESSIVE" | "EXEMPT";
+  risk_level: "LOW" | "MEDIUM" | "HIGH"; fgc_covered: boolean; description: string | null; source: "TESOURO_TRANSPARENTE" | "SAMPLE"; as_of: string;
+}
+export interface FiFlow { on: string; kind: "COUPON" | "MATURITY"; gross: Decimal; tax: Decimal; net: Decimal }
+export interface FiSimulation {
+  product: { id: number; name: string; rate_label: string }; principal_brl: Decimal; total_gross_brl: Decimal; total_tax_brl: Decimal;
+  total_net_brl: Decimal; profit_net_brl: Decimal; annualized_net_pct: Decimal | null; flows: FiFlow[]; assumptions: string;
+}
+export interface FiInvestment {
+  id: number; product: { id: number; name: string; issuer: string; product_type: string; rate_label: string };
+  status: "ACTIVE" | "REDEEMED" | "MATURED"; applied_on: string; maturity_date: string; principal_brl: Decimal; units: Decimal | null;
+  current_gross_brl: Decimal; estimated_tax_brl: Decimal; estimated_net_brl: Decimal; interest_paid_net_brl: Decimal;
+  profit_net_brl: Decimal; valuation_method: string; can_redeem: boolean; redeem_block_reason: string | null;
+  redeem_net_brl: Decimal | null; next_event_date: string | null; next_event_kind: string | null; closed_on: string | null;
+}
+export interface FiIndexes { cdi_annual: Decimal; selic_annual: Decimal; ipca_12m: Decimal; igpm_12m: Decimal; last_cdi_date: string | null }
 
 export interface QuoteBrief { asset_id: number; price: Decimal; currency: string; price_brl: Decimal; change_pct: Decimal | null }
 
@@ -131,6 +154,15 @@ export const api = {
       `/trades/risk/${asset_id}`, { method: "PUT", body: JSON.stringify({ stop_loss, take_profit }) }),
   dividends: () => request<DividendItem[]>("/portfolio/dividends"),
   syncDividends: () => request<{ new_rights: number; paid: number }>("/portfolio/dividends/sync", { method: "POST" }),
+  fiProducts: (params: Record<string, string> = {}) => request<FiProduct[]>(`/fixed-income/products?${new URLSearchParams(params)}`),
+  fiIndexes: () => request<FiIndexes>("/fixed-income/indexes"),
+  fiSimulate: (product_id: number, amount_brl: string) =>
+    request<FiSimulation>("/fixed-income/simulate", { method: "POST", body: JSON.stringify({ product_id, amount_brl }) }),
+  fiInvest: (product_id: number, amount_brl: string) =>
+    request<FiInvestment>("/fixed-income/invest", { method: "POST", headers: { "Idempotency-Key": crypto.randomUUID() }, body: JSON.stringify({ product_id, amount_brl }) }),
+  fiInvestments: () => request<FiInvestment[]>("/fixed-income/investments"),
+  fiRedeem: (id: number) => request<FiInvestment>(`/fixed-income/investments/${id}/redeem`, { method: "POST" }),
+  fiRefresh: () => request<{ refreshed: boolean }>("/fixed-income/refresh", { method: "POST" }),
   deposit: (amount: string) => request<Transaction>("/portfolio/deposit", { method: "POST", body: JSON.stringify({ amount }) }),
   portfolio: () => request<PortfolioSummary>("/portfolio"),
   transactions: (limit = 20) => request<Transaction[]>(`/portfolio/transactions?limit=${limit}`),

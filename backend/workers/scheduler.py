@@ -10,7 +10,7 @@ from datetime import UTC, datetime, timedelta
 from apscheduler.schedulers.background import BackgroundScheduler
 
 from backend.config import get_settings
-from backend.workers import distribution_worker, risk_worker
+from backend.workers import distribution_worker, fixed_income_worker, risk_worker
 
 log = logging.getLogger(__name__)
 
@@ -34,6 +34,10 @@ def start_scheduler() -> BackgroundScheduler:
                        id="stop_loss_take_profit", replace_existing=True)
     _scheduler.add_job(distribution_worker.discover, "interval", hours=6, id="distribution_discover",
                        next_run_time=datetime.now(UTC) + timedelta(minutes=1), replace_existing=True)
+    _scheduler.add_job(fixed_income_worker.sync, "interval", hours=6, id="fixed_income_sync",
+                       next_run_time=datetime.now(UTC) + timedelta(minutes=1), replace_existing=True)
+    _scheduler.add_job(fixed_income_worker.process_events, "interval", minutes=15, id="fixed_income_events",
+                       next_run_time=datetime.now(UTC) + timedelta(minutes=3), replace_existing=True)
     _scheduler.add_job(distribution_worker.pay, "interval", minutes=15, id="distribution_pay",
                        next_run_time=datetime.now(UTC) + timedelta(minutes=2), replace_existing=True)
     _scheduler.start()

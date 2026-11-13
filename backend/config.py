@@ -22,6 +22,12 @@ class Settings(BaseSettings):
     scheduler_enabled: bool = True
     risk_check_interval_seconds: int = 120   # Stop Loss / Take Profit
 
+    # Usados SOMENTE se ainda não houver dados dos índices no banco (primeira execução / sem rede).
+    fallback_cdi_annual: Decimal = Decimal("13.65")     # % a.a.
+    fallback_selic_annual: Decimal = Decimal("13.75")   # % a.a.
+    fallback_ipca_monthly: Decimal = Decimal("0.40")    # % a.m.
+    fallback_igpm_monthly: Decimal = Decimal("0.40")    # % a.m.
+
     cors_origins: str = "http://localhost:5173"
     log_level: str = "INFO"
 

@@ -33,7 +33,8 @@ export function DashboardPage() {
       <section className="stats-grid">
         <StatCard label="Patrimônio total" value={fmtBRL(data.total_equity_brl)} emphasis />
         <StatCard label="Saldo disponível" value={fmtBRL(data.cash_balance)} />
-        <StatCard label="Valor investido" value={fmtBRL(data.invested_brl)} />
+        <StatCard label="Ativos (valor atual)" value={fmtBRL(data.market_value_brl)} sub={`custo ${fmtBRL(data.invested_brl)}`} />
+        <StatCard label="Renda fixa (líquido est.)" value={fmtBRL(data.fixed_income_value_brl)} sub={`aplicado ${fmtBRL(data.fixed_income_invested_brl)}`} />
         <StatCard label="Lucro / prejuízo" value={fmtBRL(data.pnl_brl)} sub={fmtPct(data.pnl_pct)} tone={pnlTone} />
       </section>
 

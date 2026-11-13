@@ -29,7 +29,7 @@ def _migrate():
 def _clean_db():
     yield
     with engine.begin() as conn:
-        conn.execute(text("TRUNCATE dividend_payments, dividend_eligibilities, dividends, chart_layouts, transactions, holdings, portfolios, assets, users RESTART IDENTITY CASCADE"))
+        conn.execute(text("TRUNCATE financial_events, fixed_income_investments, fixed_income_products, index_rates, dividend_payments, dividend_eligibilities, dividends, chart_layouts, transactions, holdings, portfolios, assets, users RESTART IDENTITY CASCADE"))
 
 
 @pytest.fixture
@@ -111,3 +111,57 @@ def assets(client, db):
     from sqlalchemy import select
     from backend.models import Asset
     return {a.symbol: a for a in db.scalars(select(Asset))}
+
+
+# ---------------------------------------------------- índices e Tesouro falsos (sem rede)
+from datetime import timedelta  # noqa: E402
+
+from backend.core import calendar_br  # noqa: E402
+from backend.core.dates import today_br  # noqa: E402
+from backend.models import IndexName  # noqa: E402
+from backend.services import index_data, treasury_data  # noqa: E402
+
+
+class FakeIndexProvider:
+    """CDI e Selic a 0,05% ao dia útil (~13,4% a.a.); IPCA e IGP-M a 0,5% ao mês."""
+    fail = False
+
+    def fetch(self, name, start, end):
+        if self.fail:
+            raise index_data.IndexDataUnavailable("fora do ar")
+        start = max(start, end - timedelta(days=400))
+        if name in (IndexName.CDI, IndexName.SELIC):
+            return [(d, Decimal("0.05")) for d in calendar_br.iter_business_days(start - timedelta(days=1), end)]
+        out, m = [], start.replace(day=1)
+        while m <= end:
+            out.append((m, Decimal("0.5")))
+            m = (m + timedelta(days=32)).replace(day=1)
+        return out
+
+
+class FakeTreasuryProvider:
+    def __init__(self):
+        self.drop: set[str] = set()
+
+    def fetch_latest(self):
+        t = today_br()
+        mk = lambda name, years, buy, sell, pu_b, pu_s: treasury_data.TreasuryQuote(   # noqa: E731
+            name, calendar_br.add_months(t, 12 * years), t, Decimal(buy), Decimal(sell), Decimal(pu_b), Decimal(pu_s))
+        quotes = [
+            mk("Tesouro Prefixado", 3, "14.65", "14.77", "749.29", "747.23"),
+            mk("Tesouro IPCA+", 5, "7.42", "7.54", "3998.55", "3986.20"),
+            mk("Tesouro Selic", 4, "0.11", "0.12", "20201.00", "20181.99"),
+            mk("Tesouro IPCA+ com Juros Semestrais", 11, "7.63", "7.75", "4389.42", "4351.48"),
+            mk("Tesouro Prefixado com Juros Semestrais", 6, "15.20", "15.32", "845.05", "840.75"),
+        ]
+        return [q for q in quotes if q.type_name not in self.drop]
+
+
+@pytest.fixture(autouse=True)
+def _fake_fixed_income_sources():
+    idx_provider, td_provider = FakeIndexProvider(), FakeTreasuryProvider()
+    index_data.set_provider(idx_provider)
+    treasury_data.set_provider(td_provider)
+    from backend.workers import fixed_income_worker
+    fixed_income_worker._last_sync = 0.0
+    yield idx_provider, td_provider

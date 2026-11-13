@@ -22,7 +22,7 @@ export const TX_LABEL: Record<string, string> = {
   DIVIDEND: "Provento",
   FIXED_INCOME_APPLY: "Aplicação RF",
   FIXED_INCOME_REDEEM: "Resgate RF",
-  FIXED_INCOME_COUPON: "Cupom RF",
+  FIXED_INCOME_COUPON: "Juros RF",
   FIXED_INCOME_MATURITY: "Vencimento RF",
 };
 
@@ -44,3 +44,14 @@ export const fmtDay = (iso: string) => new Intl.DateTimeFormat("pt-BR").format(n
 /** Quantidade exata para preencher um campo (ponto decimal, sem zeros à direita). */
 export const fmtQtyRaw = (v: string) => (v.includes(".") ? v.replace(/0+$/, "").replace(/\.$/, "") : v);
 export const COUNTRY_LABEL: Record<string, string> = { BR: "Brasil", US: "EUA" };
+
+export const FI_TYPE_LABEL: Record<string, string> = {
+  TESOURO_SELIC: "Tesouro Selic", TESOURO_PREFIXADO: "Tesouro Prefixado", TESOURO_PREFIXADO_JUROS: "Tesouro Prefixado c/ juros",
+  TESOURO_IPCA: "Tesouro IPCA+", TESOURO_IPCA_JUROS: "Tesouro IPCA+ c/ juros", TESOURO_IGPM_JUROS: "Tesouro IGPM+ c/ juros",
+  TESOURO_RENDA_MAIS: "Tesouro Renda+", TESOURO_EDUCA_MAIS: "Tesouro Educa+",
+  CDB: "CDB", LCI: "LCI", LCA: "LCA", CRI: "CRI", CRA: "CRA", DEBENTURE: "Debênture",
+};
+export const LIQUIDITY_LABEL: Record<string, string> = { DAILY: "Diária", AT_MATURITY: "No vencimento", SPECIFIC_DATES: "Em janelas" };
+export const FREQ_LABEL: Record<string, string> = { AT_MATURITY: "No vencimento", MONTHLY: "Mensal", SEMIANNUAL: "Semestral", ANNUAL: "Anual" };
+export const RISK_LABEL: Record<string, string> = { LOW: "Baixo", MEDIUM: "Médio", HIGH: "Alto" };
+export const FI_STATUS_LABEL: Record<string, string> = { ACTIVE: "Ativa", REDEEMED: "Resgatada", MATURED: "Vencida" };
