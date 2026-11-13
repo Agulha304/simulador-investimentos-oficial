@@ -97,13 +97,37 @@ def test_chart_unavailable_returns_503(client, auth_headers, assets, _fake_marke
     assert client.get(f"/api/assets/{assets['AAPL'].id}/chart", headers=auth_headers).status_code == 503
 
 
+def _drawing(id_, type_="trend", n=2, **kw):
+    pts = [{"time": 1_700_000_000 + i * 86_400, "price": "45.3" if i == 0 else "47.1234567891"} for i in range(n)]
+    return {"id": id_, "type": type_, "points": pts, **kw}
+
+
 def test_layout_roundtrip_is_per_user(client, auth_headers, assets):
     a = assets["PETR4"].id
     assert client.get(f"/api/assets/{a}/layout", headers=auth_headers).json() == {"indicators": [], "drawings": []}
-    body = {"indicators": ["sma:20", "rsi:14"], "drawings": [{"id": "x"}]}
-    assert client.put(f"/api/assets/{a}/layout", headers=auth_headers, json=body).json() == body
-    assert client.get(f"/api/assets/{a}/layout", headers=auth_headers).json() == body
+    body = {"indicators": ["sma:20", "rsi:14"], "drawings": [
+        _drawing("a"), _drawing("b", "support", 1, color="#2ecc8f"), _drawing("c", "marker", 1, text="Rompimento")]}
+    r = client.put(f"/api/assets/{a}/layout", headers=auth_headers, json=body)
+    assert r.status_code == 200, r.text
+    got = client.get(f"/api/assets/{a}/layout", headers=auth_headers).json()
+    assert got["indicators"] == ["sma:20", "rsi:14"] and [d["id"] for d in got["drawings"]] == ["a", "b", "c"]
+    assert got["drawings"][0]["points"][1]["price"] == "47.1234567891"        # preço exato, sem float
     assert client.put(f"/api/assets/{a}/layout", headers=auth_headers, json={"indicators": ["lixo"]}).status_code == 422
     other = client.post("/api/auth/register", json={"email": "b@example.com", "name": "B", "password": "segredo123"}).json()
     h2 = {"Authorization": f"Bearer {other['access_token']}"}
     assert client.get(f"/api/assets/{a}/layout", headers=h2).json()["indicators"] == []
+
+
+def test_layout_rejects_invalid_drawings(client, auth_headers, assets):
+    url = f"/api/assets/{assets['PETR4'].id}/layout"
+    bad = [
+        [_drawing("a", "trend", 1)],                                   # trend precisa de 2 pontos
+        [_drawing("a", "hline", 2)],                                   # hline só 1
+        [_drawing("a", "circulo", 1)],                                 # tipo desconhecido
+        [_drawing("a"), _drawing("a")],                                # ids repetidos
+        [_drawing("a", "hline", 1, color="vermelho")],                 # cor inválida
+        [{"id": "a", "type": "hline", "points": [{"time": 1, "price": "-3"}]}],   # preço <= 0
+        [_drawing(str(i), "hline", 1) for i in range(301)],            # excesso
+    ]
+    for drawings in bad:
+        assert client.put(url, headers=auth_headers, json={"drawings": drawings}).status_code == 422, drawings[:1]

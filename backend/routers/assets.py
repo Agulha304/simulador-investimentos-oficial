@@ -5,7 +5,7 @@ from sqlalchemy import select
 
 from backend.dependencies import CurrentUser, DbSession
 from backend.models import Asset
-from backend.schemas.market import AssetOut, CandleOut, ChartOut, IndicatorOut, LayoutIn, LayoutOut, QuoteOut
+from backend.schemas.market import AssetOut, CandleOut, ChartOut, IndicatorOut, Drawing, LayoutIn, LayoutOut, QuoteOut
 from backend.models import ChartLayout
 from backend.services import asset_catalog, indicators, market_data
 
@@ -67,7 +67,9 @@ def get_chart(
 def get_layout(asset_id: int, user: CurrentUser, db: DbSession):
     _get_asset(db, asset_id)
     row = db.scalar(select(ChartLayout).where(ChartLayout.user_id == user.id, ChartLayout.asset_id == asset_id))
-    return LayoutOut(indicators=row.indicators if row else [], drawings=row.drawings if row else [])
+    if row is None:
+        return LayoutOut()
+    return LayoutOut(indicators=row.indicators, drawings=[Drawing.model_validate(d) for d in row.drawings])
 
 
 @router.put("/{asset_id}/layout", response_model=LayoutOut)
@@ -82,6 +84,7 @@ def put_layout(asset_id: int, body: LayoutIn, user: CurrentUser, db: DbSession):
     if row is None:
         row = ChartLayout(user_id=user.id, asset_id=asset_id)
         db.add(row)
-    row.indicators, row.drawings = body.indicators, body.drawings
+    row.indicators = body.indicators
+    row.drawings = [d.model_dump(mode="json") for d in body.drawings]
     db.commit()
-    return LayoutOut(indicators=row.indicators, drawings=row.drawings)
+    return body

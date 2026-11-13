@@ -151,3 +151,15 @@ input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px 
 .menu-item { display: flex; gap: 8px; width: 100%; font: inherit; text-align: left; background: none; border: 0; color: var(--text); padding: 6px 10px; border-radius: 6px; cursor: pointer; }
 .menu-item:hover { background: var(--surface-2); }
 .menu-item span { width: 14px; color: var(--up); }
+
+/* Fase 4: desenhos */
+.draw-tools { border-top: 1px solid var(--border); padding-top: 8px; margin-top: 4px; }
+.tool { font: inherit; font-size: 12px; border: 1px solid var(--border); background: transparent; color: var(--text-muted); border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+.tool:hover { color: var(--text); border-color: var(--text-muted); }
+.tool.on { background: color-mix(in srgb, var(--accent) 22%, transparent); border-color: var(--accent); color: var(--text); }
+.tool-hint { color: var(--accent); margin: 4px 0 8px; }
+kbd { font-family: var(--mono); font-size: 11px; border: 1px solid var(--border); border-radius: 4px; padding: 0 5px; background: var(--bg); }
+.price-chart.drawing { cursor: crosshair; }
+.save-state.error { color: var(--down); }
+.save-state.saved { color: var(--up); }
+.chart-toolbar .grow { flex: 1; }
