@@ -128,6 +128,7 @@ def sell(db: Session, portfolio_id: int, asset: Asset, *, quantity: Decimal,
         if holding.quantity == 0:
             holding.total_cost_brl = Decimal("0.00")
             holding.avg_price_brl = Decimal("0")
+            holding.stop_loss = holding.take_profit = None   # posição encerrada: níveis não valem mais
         db.commit()
     except Exception:
         db.rollback()

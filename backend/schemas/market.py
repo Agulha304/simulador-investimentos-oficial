@@ -106,3 +106,14 @@ class LayoutIn(BaseModel):
 
 class LayoutOut(LayoutIn):
     pass
+
+
+class RiskIn(BaseModel):
+    """Níveis na moeda do ativo; null desativa o nível."""
+    stop_loss: Decimal | None = Field(default=None, gt=0, max_digits=28, decimal_places=10)
+    take_profit: Decimal | None = Field(default=None, gt=0, max_digits=28, decimal_places=10)
+
+
+class RiskOut(RiskIn):
+    asset_id: int
+    currency: Currency

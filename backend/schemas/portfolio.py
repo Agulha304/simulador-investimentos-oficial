@@ -23,6 +23,8 @@ class HoldingOut(BaseModel):
     avg_price_brl: Decimal
     total_cost_brl: Decimal
     current_price_brl: Decimal | None
+    stop_loss: Decimal | None = None          # na moeda do ativo
+    take_profit: Decimal | None = None
     market_value_brl: Decimal
     pnl_brl: Decimal
     pnl_pct: Decimal | None

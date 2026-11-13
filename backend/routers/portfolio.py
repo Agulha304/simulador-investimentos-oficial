@@ -30,6 +30,8 @@ def get_portfolio(user: CurrentUser, db: DbSession):
                 avg_price_brl=v.holding.avg_price_brl,
                 total_cost_brl=v.holding.total_cost_brl,
                 current_price_brl=v.current_price_brl,
+                stop_loss=v.holding.stop_loss,
+                take_profit=v.holding.take_profit,
                 market_value_brl=v.market_value_brl,
                 pnl_brl=v.pnl_brl,
                 pnl_pct=v.pnl_pct,

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { StatCard } from "../components/StatCard";
 import { api, type PortfolioSummary } from "../services/api";
-import { CLASS_LABEL, fmtBRL, fmtPct, fmtQty, trend } from "../lib/format";
+import { CLASS_LABEL, fmtBRL, fmtMoney, fmtPct, fmtQty, trend } from "../lib/format";
 
 export function PortfolioPage() {
   const [data, setData] = useState<PortfolioSummary | null>(null);
@@ -37,7 +37,7 @@ export function PortfolioPage() {
         <h2>Posições</h2>
         {data.holdings.length === 0 ? <div className="empty">Nenhuma posição. Use a busca para encontrar um ativo.</div> : (
           <div className="table-wrap"><table>
-            <thead><tr><th>Ativo</th><th className="r">Qtd.</th><th className="r">Preço médio</th><th className="r">Preço atual</th><th className="r">Valor atual</th><th className="r">Resultado</th></tr></thead>
+            <thead><tr><th>Ativo</th><th className="r">Qtd.</th><th className="r">Preço médio</th><th className="r">Preço atual</th><th className="r">Valor atual</th><th className="r">Resultado</th><th className="r">Stop Loss</th><th className="r">Take Profit</th></tr></thead>
             <tbody>{data.holdings.map((h) => (
               <tr key={h.asset.id}>
                 <td><Link to={`/ativo/${h.asset.id}`}><b>{h.asset.symbol}</b></Link> <span className="tag">{CLASS_LABEL[h.asset.asset_class]}</span></td>
@@ -46,6 +46,8 @@ export function PortfolioPage() {
                 <td className="r num">{h.current_price_brl ? fmtBRL(h.current_price_brl) : <span className="tone-warn">indisp.</span>}</td>
                 <td className="r num">{fmtBRL(h.market_value_brl)}</td>
                 <td className={`r num tone-${trend(h.pnl_brl)}`}>{fmtBRL(h.pnl_brl)} ({fmtPct(h.pnl_pct)})</td>
+                <td className="r num tone-down">{h.stop_loss ? fmtMoney(h.stop_loss, h.asset.currency) : <span className="muted">—</span>}</td>
+                <td className="r num tone-up">{h.take_profit ? fmtMoney(h.take_profit, h.asset.currency) : <span className="muted">—</span>}</td>
               </tr>))}</tbody>
           </table></div>
         )}

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useParams } from "react-router-dom";
+import { RiskPanel } from "../components/RiskPanel";
 import { ChartPanel } from "../components/ChartPanel";
 import { StatCard } from "../components/StatCard";
 import { api, type Asset, type PortfolioSummary, type Quote } from "../services/api";
@@ -57,7 +58,10 @@ export function AssetPage() {
 
       <div className="trade-grid">
         <ChartPanel assetId={asset.id} />
-        <TradePanel asset={asset} quote={quote} cash={pf?.cash_balance} owned={holding?.quantity} onDone={loadPortfolio} />
+        <div className="side-stack">
+          <TradePanel asset={asset} quote={quote} cash={pf?.cash_balance} owned={holding?.quantity} onDone={loadPortfolio} />
+          {holding && <RiskPanel asset={asset} quote={quote} holding={holding} onSaved={loadPortfolio} />}
+        </div>
       </div>
     </div>
   );

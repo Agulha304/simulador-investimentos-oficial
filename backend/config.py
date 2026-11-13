@@ -20,6 +20,7 @@ class Settings(BaseSettings):
 
     initial_balance: Decimal = Decimal("100000.00")
     scheduler_enabled: bool = True
+    risk_check_interval_seconds: int = 120   # Stop Loss / Take Profit
 
     cors_origins: str = "http://localhost:5173"
     log_level: str = "INFO"

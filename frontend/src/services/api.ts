@@ -9,6 +9,8 @@ export interface Holding {
   avg_price_brl: Decimal;
   total_cost_brl: Decimal;
   current_price_brl: Decimal | null;
+  stop_loss: Decimal | null;      // na moeda do ativo
+  take_profit: Decimal | null;
   market_value_brl: Decimal;
   pnl_brl: Decimal;
   pnl_pct: Decimal | null;
@@ -105,6 +107,9 @@ export const api = {
     request<Transaction>("/trades/buy", { method: "POST", headers: { "Idempotency-Key": crypto.randomUUID() }, body: JSON.stringify({ asset_id, ...body }) }),
   sell: (asset_id: number, quantity: string) =>
     request<Transaction>("/trades/sell", { method: "POST", headers: { "Idempotency-Key": crypto.randomUUID() }, body: JSON.stringify({ asset_id, quantity }) }),
+  setRisk: (asset_id: number, stop_loss: string | null, take_profit: string | null) =>
+    request<{ asset_id: number; currency: string; stop_loss: Decimal | null; take_profit: Decimal | null }>(
+      `/trades/risk/${asset_id}`, { method: "PUT", body: JSON.stringify({ stop_loss, take_profit }) }),
   deposit: (amount: string) => request<Transaction>("/portfolio/deposit", { method: "POST", body: JSON.stringify({ amount }) }),
   portfolio: () => request<PortfolioSummary>("/portfolio"),
   transactions: (limit = 20) => request<Transaction[]>(`/portfolio/transactions?limit=${limit}`),
