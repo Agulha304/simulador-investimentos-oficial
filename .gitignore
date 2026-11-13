@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+
+# Ambiente / segredos
+.env
+
+# Banco local de desenvolvimento
+.pgdata/
+
+# Ferramentas locais (Node portátil)
+.tools/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+
+# Editor / SO
+.vscode/
+.idea/
+*:Zone.Identifier
+.DS_Store
+frontend/*.tsbuildinfo
