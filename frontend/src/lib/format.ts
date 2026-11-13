@@ -25,3 +25,10 @@ export const TX_LABEL: Record<string, string> = {
   FIXED_INCOME_COUPON: "Cupom RF",
   FIXED_INCOME_MATURITY: "Vencimento RF",
 };
+
+export const CLASS_LABEL: Record<string, string> = {
+  STOCK: "Ação", ETF: "ETF", FII: "FII", REIT: "REIT", CRYPTO: "Criptomoeda", BDR: "BDR",
+};
+
+const usd = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 4 });
+export const fmtMoney = (v: string, currency: string) => (currency === "USD" ? usd.format(Number(v)) : fmtBRL(v));

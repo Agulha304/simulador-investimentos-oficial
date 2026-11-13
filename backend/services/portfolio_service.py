@@ -1,7 +1,7 @@
 """Cálculos da carteira (patrimônio, resultado). Sem efeitos colaterais.
 
-Na Fase 1 o valor de mercado das posições é igual ao custo (ainda não há
-cotação). A Fase 2 injeta preços via services/market_data.py.
+Posições são avaliadas pela cotação atual (market_data), convertida para BRL.
+Se a cotação estiver indisponível, a posição é avaliada pelo custo.
 """
 from dataclasses import dataclass, field
 from decimal import Decimal
@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from backend.core.money import quantize_money
 from backend.models import Holding, Portfolio, Transaction, TransactionType
+from backend.services import market_data
 
 
 @dataclass
@@ -54,7 +55,10 @@ def build_summary(db: Session, portfolio: Portfolio) -> PortfolioSummary:
     for h in portfolio.holdings:
         if h.quantity <= 0:
             continue
-        price = None  # Fase 2: market_data.get_price_brl(h.asset)
+        try:
+            price = market_data.get_priced_quote(h.asset).price_brl
+        except market_data.MarketDataUnavailable:
+            price = None  # sem cotação: avalia pelo custo e sinaliza com current_price_brl = null
         value = quantize_money(h.quantity * price) if price is not None else h.total_cost_brl
         pnl = quantize_money(value - h.total_cost_brl)
         views.append(HoldingView(h, price, value, pnl, _pct(pnl, h.total_cost_brl)))

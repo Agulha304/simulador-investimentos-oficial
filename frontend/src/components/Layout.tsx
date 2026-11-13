@@ -1,9 +1,10 @@
 import { NavLink, Outlet } from "react-router-dom";
 import { useAuth } from "../services/auth";
+import { SearchBar } from "./SearchBar";
 
 const NAV = [
   { to: "/", label: "Dashboard", ready: true },
-  { to: "/carteira", label: "Carteira", ready: false },
+  { to: "/carteira", label: "Carteira", ready: true },
   { to: "/renda-fixa", label: "Renda Fixa", ready: false },
   { to: "/historico", label: "Histórico", ready: false },
 ];
@@ -42,7 +43,10 @@ export function Layout() {
         </div>
       </aside>
       <main className="content">
-        <div className="sim-banner">Ambiente simulado — nenhuma operação envolve dinheiro real.</div>
+        <div className="topbar">
+          <SearchBar />
+          <div className="sim-banner">Ambiente simulado — sem dinheiro real.</div>
+        </div>
         <Outlet />
       </main>
     </div>

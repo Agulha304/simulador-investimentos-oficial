@@ -82,10 +82,18 @@ scripts/dev_db.sh start
   Os enums são gravados como `VARCHAR + CHECK`, e não como ENUM nativo, para facilitar novas classes.
   A renda fixa terá modelo próprio (produto + investimento + fluxo de caixa).
 
+## Dados de mercado
+
+`services/market_data.py` é o único módulo que conhece a fonte (hoje o endpoint público de gráficos do Yahoo
+Finance, sem chave). Ele tem cache (60 s cotações, 5 min câmbio), tenta de novo em caso de erro e, se a fonte cair,
+usa a última cotação em cache. Cotações vêm na moeda do ativo e são convertidas para BRL no momento da operação
+(`fx_rate` e preço original ficam gravados na transação). Para trocar de fonte, implemente `MarketDataProvider`.
+A fonte é não oficial e pode limitar requisições; os testes usam um provedor falso, sem rede.
+
 ## Roadmap
 
 - [x] **Fase 1: Fundação.** Estrutura, banco, migrations, autenticação JWT, carteira, saldo, livro-razão e dashboard
-- [ ] Fase 2: Ações e mercado. `market_data` (camada isolada), pesquisa, cotações, câmbio USD/BRL, compra/venda e preço médio
+- [x] **Fase 2: Ações e mercado.** `market_data` (camada isolada, Yahoo Finance via HTTP), catálogo + pesquisa sem acentos, cotações, câmbio USD/BRL, compra/venda, preço médio, depósito virtual
 - [ ] Fase 3: Dashboard e gráficos. Candles (lightweight-charts), períodos e indicadores
 - [ ] Fase 4: Ferramentas de desenho ancoradas em tempo/preço
 - [ ] Fase 5: Stop Loss / Take Profit com worker

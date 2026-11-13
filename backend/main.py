@@ -7,8 +7,9 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from backend.config import get_settings
 from backend.core.logging import setup_logging
-from backend.database import check_connection
-from backend.routers import auth, health, portfolio
+from backend.database import SessionLocal, check_connection
+from backend.routers import assets, auth, health, portfolio, trades
+from backend.services.asset_catalog import seed_assets
 from backend.workers.scheduler import shutdown_scheduler, start_scheduler
 
 settings = get_settings()
@@ -21,6 +22,8 @@ async def lifespan(_: FastAPI):
     try:
         check_connection()
         log.info("conexão com o banco OK")
+        with SessionLocal() as db:
+            seed_assets(db)
     except Exception as exc:  # noqa: BLE001
         log.error("não foi possível conectar ao banco: %s", exc)
     if settings.scheduler_enabled:
@@ -32,7 +35,7 @@ async def lifespan(_: FastAPI):
 app = FastAPI(
     title="Simulador de Investimentos",
     description="Simulador educacional — nenhuma operação envolve dinheiro real.",
-    version="0.1.0",
+    version="0.2.0",
     lifespan=lifespan,
 )
 app.add_middleware(
@@ -47,3 +50,5 @@ API_PREFIX = "/api"
 app.include_router(health.router, prefix=API_PREFIX)
 app.include_router(auth.router, prefix=API_PREFIX)
 app.include_router(portfolio.router, prefix=API_PREFIX)
+app.include_router(assets.router, prefix=API_PREFIX)
+app.include_router(trades.router, prefix=API_PREFIX)

@@ -3,6 +3,8 @@ import { Layout } from "./components/Layout";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 import { AuthPage } from "./pages/AuthPage";
 import { DashboardPage } from "./pages/DashboardPage";
+import { AssetPage } from "./pages/AssetPage";
+import { PortfolioPage } from "./pages/PortfolioPage";
 import { AuthProvider } from "./services/auth";
 
 export default function App() {
@@ -15,6 +17,8 @@ export default function App() {
           <Route element={<ProtectedRoute />}>
             <Route element={<Layout />}>
               <Route index element={<DashboardPage />} />
+              <Route path="carteira" element={<PortfolioPage />} />
+              <Route path="ativo/:id" element={<AssetPage />} />
             </Route>
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />

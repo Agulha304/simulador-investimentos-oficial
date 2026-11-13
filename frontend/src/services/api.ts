@@ -42,6 +42,15 @@ export interface Transaction {
   created_at: string;
 }
 
+export interface Asset extends AssetBrief {
+  exchange: string; country: string | null; allows_fractional: boolean;
+}
+
+export interface Quote {
+  asset_id: number; price: Decimal; currency: string; fx_rate: Decimal; price_brl: Decimal;
+  change_pct: Decimal | null; as_of: string;
+}
+
 export interface User { id: number; email: string; name: string; created_at: string }
 
 const TOKEN_KEY = "sim.token";
@@ -80,6 +89,14 @@ export const api = {
   login: (email: string, password: string) =>
     request<{ access_token: string }>("/auth/login", { method: "POST", body: JSON.stringify({ email, password }) }),
   me: () => request<User>("/auth/me"),
+  searchAssets: (q: string) => request<Asset[]>(`/assets/search?q=${encodeURIComponent(q)}`),
+  asset: (id: number) => request<Asset>(`/assets/${id}`),
+  quote: (id: number) => request<Quote>(`/assets/${id}/quote`),
+  buy: (asset_id: number, body: { quantity?: string; amount_brl?: string }) =>
+    request<Transaction>("/trades/buy", { method: "POST", headers: { "Idempotency-Key": crypto.randomUUID() }, body: JSON.stringify({ asset_id, ...body }) }),
+  sell: (asset_id: number, quantity: string) =>
+    request<Transaction>("/trades/sell", { method: "POST", headers: { "Idempotency-Key": crypto.randomUUID() }, body: JSON.stringify({ asset_id, quantity }) }),
+  deposit: (amount: string) => request<Transaction>("/portfolio/deposit", { method: "POST", body: JSON.stringify({ amount }) }),
   portfolio: () => request<PortfolioSummary>("/portfolio"),
   transactions: (limit = 20) => request<Transaction[]>(`/portfolio/transactions?limit=${limit}`),
 };

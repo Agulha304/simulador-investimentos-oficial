@@ -38,6 +38,7 @@ class Transaction(Base):
     tax_brl: Mapped[Decimal] = mapped_column(Money(), default=Decimal("0"))
     fee_brl: Mapped[Decimal] = mapped_column(Money(), default=Decimal("0"))
     cash_amount_brl: Mapped[Decimal] = mapped_column(Money())            # efeito assinado no caixa
+    realized_pnl_brl: Mapped[Decimal | None] = mapped_column(Money())    # só em vendas: resultado realizado
     cash_balance_after: Mapped[Decimal] = mapped_column(Money())
 
     idempotency_key: Mapped[str | None] = mapped_column(String(128), unique=True)

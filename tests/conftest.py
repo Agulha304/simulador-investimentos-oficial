@@ -51,3 +51,44 @@ def auth_headers(client):
     r = client.post("/api/auth/register", json={"email": "ana@example.com", "name": "Ana", "password": "segredo123"})
     assert r.status_code == 201, r.text
     return {"Authorization": f"Bearer {r.json()['access_token']}"}
+
+
+# ---------------------------------------------------------------- mercado falso
+from datetime import UTC, datetime  # noqa: E402
+from decimal import Decimal  # noqa: E402
+
+from backend.models import Currency  # noqa: E402
+from backend.services import market_data  # noqa: E402
+
+
+class FakeProvider:
+    """Cotações determinísticas: USD/BRL 5,20; AAPL US$ 300; PETR4 R$ 40; BTC US$ 100.000."""
+    def __init__(self):
+        self.prices = {   # cópia por teste: os testes podem alterar preços
+            "USDBRL=X": ("5.20", Currency.BRL), "AAPL": ("300", Currency.USD),
+            "PETR4.SA": ("40", Currency.BRL), "BTC-USD": ("100000", Currency.USD),
+        }
+
+    def get_quote(self, provider_symbol):
+        if provider_symbol not in self.prices:
+            raise market_data.MarketDataUnavailable(provider_symbol)
+        price, cur = self.prices[provider_symbol]
+        return market_data.Quote(Decimal(price), cur, datetime.now(UTC), Decimal(price) * Decimal("0.99"))
+
+    def search(self, query):
+        return []
+
+
+@pytest.fixture(autouse=True)
+def _fake_market():
+    provider = FakeProvider()
+    market_data.set_provider(provider)
+    yield provider
+    market_data.clear_cache()
+
+
+@pytest.fixture
+def assets(client, db):
+    from sqlalchemy import select
+    from backend.models import Asset
+    return {a.symbol: a for a in db.scalars(select(Asset))}

@@ -58,5 +58,6 @@ class TransactionOut(BaseModel):
     fee_brl: Decimal
     cash_amount_brl: Decimal
     cash_balance_after: Decimal
+    realized_pnl_brl: Decimal | None = None
     note: str | None
     created_at: datetime

@@ -106,3 +106,30 @@ input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px 
   .content { padding: 16px; }
   .stats-grid { grid-template-columns: 1fr; }
 }
+
+/* Fase 2 */
+.topbar { display: flex; gap: 16px; align-items: center; margin-bottom: 20px; }
+.topbar .sim-banner { margin: 0 0 0 auto; white-space: nowrap; }
+.search { position: relative; flex: 1; max-width: 560px; }
+.search input { width: 100%; }
+.search-results { position: absolute; z-index: 20; top: calc(100% + 6px); left: 0; right: 0; margin: 0; padding: 6px; list-style: none; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 12px 32px rgba(0,0,0,.45); }
+.search-results li { display: flex; gap: 10px; align-items: center; padding: 8px 10px; border-radius: 8px; cursor: pointer; }
+.search-results li:hover { background: var(--surface-2); }
+.grow { flex: 1; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tone-warn { color: var(--warn); }
+.trade-grid { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 16px; align-items: start; }
+.trade { display: flex; flex-direction: column; gap: 12px; }
+.trade .row, .row { display: flex; justify-content: space-between; }
+.seg { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 3px; gap: 3px; }
+.seg button { font: inherit; border: 0; background: transparent; color: var(--text-muted); padding: 8px; border-radius: 6px; cursor: pointer; font-weight: 600; }
+.seg.small button { padding: 5px; font-size: 12px; }
+.seg button.on { background: var(--surface-2); color: var(--text); }
+.seg button.on.buy { background: color-mix(in srgb, var(--up) 22%, transparent); color: var(--up); }
+.seg button.on.sell { background: color-mix(in srgb, var(--down) 22%, transparent); color: var(--down); }
+.btn.danger { background: var(--down); color: #1a0507; }
+.ok { background: color-mix(in srgb, var(--up) 12%, transparent); border: 1px solid color-mix(in srgb, var(--up) 40%, transparent); color: #a8f0d2; padding: 10px 12px; border-radius: 8px; font-size: 13px; }
+.inline-form p { margin: 0 0 10px; }
+.row-gap { display: flex; gap: 10px; max-width: 420px; }
+.row-gap input { flex: 1; }
+@media (max-width: 1000px) { .trade-grid { grid-template-columns: 1fr; } }
+@media (max-width: 760px) { .topbar { flex-direction: column; align-items: stretch; } .topbar .sim-banner { margin: 0; white-space: normal; } }
