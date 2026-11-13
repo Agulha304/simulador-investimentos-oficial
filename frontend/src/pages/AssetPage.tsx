@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useParams } from "react-router-dom";
+import { ChartPanel } from "../components/ChartPanel";
 import { StatCard } from "../components/StatCard";
 import { api, type Asset, type PortfolioSummary, type Quote } from "../services/api";
 import { CLASS_LABEL, fmtBRL, fmtDate, fmtMoney, fmtPct, fmtQty, trend } from "../lib/format";
@@ -55,7 +56,7 @@ export function AssetPage() {
       {quoteError && <div className="alert">{quoteError}</div>}
 
       <div className="trade-grid">
-        <section className="card"><h2>Gráfico</h2><div className="empty">O gráfico histórico chega na próxima fase.</div></section>
+        <ChartPanel assetId={asset.id} />
         <TradePanel asset={asset} quote={quote} cash={pf?.cash_balance} owned={holding?.quantity} onDone={loadPortfolio} />
       </div>
     </div>

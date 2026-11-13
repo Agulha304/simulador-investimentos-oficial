@@ -51,6 +51,11 @@ export interface Quote {
   change_pct: Decimal | null; as_of: string;
 }
 
+export interface Candle { time: number; open: Decimal; high: Decimal; low: Decimal; close: Decimal; volume: Decimal }
+export interface IndicatorData { kind: "overlay" | "pane"; series: Record<string, (Decimal | null)[]> }
+export interface ChartData { asset_id: number; period: string; currency: string; candles: Candle[]; indicators: Record<string, IndicatorData> }
+export interface ChartLayout { indicators: string[]; drawings: Record<string, unknown>[] }
+
 export interface User { id: number; email: string; name: string; created_at: string }
 
 const TOKEN_KEY = "sim.token";
@@ -92,6 +97,10 @@ export const api = {
   searchAssets: (q: string) => request<Asset[]>(`/assets/search?q=${encodeURIComponent(q)}`),
   asset: (id: number) => request<Asset>(`/assets/${id}`),
   quote: (id: number) => request<Quote>(`/assets/${id}/quote`),
+  chart: (id: number, period: string, indicators: string[]) =>
+    request<ChartData>(`/assets/${id}/chart?period=${period}&indicators=${encodeURIComponent(indicators.join(","))}`),
+  layout: (id: number) => request<ChartLayout>(`/assets/${id}/layout`),
+  saveLayout: (id: number, layout: ChartLayout) => request<ChartLayout>(`/assets/${id}/layout`, { method: "PUT", body: JSON.stringify(layout) }),
   buy: (asset_id: number, body: { quantity?: string; amount_brl?: string }) =>
     request<Transaction>("/trades/buy", { method: "POST", headers: { "Idempotency-Key": crypto.randomUUID() }, body: JSON.stringify({ asset_id, ...body }) }),
   sell: (asset_id: number, quantity: string) =>

@@ -94,7 +94,7 @@ A fonte é não oficial e pode limitar requisições; os testes usam um provedor
 
 - [x] **Fase 1: Fundação.** Estrutura, banco, migrations, autenticação JWT, carteira, saldo, livro-razão e dashboard
 - [x] **Fase 2: Ações e mercado.** `market_data` (camada isolada, Yahoo Finance via HTTP), catálogo + pesquisa sem acentos, cotações, câmbio USD/BRL, compra/venda, preço médio, depósito virtual
-- [ ] Fase 3: Dashboard e gráficos. Candles (lightweight-charts), períodos e indicadores
+- [x] **Fase 3: Gráficos.** Candles/linha (lightweight-charts v5), 7 períodos, 10 indicadores calculados no backend (`services/indicators.py`), painéis separados, layout salvo por usuário e ativo
 - [ ] Fase 4: Ferramentas de desenho ancoradas em tempo/preço
 - [ ] Fase 5: Stop Loss / Take Profit com worker
 - [ ] Fase 6: Proventos. Descoberta, elegibilidade histórica e pagamentos

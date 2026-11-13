@@ -29,7 +29,7 @@ def _migrate():
 def _clean_db():
     yield
     with engine.begin() as conn:
-        conn.execute(text("TRUNCATE transactions, holdings, portfolios, assets, users RESTART IDENTITY CASCADE"))
+        conn.execute(text("TRUNCATE chart_layouts, transactions, holdings, portfolios, assets, users RESTART IDENTITY CASCADE"))
 
 
 @pytest.fixture
@@ -74,6 +74,16 @@ class FakeProvider:
             raise market_data.MarketDataUnavailable(provider_symbol)
         price, cur = self.prices[provider_symbol]
         return market_data.Quote(Decimal(price), cur, datetime.now(UTC), Decimal(price) * Decimal("0.99"))
+
+    def get_history(self, provider_symbol, period):
+        if provider_symbol not in self.prices:
+            raise market_data.MarketDataUnavailable(provider_symbol)
+        base = Decimal(self.prices[provider_symbol][0])
+        out = []
+        for i in range(120):   # onda determinística
+            close = base + Decimal((i % 10) - 5) + Decimal(i) / 10
+            out.append(market_data.Candle(1_700_000_000 + i * 86_400, close - 1, close + 2, close - 2, close, Decimal(1000 + i)))
+        return out
 
     def search(self, query):
         return []

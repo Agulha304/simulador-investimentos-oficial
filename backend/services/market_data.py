@@ -46,8 +46,27 @@ class SearchHit:
     exchange: str
 
 
+@dataclass(frozen=True)
+class Candle:
+    time: int                         # unix seconds (UTC)
+    open: Decimal
+    high: Decimal
+    low: Decimal
+    close: Decimal
+    volume: Decimal
+
+
+# período -> (range, interval) na fonte
+HISTORY_RANGES: dict[str, tuple[str, str]] = {
+    "1d": ("1d", "5m"), "5d": ("5d", "15m"), "1mo": ("1mo", "1d"), "6mo": ("6mo", "1d"),
+    "1y": ("1y", "1d"), "5y": ("5y", "1wk"), "max": ("max", "1mo"),
+}
+INTRADAY_RANGES = {"1d", "5d"}
+
+
 class MarketDataProvider(Protocol):
     def get_quote(self, provider_symbol: str) -> Quote: ...
+    def get_history(self, provider_symbol: str, period: str) -> list[Candle]: ...
     def search(self, query: str) -> list[SearchHit]: ...
 
 
@@ -93,6 +112,28 @@ class YahooProvider:
             prev = to_decimal(closes[idx])
         return Quote(quantize_price(price), currency, as_of, quantize_price(prev) if prev else None)
 
+    def get_history(self, provider_symbol: str, period: str) -> list[Candle]:
+        rng, interval = HISTORY_RANGES[period]
+        data = self._get(self.CHART.format(symbol=provider_symbol), {"range": rng, "interval": interval})
+        try:
+            result = data["chart"]["result"][0]
+            stamps = result["timestamp"]
+            q = result["indicators"]["quote"][0]
+        except (KeyError, IndexError, TypeError) as exc:
+            raise MarketDataUnavailable(f"sem histórico para {provider_symbol}") from exc
+        candles = []
+        for i, ts in enumerate(stamps):
+            o, h, l, c = q["open"][i], q["high"][i], q["low"][i], q["close"][i]
+            if None in (o, h, l, c):
+                continue
+            v = q["volume"][i] or 0
+            # a fonte devolve floats com ruído binário (45.299999): 4 casas, ou 8 para preços < 1 (cripto barata)
+            prec = Decimal("0.0001") if to_decimal(c) >= 1 else Decimal("0.00000001")
+            candles.append(Candle(int(ts), *(to_decimal(x).quantize(prec) for x in (o, h, l, c)), to_decimal(v)))
+        if not candles:
+            raise MarketDataUnavailable(f"histórico vazio para {provider_symbol}")
+        return candles
+
     def search(self, query: str) -> list[SearchHit]:
         data = self._get(self.SEARCH, {"q": query, "quotesCount": 8, "newsCount": 0})
         hits = []
@@ -128,6 +169,7 @@ def set_provider(p: MarketDataProvider) -> None:
 def clear_cache() -> None:
     with _lock:
         _cache.clear()
+        _hist_cache.clear()
 
 
 def _cached_quote(provider_symbol: str, ttl: float) -> Quote:
@@ -178,6 +220,33 @@ def get_priced_quote(asset: Asset) -> PricedQuote:
     fx = get_fx_rate(quote.currency)
     prev = quantize_price(quote.previous_close * fx) if quote.previous_close else None
     return PricedQuote(quote, fx, quantize_price(quote.price * fx), prev)
+
+
+_hist_cache: dict[tuple[str, str], tuple[float, list[Candle]]] = {}
+
+
+def get_history(asset: Asset, period: str) -> list[Candle]:
+    """Candles OHLCV na moeda do ativo. Cache curto (intraday) ou longo (diário+)."""
+    if period not in HISTORY_RANGES:
+        raise ValueError(f"período inválido: {period}")
+    ttl = 60.0 if period in INTRADAY_RANGES else 900.0
+    key, now = (asset.provider_symbol, period), time.monotonic()
+    with _lock:
+        hit = _hist_cache.get(key)
+        if hit and now - hit[0] < ttl:
+            return hit[1]
+    try:
+        candles = _provider.get_history(asset.provider_symbol, period)
+    except MarketDataUnavailable:
+        with _lock:
+            stale = _hist_cache.get(key)
+        if stale:
+            log.warning("usando histórico em cache: %s %s", *key)
+            return stale[1]
+        raise
+    with _lock:
+        _hist_cache[key] = (now, candles)
+    return candles
 
 
 def search_remote(query: str) -> list[SearchHit]:
