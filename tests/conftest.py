@@ -67,7 +67,8 @@ class FakeProvider:
         self.prices = {   # cópia por teste: os testes podem alterar preços
             "USDBRL=X": ("5.20", Currency.BRL), "AAPL": ("300", Currency.USD),
             "PETR4.SA": ("40", Currency.BRL), "BTC-USD": ("100000", Currency.USD),
-            "HGLG11.SA": ("160", Currency.BRL),
+            "HGLG11.SA": ("160", Currency.BRL), "O": ("55", Currency.USD), "SPY": ("500", Currency.USD),
+            "BOVA11.SA": ("130", Currency.BRL),
         }
         self.dividends = {}          # provider_symbol -> [DividendEvent]
         self.dividends_down = set()  # símbolos cuja consulta de dividendos falha

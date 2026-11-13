@@ -1,12 +1,14 @@
+from concurrent.futures import ThreadPoolExecutor
 from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query
 from sqlalchemy import select
 
 from backend.dependencies import CurrentUser, DbSession
-from backend.models import Asset
-from backend.schemas.market import AssetOut, CandleOut, ChartOut, IndicatorOut, Drawing, LayoutIn, LayoutOut, QuoteOut
-from backend.models import ChartLayout
+from backend.models import Asset, AssetClass, ChartLayout
+from backend.schemas.market import (
+    AssetOut, CandleOut, ChartOut, Drawing, IndicatorOut, LayoutIn, LayoutOut, QuoteBrief, QuoteOut,
+)
 from backend.services import asset_catalog, indicators, market_data
 
 router = APIRouter(prefix="/assets", tags=["assets"])
@@ -22,6 +24,43 @@ def _get_asset(db, asset_id: int) -> Asset:
 @router.get("/search", response_model=list[AssetOut])
 def search_assets(_: CurrentUser, db: DbSession, q: str = Query(min_length=1, max_length=60)):
     return asset_catalog.search(db, q)
+
+
+@router.get("", response_model=list[AssetOut])
+def list_assets(
+    _: CurrentUser, db: DbSession,
+    asset_class: AssetClass | None = None, country: Annotated[str | None, Query(pattern="^[A-Za-z]{2}$")] = None,
+    limit: Annotated[int, Query(ge=1, le=200)] = 60, offset: Annotated[int, Query(ge=0)] = 0,
+):
+    """Navegação por classe (ações, ETFs, FIIs, REITs, cripto) e país."""
+    q = select(Asset).where(Asset.is_active)
+    if asset_class:
+        q = q.where(Asset.asset_class == asset_class)
+    if country:
+        q = q.where(Asset.country == country.upper())
+    return list(db.scalars(q.order_by(Asset.symbol).limit(limit).offset(offset)))
+
+
+@router.get("/quotes", response_model=list[QuoteBrief])
+def get_quotes(_: CurrentUser, db: DbSession, ids: Annotated[str, Query(max_length=400)]):
+    """Cotações de vários ativos de uma vez. Ativos sem cotação disponível são omitidos."""
+    try:
+        wanted = list(dict.fromkeys(int(x) for x in ids.split(",") if x.strip()))[:40]
+    except ValueError:
+        raise HTTPException(422, "ids inválidos") from None
+    assets = {a.id: a for a in db.scalars(select(Asset).where(Asset.id.in_(wanted), Asset.is_active))}
+
+    def one(a: Asset) -> QuoteBrief | None:
+        try:
+            pq = market_data.get_priced_quote(a)
+        except market_data.MarketDataUnavailable:
+            return None
+        return QuoteBrief(asset_id=a.id, price=pq.quote.price, currency=pq.quote.currency,
+                          price_brl=pq.price_brl, change_pct=pq.quote.change_pct)
+
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        results = list(pool.map(one, [assets[i] for i in wanted if i in assets]))
+    return [r for r in results if r is not None]
 
 
 @router.get("/{asset_id}", response_model=AssetOut)

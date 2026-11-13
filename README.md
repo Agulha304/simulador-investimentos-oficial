@@ -98,5 +98,5 @@ A fonte é não oficial e pode limitar requisições; os testes usam um provedor
 - [x] **Fase 4: Ferramentas de desenho.** Tendência, raio, horizontal, suporte, resistência e marcação, ancorados em (tempo, preço) via primitivas do gráfico; salvos no banco por usuário e ativo
 - [x] **Fase 5: Stop Loss / Take Profit.** Níveis na moeda do ativo, worker a cada 2 min, venda total a mercado, revalidação sob lock + chave idempotente (`sltp:{holding}:{versão}`)
 - [x] **Fase 6: Proventos.** Descoberta (fonte), elegibilidade reconstruída pelas transações na data EX, pagamento com câmbio e imposto (`tax_service`), constraints únicas e chave idempotente; página Histórico
-- [ ] Fase 7: Cripto, FIIs, REITs e ETFs
+- [x] **Fase 7: Cripto, FIIs, REITs e ETFs.** Listagem por classe/país, cotações em lote (página Mercado), compra e venda de cripto por valor em reais, distribuições de REITs/ETFs testadas
 - [ ] Fase 8: Renda fixa (Tesouro, CDB, LCI/LCA, CRI/CRA, debêntures) e IR

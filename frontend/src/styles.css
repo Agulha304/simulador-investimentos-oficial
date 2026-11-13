@@ -170,3 +170,7 @@ kbd { font-family: var(--mono); font-size: 11px; border: 1px solid var(--border)
 /* Fase 6 */
 .tabs { align-self: flex-start; }
 .tag.paid { background: color-mix(in srgb, var(--up) 20%, transparent); color: var(--up); }
+
+/* Fase 7 */
+.link-btn { font: inherit; font-size: 12px; background: none; border: 0; color: var(--accent); cursor: pointer; margin-left: 8px; padding: 0; }
+.link-btn:hover { text-decoration: underline; }

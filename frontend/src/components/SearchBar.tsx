@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, type Asset } from "../services/api";
-import { CLASS_LABEL } from "../lib/format";
+import { CLASS_LABEL, COUNTRY_LABEL } from "../lib/format";
 
 export function SearchBar() {
   const navigate = useNavigate();
@@ -45,7 +45,7 @@ export function SearchBar() {
               <b>{a.symbol}</b>
               <span className="grow">{a.name}</span>
               <span className="tag">{CLASS_LABEL[a.asset_class] ?? a.asset_class}</span>
-              <span className="muted small">{a.country ?? "Global"}</span>
+              <span className="muted small">{a.country ? COUNTRY_LABEL[a.country] ?? a.country : "Global"}</span>
             </li>
           ))}
         </ul>

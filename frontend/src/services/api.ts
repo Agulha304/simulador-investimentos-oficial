@@ -70,6 +70,8 @@ export interface IndicatorData { kind: "overlay" | "pane"; series: Record<string
 export interface ChartData { asset_id: number; period: string; currency: string; candles: Candle[]; indicators: Record<string, IndicatorData> }
 export interface ChartLayout { indicators: string[]; drawings: Record<string, unknown>[] }
 
+export interface QuoteBrief { asset_id: number; price: Decimal; currency: string; price_brl: Decimal; change_pct: Decimal | null }
+
 export interface User { id: number; email: string; name: string; created_at: string }
 
 const TOKEN_KEY = "sim.token";
@@ -117,8 +119,13 @@ export const api = {
   saveLayout: (id: number, layout: ChartLayout) => request<ChartLayout>(`/assets/${id}/layout`, { method: "PUT", body: JSON.stringify(layout) }),
   buy: (asset_id: number, body: { quantity?: string; amount_brl?: string }) =>
     request<Transaction>("/trades/buy", { method: "POST", headers: { "Idempotency-Key": crypto.randomUUID() }, body: JSON.stringify({ asset_id, ...body }) }),
-  sell: (asset_id: number, quantity: string) =>
-    request<Transaction>("/trades/sell", { method: "POST", headers: { "Idempotency-Key": crypto.randomUUID() }, body: JSON.stringify({ asset_id, quantity }) }),
+  sell: (asset_id: number, body: { quantity?: string; amount_brl?: string }) =>
+    request<Transaction>("/trades/sell", { method: "POST", headers: { "Idempotency-Key": crypto.randomUUID() }, body: JSON.stringify({ asset_id, ...body }) }),
+  assets: (params: { asset_class?: string; country?: string; limit?: number }) => {
+    const q = new URLSearchParams(Object.entries(params).filter(([, v]) => v != null).map(([k, v]) => [k, String(v)]));
+    return request<Asset[]>(`/assets?${q}`);
+  },
+  quotes: (ids: number[]) => request<QuoteBrief[]>(`/assets/quotes?ids=${ids.join(",")}`),
   setRisk: (asset_id: number, stop_loss: string | null, take_profit: string | null) =>
     request<{ asset_id: number; currency: string; stop_loss: Decimal | null; take_profit: Decimal | null }>(
       `/trades/risk/${asset_id}`, { method: "PUT", body: JSON.stringify({ stop_loss, take_profit }) }),

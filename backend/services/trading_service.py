@@ -91,18 +91,32 @@ def buy(db: Session, portfolio_id: int, asset: Asset, *, quantity: Decimal | Non
     return tx
 
 
-def sell(db: Session, portfolio_id: int, asset: Asset, *, quantity: Decimal,
-         source: TransactionSource = TransactionSource.USER, idempotency_key: str | None = None,
-         note: str | None = None) -> Transaction:
-    qty = quantize_quantity(to_decimal(quantity))
-    if qty <= 0:
-        raise TradeError("a quantidade deve ser positiva")
-    if not asset.allows_fractional and qty != qty.to_integral_value():
-        raise TradeError(f"{asset.symbol} só pode ser negociado em quantidades inteiras")
+def sell(db: Session, portfolio_id: int, asset: Asset, *, quantity: Decimal | None = None,
+         amount_brl: Decimal | None = None, source: TransactionSource = TransactionSource.USER,
+         idempotency_key: str | None = None, note: str | None = None) -> Transaction:
+    """Vende por quantidade ou, em ativos fracionáveis (cripto), por valor em reais."""
+    if (quantity is None) == (amount_brl is None):
+        raise TradeError("informe a quantidade OU o valor a vender")
+    if amount_brl is not None and not asset.allows_fractional:
+        raise TradeError(f"{asset.symbol} não permite venda por valor; informe a quantidade")
     try:
         priced = market_data.get_priced_quote(asset)
     except market_data.MarketDataUnavailable as exc:
         raise TradeError("cotação indisponível no momento; tente novamente") from exc
+
+    if amount_brl is not None:
+        value = quantize_money(to_decimal(amount_brl))
+        if value <= 0:
+            raise TradeError("o valor deve ser positivo")
+        qty = quantize_quantity(value / priced.price_brl)
+    else:
+        qty = quantize_quantity(to_decimal(quantity))
+        if qty <= 0:
+            raise TradeError("a quantidade deve ser positiva")
+        if not asset.allows_fractional and qty != qty.to_integral_value():
+            raise TradeError(f"{asset.symbol} só pode ser negociado em quantidades inteiras")
+    if qty <= 0:
+        raise TradeError("valor muito pequeno para vender este ativo")
 
     try:
         ledger_service.lock_portfolio(db, portfolio_id)

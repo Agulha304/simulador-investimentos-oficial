@@ -4,7 +4,7 @@ import { RiskPanel } from "../components/RiskPanel";
 import { ChartPanel } from "../components/ChartPanel";
 import { StatCard } from "../components/StatCard";
 import { api, type Asset, type PortfolioSummary, type Quote } from "../services/api";
-import { CLASS_LABEL, fmtBRL, fmtDate, fmtMoney, fmtPct, fmtQty, trend } from "../lib/format";
+import { CLASS_LABEL, fmtBRL, fmtDate, fmtMoney, fmtPct, fmtQty, fmtQtyRaw, trend } from "../lib/format";
 
 export function AssetPage() {
   const id = Number(useParams().id);
@@ -80,7 +80,7 @@ function TradePanel({ asset, quote, cash, owned, onDone }: {
 
   const num = Number(value.replace(",", "."));
   const estimate = quote && num > 0
-    ? side === "buy" && mode === "amount" ? `≈ ${(num / Number(quote.price_brl)).toFixed(8)} ${asset.symbol}` : fmtBRL(String(num * Number(quote.price_brl)))
+    ? mode === "amount" ? `≈ ${(num / Number(quote.price_brl)).toFixed(8)} ${asset.symbol}` : fmtBRL(String(num * Number(quote.price_brl)))
     : null;
 
   async function submit(e: FormEvent) {
@@ -88,9 +88,8 @@ function TradePanel({ asset, quote, cash, owned, onDone }: {
     setBusy(true); setMsg(null);
     const v = value.replace(",", ".");
     try {
-      const tx = side === "buy"
-        ? await api.buy(asset.id, mode === "amount" ? { amount_brl: v } : { quantity: v })
-        : await api.sell(asset.id, v);
+      const body = mode === "amount" ? { amount_brl: v } : { quantity: v };
+      const tx = side === "buy" ? await api.buy(asset.id, body) : await api.sell(asset.id, body);
       setMsg({ ok: true, text: `${side === "buy" ? "Compra" : "Venda"} realizada: ${fmtQty(tx.quantity)} ${asset.symbol} por ${fmtBRL(tx.gross_amount_brl)}.` });
       setValue(""); onDone();
     } catch (err) {
@@ -104,19 +103,27 @@ function TradePanel({ asset, quote, cash, owned, onDone }: {
         <button type="button" className={side === "buy" ? "on buy" : ""} onClick={() => setSide("buy")}>Comprar</button>
         <button type="button" className={side === "sell" ? "on sell" : ""} onClick={() => setSide("sell")}>Vender</button>
       </div>
-      {side === "buy" && asset.allows_fractional && (
+      {asset.allows_fractional && (
         <div className="seg small">
           <button type="button" className={mode === "amount" ? "on" : ""} onClick={() => setMode("amount")}>Em reais</button>
           <button type="button" className={mode === "qty" ? "on" : ""} onClick={() => setMode("qty")}>Em quantidade</button>
         </div>
       )}
       <label>
-        {side === "buy" && mode === "amount" ? "Valor que desejo investir (R$)" : "Quantidade"}
+        {mode === "amount" ? (side === "buy" ? "Valor que desejo investir (R$)" : "Valor que desejo resgatar (R$)") : "Quantidade"}
         <input inputMode="decimal" value={value} onChange={(e) => setValue(e.target.value)} placeholder="0" required />
       </label>
       <div className="muted small row"><span>Estimativa</span><span className="num">{estimate ?? "—"}</span></div>
       <div className="muted small row"><span>Saldo disponível</span><span className="num">{fmtBRL(cash)}</span></div>
-      {side === "sell" && <div className="muted small row"><span>Disponível para venda</span><span className="num">{fmtQty(owned ?? "0")}</span></div>}
+      {side === "sell" && (
+        <div className="muted small row">
+          <span>Disponível para venda</span>
+          <span className="num">
+            {fmtQty(owned ?? "0")}
+            {owned && Number(owned) > 0 && <button type="button" className="link-btn" onClick={() => { setMode("qty"); setValue(fmtQtyRaw(owned)); }}>vender tudo</button>}
+          </span>
+        </div>
+      )}
       {msg && <div className={msg.ok ? "ok" : "alert"}>{msg.text}</div>}
       <button className={`btn ${side === "buy" ? "primary" : "danger"}`} disabled={busy || !quote}>
         {busy ? "Enviando…" : side === "buy" ? `Comprar ${asset.symbol}` : `Vender ${asset.symbol}`}

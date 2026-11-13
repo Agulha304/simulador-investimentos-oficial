@@ -40,3 +40,7 @@ export const SOURCE_LABEL: Record<string, string> = {
 export const KIND_LABEL: Record<string, string> = { DIVIDEND: "Dividendo", JCP: "JCP", RENDIMENTO: "Rendimento" };
 export const STATUS_LABEL: Record<string, string> = { PENDING: "A receber", PAID: "Pago", CANCELLED: "Cancelado" };
 export const fmtDay = (iso: string) => new Intl.DateTimeFormat("pt-BR").format(new Date(`${iso}T12:00:00`));
+
+/** Quantidade exata para preencher um campo (ponto decimal, sem zeros à direita). */
+export const fmtQtyRaw = (v: string) => (v.includes(".") ? v.replace(/0+$/, "").replace(/\.$/, "") : v);
+export const COUNTRY_LABEL: Record<string, string> = { BR: "Brasil", US: "EUA" };

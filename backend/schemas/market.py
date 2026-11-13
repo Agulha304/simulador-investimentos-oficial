@@ -37,7 +37,8 @@ class BuyRequest(BaseModel):
 
 class SellRequest(BaseModel):
     asset_id: int
-    quantity: Decimal = Field(gt=0, max_digits=38, decimal_places=18)
+    quantity: Decimal | None = Field(default=None, gt=0, max_digits=38, decimal_places=18)
+    amount_brl: Decimal | None = Field(default=None, gt=0, max_digits=20, decimal_places=2)
 
 
 class DepositRequest(BaseModel):
@@ -117,3 +118,11 @@ class RiskIn(BaseModel):
 class RiskOut(RiskIn):
     asset_id: int
     currency: Currency
+
+
+class QuoteBrief(BaseModel):
+    asset_id: int
+    price: Decimal
+    currency: Currency
+    price_brl: Decimal
+    change_pct: Decimal | None

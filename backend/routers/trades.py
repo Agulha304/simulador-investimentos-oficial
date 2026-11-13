@@ -38,7 +38,7 @@ def buy(body: BuyRequest, user: CurrentUser, db: DbSession, idempotency_key: Ide
 @router.post("/sell", response_model=TransactionOut, status_code=status.HTTP_201_CREATED)
 def sell(body: SellRequest, user: CurrentUser, db: DbSession, idempotency_key: IdemKey = None):
     return _run(db, user, body.asset_id, lambda pid, a: trading_service.sell(
-        db, pid, a, quantity=body.quantity, idempotency_key=idempotency_key))
+        db, pid, a, quantity=body.quantity, amount_brl=body.amount_brl, idempotency_key=idempotency_key))
 
 
 @router.put("/risk/{asset_id}", response_model=RiskOut)
