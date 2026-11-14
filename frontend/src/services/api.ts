@@ -114,13 +114,14 @@ export interface Performance {
 export interface RankEntry { rank: number; nickname: string; wealth_brl: Decimal; gain_brl: Decimal; return_pct: Decimal; is_me: boolean }
 export interface Ranking { board: string; period: string; participants: number; entries: RankEntry[]; me: RankEntry | null; me_hidden: boolean; note: string }
 export interface RankingSettings { show_in_ranking: boolean; nickname: string | null; default_nickname: string | null }
-export interface LessonBrief { id: string; title: string; minutes: number; summary: string; completed: boolean; best_score: number | null }
-export interface LearnModule { id: string; title: string; description: string; level: string; lessons: LessonBrief[]; completed: number; total: number }
-export interface LearnOverview { modules: LearnModule[]; completed: number; total: number; percent: number; points: number; level: string; next_lesson_id: string | null }
+export interface LessonVideo { url: string; poster_url: string | null; captions_url: string | null; duration_s: number; size_bytes: number }
+export interface LessonBrief { id: string; title: string; minutes: number; summary: string; completed: boolean; best_score: number | null; video_seconds: number | null }
+export interface LearnModule { id: string; title: string; description: string; level: string; lessons: LessonBrief[]; completed: number; total: number; video_seconds: number }
+export interface LearnOverview { modules: LearnModule[]; completed: number; total: number; percent: number; points: number; level: string; next_lesson_id: string | null; video_seconds: number; videos: number }
 export type Block = [string, ...unknown[]];
 export interface Lesson {
   id: string; module_id: string; module_title: string; title: string; minutes: number; blocks: Block[];
-  quiz: { text: string; options: string[] }[]; completed: boolean; best_score: number | null; prev_id: string | null; next_id: string | null;
+  quiz: { text: string; options: string[] }[]; completed: boolean; best_score: number | null; prev_id: string | null; next_id: string | null; video: LessonVideo | null;
 }
 export interface QuizResult {
   score: number; passed: boolean; pass_score: number; results: { correct: boolean; correct_index: number; explanation: string }[];

@@ -29,3 +29,10 @@ frontend/*.tsbuildinfo
 # Cloudflare / Wrangler
 .wrangler/
 .dev.vars
+
+# Vídeos das aulas (grandes, gerados localmente); o manifesto é versionado
+media/videos/
+media/posters/
+media/captions/
+media/logs/
+media/status.json

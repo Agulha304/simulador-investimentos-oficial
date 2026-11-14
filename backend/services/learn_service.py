@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from backend.content.course import LESSONS, LESSONS_ORDERED, MODULE_OF, MODULES, TOTAL_LESSONS
 from backend.models import LessonProgress
+from backend.services import video_service
 
 PASS_SCORE = 67          # % de acertos para concluir a aula (2 de 3)
 LEVELS = [(0, "Iniciante"), (15, "Aprendiz"), (40, "Investidor"), (75, "Especialista"), (100, "Mestre")]
@@ -32,14 +33,18 @@ def overview(db: Session, user_id: int) -> dict:
         lessons = [{
             "id": l.id, "title": l.title, "minutes": l.minutes, "summary": l.summary, "completed": l.id in done,
             "best_score": prog[l.id].best_score if l.id in prog and prog[l.id].attempts else None,
+            "video_seconds": video_service.seconds_for(l.id),
         } for l in m.lessons]
         modules.append({"id": m.id, "title": m.title, "description": m.description, "level": m.level, "lessons": lessons,
-                        "completed": sum(1 for x in lessons if x["completed"]), "total": len(lessons)})
+                        "completed": sum(1 for x in lessons if x["completed"]), "total": len(lessons),
+                        "video_seconds": sum(x["video_seconds"] or 0 for x in lessons)})
     percent = round(100 * len(done) / TOTAL_LESSONS)
     points = sum(10 + prog[lid].best_score // 10 for lid in done)
     nxt = next((l.id for l in LESSONS_ORDERED if l.id not in done), None)
     return {"modules": modules, "completed": len(done), "total": TOTAL_LESSONS, "percent": percent,
-            "points": points, "level": _level(percent), "next_lesson_id": nxt}
+            "points": points, "level": _level(percent), "next_lesson_id": nxt,
+            "video_seconds": sum(m["video_seconds"] for m in modules),
+            "videos": sum(1 for m in modules for x in m["lessons"] if x["video_seconds"])}
 
 
 def get_lesson(db: Session, user_id: int, lesson_id: str) -> dict:
@@ -56,6 +61,7 @@ def get_lesson(db: Session, user_id: int, lesson_id: str) -> dict:
         "quiz": [{"text": q.text, "options": list(q.options)} for q in lesson.quiz],     # sem a resposta certa
         "completed": bool(p and p.completed_at), "best_score": p.best_score if p and p.attempts else None,
         "prev_id": ids[i - 1] if i > 0 else None, "next_id": ids[i + 1] if i + 1 < len(ids) else None,
+        "video": video_service.video_for(lesson_id),
     }
 
 

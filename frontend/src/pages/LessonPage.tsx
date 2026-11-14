@@ -1,6 +1,7 @@
-import { Fragment, useEffect, useState, type ReactNode } from "react";
-import { Link, useParams } from "react-router-dom";
-import { api, type Block, type Lesson, type QuizResult } from "../services/api";
+import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { api, type Block, type Lesson, type LessonVideo, type QuizResult } from "../services/api";
+import { fmtDuration } from "../lib/format";
 
 function inline(text: string): ReactNode {
   return text.split("**").map((part, i) => (i % 2 ? <b key={i}>{part}</b> : <Fragment key={i}>{part}</Fragment>));
@@ -23,8 +24,52 @@ function BlockView({ b }: { b: Block }) {
   return null;
 }
 
+const AUTONEXT_KEY = "lesson.autonext";
+const readAutoNext = () => { try { return localStorage.getItem(AUTONEXT_KEY) !== "0"; } catch { return true; } };
+
+/** Videoaula whiteboard da lição, com legendas e passagem automática para a próxima aula da série. */
+function LessonVideoPlayer({ video, title, nextId, autoPlay }: { video: LessonVideo; title: string; nextId: string | null; autoPlay: boolean }) {
+  const navigate = useNavigate();
+  const ref = useRef<HTMLVideoElement>(null);
+  const [autoNext, setAutoNext] = useState(readAutoNext);
+  const [countdown, setCountdown] = useState<number | null>(null);
+
+  useEffect(() => { setCountdown(null); }, [video.url]);
+  useEffect(() => {
+    if (countdown === null) return;
+    if (countdown <= 0 && nextId) { navigate(`/aulas/${nextId}?auto=1`); return; }
+    const t = setTimeout(() => setCountdown((c) => (c === null ? c : c - 1)), 1000);
+    return () => clearTimeout(t);
+  }, [countdown, nextId, navigate]);
+
+  const toggleAuto = (v: boolean) => { setAutoNext(v); try { localStorage.setItem(AUTONEXT_KEY, v ? "1" : "0"); } catch { /* sem armazenamento */ } };
+
+  return (
+    <section className="card video-card" aria-label={`Videoaula: ${title}`}>
+      <div className="video-wrap">
+        <video ref={ref} controls playsInline preload="metadata" autoPlay={autoPlay} poster={video.poster_url ?? undefined} src={video.url}
+          onEnded={() => { if (autoNext && nextId) setCountdown(6); }}>
+          {video.captions_url && <track kind="captions" src={video.captions_url} srcLang="pt-BR" label="Português" default />}
+          Seu navegador não reproduz este vídeo.
+        </video>
+        {countdown !== null && nextId && (
+          <div className="video-next" role="status">
+            <span>Próxima aula em {countdown}s</span>
+            <button className="btn primary small" onClick={() => navigate(`/aulas/${nextId}?auto=1`)}>Assistir agora</button>
+            <button className="btn ghost small" onClick={() => setCountdown(null)}>Cancelar</button>
+          </div>)}
+      </div>
+      <div className="video-meta">
+        <span className="muted small">Videoaula · {fmtDuration(video.duration_s)}</span>
+        {nextId && <label className="check small"><input type="checkbox" checked={autoNext} onChange={(e) => toggleAuto(e.target.checked)} /> Passar para a próxima aula automaticamente</label>}
+      </div>
+    </section>
+  );
+}
+
 export function LessonPage() {
   const id = useParams().id ?? "";
+  const [search] = useSearchParams();
   const [lesson, setLesson] = useState<Lesson | null>(null);
   const [answers, setAnswers] = useState<(number | null)[]>([]);
   const [result, setResult] = useState<QuizResult | null>(null);
@@ -53,6 +98,8 @@ export function LessonPage() {
     <div className="page lesson">
       <nav className="muted small"><Link to="/aulas">Aulas</Link> › {lesson.module_title}</nav>
       <header><h1>{lesson.title}</h1><p className="muted small">{lesson.minutes} min de leitura{lesson.completed ? " · aula concluída ✓" : ""}</p></header>
+
+      {lesson.video && <LessonVideoPlayer key={lesson.id} video={lesson.video} title={lesson.title} nextId={lesson.next_id} autoPlay={search.get("auto") === "1"} />}
 
       <article className="card prose">{lesson.blocks.map((b, i) => <BlockView key={i} b={b} />)}</article>
 

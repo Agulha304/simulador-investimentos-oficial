@@ -72,6 +72,25 @@ No Worker → **Settings → Domains & Routes → Add → Custom domain**, com u
 Cada `git push` na `main` refaz o build e o deploy do site. O backend atualiza pelo seu host (também ligado ao GitHub).
 Migrations de banco rodam sozinhas quando o backend reinicia.
 
+## 5. Vídeos das aulas
+
+As 37 videoaulas somam cerca de 1 GB e **não vão no Git nem na imagem do backend** (só o `media/manifest.json`). Há duas formas:
+
+- **Servir pelo backend (padrão):** o backend entrega `media/videos`, `media/posters` e `media/captions` em `/api/media/...`
+  (com suporte a "pular" no vídeo). Funciona local; em produção exige disco persistente no host e passa pelo Worker.
+- **Bucket/CDN (recomendado em produção):** envie o conteúdo de `media/` para a raiz de um bucket e defina no backend
+  `MEDIA_BASE_URL=https://SEU-BUCKET-PUBLICO`. Exemplo com Cloudflare R2 (precisa de `wrangler login`):
+
+```bash
+npx wrangler r2 bucket create simulador-media
+for f in media/videos/*.mp4;   do npx wrangler r2 object put "simulador-media/videos/$(basename $f)"   --file "$f" --content-type video/mp4  --remote; done
+for f in media/posters/*.jpg;  do npx wrangler r2 object put "simulador-media/posters/$(basename $f)"  --file "$f" --content-type image/jpeg --remote; done
+for f in media/captions/*.vtt; do npx wrangler r2 object put "simulador-media/captions/$(basename $f)" --file "$f" --content-type text/vtt  --remote; done
+```
+
+  Depois ative o acesso público do bucket (domínio `r2.dev` ou domínio próprio) e configure o **CORS** do bucket para o domínio do site:
+  o navegador exige CORS para as legendas (`<track>`), enquanto o vídeo e a capa tocam sem ele.
+
 ## Avisos
 
 - **Cotações (Yahoo Finance)** são uma fonte não oficial e podem bloquear IPs de datacenters. Se as cotações ficarem "indisponíveis" só

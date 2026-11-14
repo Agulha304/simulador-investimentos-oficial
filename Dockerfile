@@ -13,6 +13,8 @@ RUN pip install -r requirements.txt
 
 COPY alembic.ini .
 COPY backend backend
+# só o manifesto das videoaulas (durações e caminhos); os vídeos ficam no MEDIA_BASE_URL (bucket/CDN)
+COPY media/manifest.json media/manifest.json
 
 # a maioria dos hosts define $PORT; as migrations rodam antes de abrir a porta
 CMD ["sh", "-c", "alembic upgrade head && exec uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-8000}"]

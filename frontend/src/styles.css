@@ -257,3 +257,13 @@ kbd { font-family: var(--mono); font-size: 11px; border: 1px solid var(--border)
 .actions { display: flex; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
 .lesson-nav { display: flex; justify-content: space-between; padding: 4px 0 24px; }
 @media (max-width: 760px) { .podium { grid-template-columns: 1fr; } .modules { grid-template-columns: 1fr; } }
+
+/* Videoaulas */
+.video-card { padding: 12px; }
+.video-wrap { position: relative; }
+.video-wrap video { width: 100%; aspect-ratio: 16 / 9; background: #000; border-radius: 10px; display: block; }
+.video-next { position: absolute; inset: auto 12px 56px 12px; display: flex; gap: 10px; align-items: center; justify-content: center; flex-wrap: wrap;
+  background: rgba(7, 19, 26, .92); border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; }
+.video-meta { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; padding: 8px 4px 0; }
+.video-meta .check { margin: 0; }
+.hero-actions { display: flex; gap: 10px; flex-wrap: wrap; }

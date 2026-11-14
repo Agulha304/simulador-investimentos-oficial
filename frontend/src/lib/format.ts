@@ -55,3 +55,10 @@ export const LIQUIDITY_LABEL: Record<string, string> = { DAILY: "Diária", AT_MA
 export const FREQ_LABEL: Record<string, string> = { AT_MATURITY: "No vencimento", MONTHLY: "Mensal", SEMIANNUAL: "Semestral", ANNUAL: "Anual" };
 export const RISK_LABEL: Record<string, string> = { LOW: "Baixo", MEDIUM: "Médio", HIGH: "Alto" };
 export const FI_STATUS_LABEL: Record<string, string> = { ACTIVE: "Ativa", REDEEMED: "Resgatada", MATURED: "Vencida" };
+
+/** 192 -> "3 min 12 s"; 3600+ -> "1 h 05 min". */
+export function fmtDuration(totalSeconds: number): string {
+  const h = Math.floor(totalSeconds / 3600), m = Math.floor((totalSeconds % 3600) / 60), sec = totalSeconds % 60;
+  if (h) return `${h} h ${String(m).padStart(2, "0")} min`;
+  return m ? `${m} min${sec ? ` ${String(sec).padStart(2, "0")} s` : ""}` : `${sec} s`;
+}

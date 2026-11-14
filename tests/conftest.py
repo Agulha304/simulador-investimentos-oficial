@@ -165,3 +165,10 @@ def _fake_fixed_income_sources():
     from backend.workers import fixed_income_worker
     fixed_income_worker._last_sync = 0.0
     yield idx_provider, td_provider
+
+
+# ---------------------------------------------------- mídia das aulas isolada (sem vídeos reais nos testes)
+@pytest.fixture(autouse=True)
+def _empty_media_dir(tmp_path, monkeypatch):
+    from backend.services import video_service
+    monkeypatch.setattr(video_service, "media_dir", lambda: tmp_path / "media_vazia")

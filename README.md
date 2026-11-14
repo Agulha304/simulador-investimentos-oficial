@@ -22,6 +22,9 @@ ações, ETFs, FIIs, REITs, criptomoedas e renda fixa (Tesouro Direto, CDB, LCI,
   cupons, vencimento, IR regressivo e IOF.
 - **Aulas:** 7 módulos e 29 aulas (fundamentos, renda fixa, ações, ETFs/FIIs/REITs, cripto, análise técnica, gestão de risco),
   cada uma com exemplos, ligação com as telas do simulador e um quiz corrigido no servidor. Progresso, pontos e nível por usuário.
+- **Videoaulas:** cada aula tem uma videoaula de ~3 min no estilo *whiteboard* (uma mão desenhando, voz narrada em pt-BR),
+  gerada pelo projeto `livro2video`. Os vídeos formam uma série: abrem com "Aula N de 37" e a ligação com a aula anterior, revisam
+  as três perguntas do quiz e terminam apresentando a próxima aula. Tocam com legendas e passam sozinhos para a aula seguinte.
 - **Desempenho:** evolução do patrimônio, rentabilidade contra o CDI, queda desde o pico, composição da carteira, resultado por mês,
   estatísticas das operações (acerto, ganho/perda médios, fator de lucro), nota de diversificação, disciplina, conquistas e dicas
   que apontam para a aula certa.
@@ -82,6 +85,26 @@ tests/         pytest (banco simulador_test)
 Serviços principais: `ledger_service` (único ponto que altera o saldo), `trading_service`, `market_data` (fonte isolada),
 `indicators`, `risk_service` (SL/TP), `distribution_service`, `tax_service`, `index_data` e `treasury_data` (fontes
 isoladas), `fixed_income_math` (contas puras), `fixed_income_catalog`, `fixed_income_service`.
+
+## Videoaulas (como foram feitas)
+
+O gerador de vídeos (`livro2video`, em `~/projetos/videos-de-livros-automacao-oficial`) transforma **PDFs** em videoaulas. Por isso o
+curso passa por um PDF:
+
+1. `tools/video_course/build_pdf.py` gera `curso-educacao-financeira.pdf` (37 aulas, 68 páginas, uma aula por trecho, cada uma com
+   marcador no sumário) **a partir do próprio conteúdo das aulas do site**, que continua sendo a única fonte do texto. Uma cópia fica em
+   `docs/curso-educacao-financeira.pdf`.
+2. `tools/video_course/generate_all.py` roda o `livro2video` em fila, uma aula por vez, com: complementos da IA **desligados** (tudo que o
+   vídeo diz vem do texto conferido; no piloto a IA chegou a errar uma conta quando podia inventar exemplos), 1,5 min de conteúdo e voz/mão
+   padrão do gerador. É retomável e segue em frente se uma aula falhar.
+3. `tools/video_course/inject_series.py` insere em cada roteiro as cenas que formam a série (abertura, revisão com as perguntas do quiz,
+   próxima aula) e remove frases e elementos repetidos entre cenas. Valores e siglas vão por extenso para a voz (`speech.py`).
+4. `tools/video_course/publish.py` corrige o MP4 para streaming (`faststart`), cria a capa, converte as legendas para WebVTT e atualiza
+   `media/manifest.json`, que o backend lê para ligar cada aula ao seu vídeo.
+
+Refazer: `PYTHONPATH=. <venv-do-livro2video>/bin/python tools/video_course/build_pdf.py --out <livros>/curso-educacao-financeira.pdf` e
+`python tools/video_course/generate_all.py --generator-dir <livro2video> --pdf livros/curso-educacao-financeira.pdf` (opções `--only m0-l3`,
+`--force`). Em máquina com RTX 3050 cada vídeo leva cerca de 4 minutos.
 
 ## Aulas, Desempenho e Ranking
 
@@ -156,6 +179,7 @@ isoladas), `fixed_income_math` (contas puras), `fixed_income_catalog`, `fixed_in
 
 - A data de pagamento de proventos é **estimada** (a fonte só informa a data EX).
 - O Yahoo Finance não é oficial; se bloquear, as telas mostram "indisponível" e as operações são recusadas, sem quebrar.
+- As videoaulas usam voz sintética e desenhos de um banco de ícones: são claras, mas não substituem o texto da aula. O roteirista é uma IA local (resume, não cria conteúdo novo); a conferência foi por amostragem.
 - Edição de desenhos limita-se a selecionar e excluir (não há arrastar de pontos).
 - O gráfico de patrimônio só tem pontos a partir do cadastro (ou da primeira visita à aba Desempenho, para contas antigas).
 - Interface testada por tipos, build e chamadas reais à API; não há testes automatizados de navegador.

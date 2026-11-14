@@ -12,3 +12,9 @@ docs
 __pycache__
 *.pyc
 .pytest_cache
+media/videos
+media/posters
+media/captions
+media/logs
+media/status.json
+tools

@@ -32,6 +32,10 @@ class Settings(BaseSettings):
     fallback_ipca_monthly: Decimal = Decimal("0.40")    # % a.m.
     fallback_igpm_monthly: Decimal = Decimal("0.40")    # % a.m.
 
+    # Origem dos vídeos das aulas. Padrão: o próprio backend serve a pasta media/. Para usar um CDN/R2:
+    # MEDIA_BASE_URL=https://seu-bucket.r2.dev  (enviando o conteúdo de media/ para a raiz do bucket)
+    media_base_url: str = "/api/media"
+
     cors_origins: str = "http://localhost:5173"
     log_level: str = "INFO"
 
@@ -55,6 +59,10 @@ class Settings(BaseSettings):
                                "(python -c \"import secrets; print(secrets.token_urlsafe(48))\").")
         if "localhost" in self.database_url or "127.0.0.1" in self.database_url:
             raise RuntimeError("DATABASE_URL aponta para localhost em produção.")
+
+    @property
+    def media_dir(self) -> Path:
+        return ROOT_DIR / "media"
 
     @property
     def cors_origin_list(self) -> list[str]:

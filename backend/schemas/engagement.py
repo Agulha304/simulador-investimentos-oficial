@@ -140,6 +140,14 @@ class RankingSettings(BaseModel):
 
 
 # ------------------------------------------------------------------ aulas
+class VideoOut(BaseModel):
+    url: str
+    poster_url: str | None = None
+    captions_url: str | None = None
+    duration_s: int
+    size_bytes: int
+
+
 class LessonBrief(BaseModel):
     id: str
     title: str
@@ -147,6 +155,7 @@ class LessonBrief(BaseModel):
     summary: str
     completed: bool
     best_score: int | None
+    video_seconds: int | None = None
 
 
 class ModuleOut(BaseModel):
@@ -157,6 +166,7 @@ class ModuleOut(BaseModel):
     lessons: list[LessonBrief]
     completed: int
     total: int
+    video_seconds: int = 0
 
 
 class LearnOverview(BaseModel):
@@ -167,6 +177,8 @@ class LearnOverview(BaseModel):
     points: int
     level: str
     next_lesson_id: str | None
+    video_seconds: int = 0
+    videos: int = 0
 
 
 class QuestionOut(BaseModel):
@@ -186,6 +198,7 @@ class LessonOut(BaseModel):
     best_score: int | None
     prev_id: str | None
     next_id: str | None
+    video: VideoOut | None = None
 
 
 class QuizSubmit(BaseModel):

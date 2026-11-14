@@ -24,14 +24,14 @@ def submit(client, h, lesson_id, answers):
 # ------------------------------------------------------------------ integridade do conteúdo
 
 def test_course_structure():
-    assert TOTAL_LESSONS >= 25 and len(MODULES) >= 7
+    assert TOTAL_LESSONS == 37 and len(MODULES) == 8
     ids = [l.id for l in LESSONS_ORDERED]
     assert len(ids) == len(set(ids)) and len({m.id for m in MODULES}) == len(MODULES)
     for m in MODULES:
         assert m.title and m.description and m.level in {"Iniciante", "Intermediário", "Avançado"} and m.lessons
         assert all(l.id.startswith(m.id + "-") for l in m.lessons)
     # as aulas citadas pelos insights do desempenho precisam existir
-    assert {"m1-l1", "m2-l2", "m7-l1", "m7-l2", "m7-l3"} <= set(ids)
+    assert {"m0-l1", "m1-l1", "m2-l2", "m7-l1", "m7-l2", "m7-l3"} <= set(ids) and ids[0] == "m0-l1"   # organização financeira abre o curso
 
 
 def test_every_lesson_is_well_formed():
@@ -84,7 +84,7 @@ def test_requires_auth(client):
 
 def test_overview_starts_empty(client, auth_headers):
     o = client.get("/api/learn", headers=auth_headers).json()
-    assert (o["completed"], o["percent"], o["points"], o["level"], o["next_lesson_id"]) == (0, 0, 0, "Iniciante", "m1-l1")
+    assert (o["completed"], o["percent"], o["points"], o["level"], o["next_lesson_id"]) == (0, 0, 0, "Iniciante", "m0-l1")
     assert o["total"] == TOTAL_LESSONS and len(o["modules"]) == len(MODULES)
     assert all(not l["completed"] and l["best_score"] is None for m in o["modules"] for l in m["lessons"])
 
@@ -96,7 +96,7 @@ def test_lesson_payload_never_leaks_answers(client, auth_headers):
     assert body["prev_id"] == "m2-l2" and body["next_id"] == "m2-l4" and body["module_title"] == "Renda fixa"
     assert len(body["quiz"]) == 3 and all(set(q) == {"text", "options"} for q in body["quiz"])
     assert "correct" not in r.text and "explanation" not in r.text
-    assert client.get("/api/learn/lessons/m1-l1", headers=auth_headers).json()["prev_id"] is None
+    assert client.get("/api/learn/lessons/m0-l1", headers=auth_headers).json()["prev_id"] is None
     assert client.get(f"/api/learn/lessons/{LESSONS_ORDERED[-1].id}", headers=auth_headers).json()["next_id"] is None
     assert client.get("/api/learn/lessons/nao-existe", headers=auth_headers).status_code == 404
 
@@ -121,14 +121,15 @@ def test_failing_then_passing_a_lesson(client, auth_headers):
 
     res = submit(client, auth_headers, "m1-l1", right("m1-l1")).json()
     assert res["score"] == 100 and res["passed"] and res["completed"] and res["next_lesson_id"] == "m1-l2"
-    assert res["overview"]["completed"] == 1 and res["overview"]["points"] == 20 and res["overview"]["next_lesson_id"] == "m1-l2"
+    assert res["overview"]["completed"] == 1 and res["overview"]["points"] == 20 and res["overview"]["next_lesson_id"] == "m0-l1"   # 1ª ainda pendente
 
     res = submit(client, auth_headers, "m1-l1", wrong("m1-l1")).json()               # pior tentativa depois: não desfaz
     assert res["score"] == 0 and res["completed"] is True
     lesson = client.get("/api/learn/lessons/m1-l1", headers=auth_headers).json()
     assert lesson["completed"] and lesson["best_score"] == 100
     o = client.get("/api/learn", headers=auth_headers).json()
-    assert o["completed"] == 1 and o["modules"][0]["completed"] == 1 and o["modules"][0]["lessons"][0]["best_score"] == 100
+    m1 = next(m for m in o["modules"] if m["id"] == "m1")
+    assert o["completed"] == 1 and m1["completed"] == 1 and m1["lessons"][0]["best_score"] == 100
 
 
 def test_two_of_three_is_enough(client, auth_headers):
