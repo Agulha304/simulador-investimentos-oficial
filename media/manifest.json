@@ -1,0 +1,375 @@
+{
+ "lessons": {
+  "m0-l1": {
+   "captions": "captions/m0-l1.vtt",
+   "created_at": "2026-11-14T17:19:58+00:00",
+   "duration_s": 219,
+   "poster": "posters/m0-l1.jpg",
+   "size_bytes": 26161386,
+   "source": "curso-aula-01-para-onde-vai-o-seu-dinheiro",
+   "title": "Para onde vai o seu dinheiro?",
+   "video": "videos/m0-l1.mp4"
+  },
+  "m0-l2": {
+   "captions": "captions/m0-l2.vtt",
+   "created_at": "2026-11-14T17:26:43+00:00",
+   "duration_s": 187,
+   "poster": "posters/m0-l2.jpg",
+   "size_bytes": 23284849,
+   "source": "curso-aula-02-orcamento-50-30-20-e-base-zero",
+   "title": "Orçamento: 50-30-20 e base zero",
+   "video": "videos/m0-l2.mp4"
+  },
+  "m0-l3": {
+   "captions": "captions/m0-l3.vtt",
+   "created_at": "2026-11-14T17:30:59+00:00",
+   "duration_s": 200,
+   "poster": "posters/m0-l3.jpg",
+   "size_bytes": 26169833,
+   "source": "curso-aula-03-dividas-como-sair-do-vermelho",
+   "title": "Dívidas: como sair do vermelho",
+   "video": "videos/m0-l3.mp4"
+  },
+  "m0-l4": {
+   "captions": "captions/m0-l4.vtt",
+   "created_at": "2026-11-14T17:34:52+00:00",
+   "duration_s": 172,
+   "poster": "posters/m0-l4.jpg",
+   "size_bytes": 24212401,
+   "source": "curso-aula-04-reserva-de-emergencia",
+   "title": "Reserva de emergência",
+   "video": "videos/m0-l4.mp4"
+  },
+  "m0-l5": {
+   "captions": "captions/m0-l5.vtt",
+   "created_at": "2026-11-14T17:38:20+00:00",
+   "duration_s": 161,
+   "poster": "posters/m0-l5.jpg",
+   "size_bytes": 22930566,
+   "source": "curso-aula-05-metas-financeiras",
+   "title": "Metas financeiras",
+   "video": "videos/m0-l5.mp4"
+  },
+  "m0-l6": {
+   "captions": "captions/m0-l6.vtt",
+   "created_at": "2026-11-14T17:40:38+00:00",
+   "duration_s": 196,
+   "poster": "posters/m0-l6.jpg",
+   "size_bytes": 25716836,
+   "source": "curso-aula-06-credito-score-e-cet",
+   "title": "Crédito, score e CET",
+   "video": "videos/m0-l6.mp4"
+  },
+  "m0-l7": {
+   "captions": "captions/m0-l7.vtt",
+   "created_at": "2026-11-14T17:42:58+00:00",
+   "duration_s": 196,
+   "poster": "posters/m0-l7.jpg",
+   "size_bytes": 29102569,
+   "source": "curso-aula-07-pague-se-primeiro-habitos-e-automacao",
+   "title": "Pague-se primeiro: hábitos e automação",
+   "video": "videos/m0-l7.mp4"
+  },
+  "m0-l8": {
+   "captions": "captions/m0-l8.vtt",
+   "created_at": "2026-11-14T17:44:52+00:00",
+   "duration_s": 154,
+   "poster": "posters/m0-l8.jpg",
+   "size_bytes": 22104263,
+   "source": "curso-aula-08-protecao-seguros-e-previdencia",
+   "title": "Proteção: seguros e previdência",
+   "video": "videos/m0-l8.mp4"
+  },
+  "m1-l1": {
+   "captions": "captions/m1-l1.vtt",
+   "created_at": "2026-11-14T17:47:07+00:00",
+   "duration_s": 222,
+   "poster": "posters/m1-l1.jpg",
+   "size_bytes": 28080792,
+   "source": "curso-aula-09-por-que-investir",
+   "title": "Por que investir?",
+   "video": "videos/m1-l1.mp4"
+  },
+  "m1-l2": {
+   "captions": "captions/m1-l2.vtt",
+   "created_at": "2026-11-14T17:49:22+00:00",
+   "duration_s": 194,
+   "poster": "posters/m1-l2.jpg",
+   "size_bytes": 27651282,
+   "source": "curso-aula-10-juros-compostos",
+   "title": "Juros compostos",
+   "video": "videos/m1-l2.mp4"
+  },
+  "m1-l3": {
+   "captions": "captions/m1-l3.vtt",
+   "created_at": "2026-11-14T17:51:31+00:00",
+   "duration_s": 197,
+   "poster": "posters/m1-l3.jpg",
+   "size_bytes": 26118516,
+   "source": "curso-aula-11-risco-retorno-e-liquidez",
+   "title": "Risco, retorno e liquidez",
+   "video": "videos/m1-l3.mp4"
+  },
+  "m1-l4": {
+   "captions": "captions/m1-l4.vtt",
+   "created_at": "2026-11-14T17:53:42+00:00",
+   "duration_s": 197,
+   "poster": "posters/m1-l4.jpg",
+   "size_bytes": 26858786,
+   "source": "curso-aula-12-como-usar-este-simulador",
+   "title": "Como usar este simulador",
+   "video": "videos/m1-l4.mp4"
+  },
+  "m2-l1": {
+   "captions": "captions/m2-l1.vtt",
+   "created_at": "2026-11-14T17:55:56+00:00",
+   "duration_s": 191,
+   "poster": "posters/m2-l1.jpg",
+   "size_bytes": 23445112,
+   "source": "curso-aula-13-o-que-e-renda-fixa",
+   "title": "O que é renda fixa",
+   "video": "videos/m2-l1.mp4"
+  },
+  "m2-l2": {
+   "captions": "captions/m2-l2.vtt",
+   "created_at": "2026-11-14T17:57:46+00:00",
+   "duration_s": 154,
+   "poster": "posters/m2-l2.jpg",
+   "size_bytes": 22357202,
+   "source": "curso-aula-14-selic-cdi-e-ipca",
+   "title": "Selic, CDI e IPCA",
+   "video": "videos/m2-l2.mp4"
+  },
+  "m2-l3": {
+   "captions": "captions/m2-l3.vtt",
+   "created_at": "2026-11-14T18:00:01+00:00",
+   "duration_s": 185,
+   "poster": "posters/m2-l3.jpg",
+   "size_bytes": 26120810,
+   "source": "curso-aula-15-tesouro-direto",
+   "title": "Tesouro Direto",
+   "video": "videos/m2-l3.mp4"
+  },
+  "m2-l4": {
+   "captions": "captions/m2-l4.vtt",
+   "created_at": "2026-11-14T18:01:55+00:00",
+   "duration_s": 148,
+   "poster": "posters/m2-l4.jpg",
+   "size_bytes": 20720213,
+   "source": "curso-aula-16-cdb-lci-e-lca",
+   "title": "CDB, LCI e LCA",
+   "video": "videos/m2-l4.mp4"
+  },
+  "m2-l5": {
+   "captions": "captions/m2-l5.vtt",
+   "created_at": "2026-11-14T18:04:32+00:00",
+   "duration_s": 227,
+   "poster": "posters/m2-l5.jpg",
+   "size_bytes": 27056663,
+   "source": "curso-aula-17-cri-cra-e-debentures",
+   "title": "CRI, CRA e debêntures",
+   "video": "videos/m2-l5.mp4"
+  },
+  "m2-l6": {
+   "captions": "captions/m2-l6.vtt",
+   "created_at": "2026-11-14T18:06:31+00:00",
+   "duration_s": 168,
+   "poster": "posters/m2-l6.jpg",
+   "size_bytes": 22250148,
+   "source": "curso-aula-18-imposto-de-renda-e-iof",
+   "title": "Imposto de renda e IOF",
+   "video": "videos/m2-l6.mp4"
+  },
+  "m3-l1": {
+   "captions": "captions/m3-l1.vtt",
+   "created_at": "2026-11-14T18:08:48+00:00",
+   "duration_s": 201,
+   "poster": "posters/m3-l1.jpg",
+   "size_bytes": 28193628,
+   "source": "curso-aula-19-o-que-e-uma-acao",
+   "title": "O que é uma ação",
+   "video": "videos/m3-l1.mp4"
+  },
+  "m3-l2": {
+   "captions": "captions/m3-l2.vtt",
+   "created_at": "2026-11-14T18:11:18+00:00",
+   "duration_s": 239,
+   "poster": "posters/m3-l2.jpg",
+   "size_bytes": 31836309,
+   "source": "curso-aula-20-como-ler-uma-cotacao",
+   "title": "Como ler uma cotação",
+   "video": "videos/m3-l2.mp4"
+  },
+  "m3-l3": {
+   "captions": "captions/m3-l3.vtt",
+   "created_at": "2026-11-14T18:13:35+00:00",
+   "duration_s": 178,
+   "poster": "posters/m3-l3.jpg",
+   "size_bytes": 22495304,
+   "source": "curso-aula-21-dividendos-e-jcp",
+   "title": "Dividendos e JCP",
+   "video": "videos/m3-l3.mp4"
+  },
+  "m3-l4": {
+   "captions": "captions/m3-l4.vtt",
+   "created_at": "2026-11-14T18:16:18+00:00",
+   "duration_s": 225,
+   "poster": "posters/m3-l4.jpg",
+   "size_bytes": 22691557,
+   "source": "curso-aula-22-analise-fundamentalista-basica",
+   "title": "Análise fundamentalista básica",
+   "video": "videos/m3-l4.mp4"
+  },
+  "m3-l5": {
+   "captions": "captions/m3-l5.vtt",
+   "created_at": "2026-11-14T18:18:27+00:00",
+   "duration_s": 172,
+   "poster": "posters/m3-l5.jpg",
+   "size_bytes": 21989671,
+   "source": "curso-aula-23-acoes-internacionais-e-cambio",
+   "title": "Ações internacionais e câmbio",
+   "video": "videos/m3-l5.mp4"
+  },
+  "m4-l1": {
+   "captions": "captions/m4-l1.vtt",
+   "created_at": "2026-11-14T18:21:02+00:00",
+   "duration_s": 206,
+   "poster": "posters/m4-l1.jpg",
+   "size_bytes": 24761152,
+   "source": "curso-aula-24-etfs-fundos-que-replicam-indices",
+   "title": "ETFs: fundos que replicam índices",
+   "video": "videos/m4-l1.mp4"
+  },
+  "m4-l2": {
+   "captions": "captions/m4-l2.vtt",
+   "created_at": "2026-11-14T18:23:21+00:00",
+   "duration_s": 175,
+   "poster": "posters/m4-l2.jpg",
+   "size_bytes": 25677185,
+   "source": "curso-aula-25-fundos-imobiliarios-fiis",
+   "title": "Fundos imobiliários (FIIs)",
+   "video": "videos/m4-l2.mp4"
+  },
+  "m4-l3": {
+   "captions": "captions/m4-l3.vtt",
+   "created_at": "2026-11-14T18:25:46+00:00",
+   "duration_s": 184,
+   "poster": "posters/m4-l3.jpg",
+   "size_bytes": 25324783,
+   "source": "curso-aula-26-reits-imobiliario-nos-eua",
+   "title": "REITs: imobiliário nos EUA",
+   "video": "videos/m4-l3.mp4"
+  },
+  "m5-l1": {
+   "captions": "captions/m5-l1.vtt",
+   "created_at": "2026-11-14T18:27:55+00:00",
+   "duration_s": 154,
+   "poster": "posters/m5-l1.jpg",
+   "size_bytes": 23991264,
+   "source": "curso-aula-27-o-que-sao-criptomoedas",
+   "title": "O que são criptomoedas",
+   "video": "videos/m5-l1.mp4"
+  },
+  "m5-l2": {
+   "captions": "captions/m5-l2.vtt",
+   "created_at": "2026-11-14T18:30:30+00:00",
+   "duration_s": 207,
+   "poster": "posters/m5-l2.jpg",
+   "size_bytes": 29268035,
+   "source": "curso-aula-28-volatilidade-e-tamanho-da-posicao",
+   "title": "Volatilidade e tamanho da posição",
+   "video": "videos/m5-l2.mp4"
+  },
+  "m6-l1": {
+   "captions": "captions/m6-l1.vtt",
+   "created_at": "2026-11-14T18:33:24+00:00",
+   "duration_s": 172,
+   "poster": "posters/m6-l1.jpg",
+   "size_bytes": 19236780,
+   "source": "curso-aula-29-graficos-candles-e-tendencia",
+   "title": "Gráficos, candles e tendência",
+   "video": "videos/m6-l1.mp4"
+  },
+  "m6-l2": {
+   "captions": "captions/m6-l2.vtt",
+   "created_at": "2026-11-14T18:36:48+00:00",
+   "duration_s": 183,
+   "poster": "posters/m6-l2.jpg",
+   "size_bytes": 25024300,
+   "source": "curso-aula-30-medias-moveis-e-bandas-de-bollinger",
+   "title": "Médias móveis e Bandas de Bollinger",
+   "video": "videos/m6-l2.mp4"
+  },
+  "m6-l3": {
+   "captions": "captions/m6-l3.vtt",
+   "created_at": "2026-11-14T18:39:03+00:00",
+   "duration_s": 159,
+   "poster": "posters/m6-l3.jpg",
+   "size_bytes": 22359691,
+   "source": "curso-aula-31-rsi-macd-e-estocastico",
+   "title": "RSI, MACD e Estocástico",
+   "video": "videos/m6-l3.mp4"
+  },
+  "m6-l4": {
+   "captions": "captions/m6-l4.vtt",
+   "created_at": "2026-11-14T18:41:23+00:00",
+   "duration_s": 174,
+   "poster": "posters/m6-l4.jpg",
+   "size_bytes": 23805547,
+   "source": "curso-aula-32-suporte-resistencia-e-linhas-de-tendencia",
+   "title": "Suporte, resistência e linhas de tendência",
+   "video": "videos/m6-l4.mp4"
+  },
+  "m6-l5": {
+   "captions": "captions/m6-l5.vtt",
+   "created_at": "2026-11-14T18:43:55+00:00",
+   "duration_s": 194,
+   "poster": "posters/m6-l5.jpg",
+   "size_bytes": 26688424,
+   "source": "curso-aula-33-volume-vwap-atr-e-adx",
+   "title": "Volume, VWAP, ATR e ADX",
+   "video": "videos/m6-l5.mp4"
+  },
+  "m7-l1": {
+   "captions": "captions/m7-l1.vtt",
+   "created_at": "2026-11-14T18:46:23+00:00",
+   "duration_s": 179,
+   "poster": "posters/m7-l1.jpg",
+   "size_bytes": 27853069,
+   "source": "curso-aula-34-diversificacao-e-alocacao-de-ativos",
+   "title": "Diversificação e alocação de ativos",
+   "video": "videos/m7-l1.mp4"
+  },
+  "m7-l2": {
+   "captions": "captions/m7-l2.vtt",
+   "created_at": "2026-11-14T18:50:30+00:00",
+   "duration_s": 221,
+   "poster": "posters/m7-l2.jpg",
+   "size_bytes": 26332638,
+   "source": "curso-aula-35-stop-loss-take-profit-e-tamanho-da-posicao",
+   "title": "Stop Loss, Take Profit e tamanho da posição",
+   "video": "videos/m7-l2.mp4"
+  },
+  "m7-l3": {
+   "captions": "captions/m7-l3.vtt",
+   "created_at": "2026-11-14T18:54:04+00:00",
+   "duration_s": 155,
+   "poster": "posters/m7-l3.jpg",
+   "size_bytes": 20952886,
+   "source": "curso-aula-36-vieses-de-comportamento",
+   "title": "Vieses de comportamento",
+   "video": "videos/m7-l3.mp4"
+  },
+  "m7-l4": {
+   "captions": "captions/m7-l4.vtt",
+   "created_at": "2026-11-14T17:22:20+00:00",
+   "duration_s": 202,
+   "poster": "posters/m7-l4.jpg",
+   "size_bytes": 28995877,
+   "source": "curso-aula-37-montando-o-seu-plano",
+   "title": "Montando o seu plano",
+   "video": "videos/m7-l4.mp4"
+  }
+ },
+ "version": 1
+}

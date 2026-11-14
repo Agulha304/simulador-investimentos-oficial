@@ -38,14 +38,15 @@ def _log_file_run(cmd: list[str], cwd: Path, env: dict, log_file: Path, timeout_
             return False
 
 
-def generator_cmd(gen: Path, pdf: Path, entry: dict, minutes: float, depth: str, until: str | None) -> list[str]:
+def generator_cmd(gen: Path, pdf: Path, entry: dict, minutes: float, depth: str, until: str | None,
+                  redo: str | None = None) -> list[str]:
     cmd = [str(gen / ".venv/bin/python"), "-m", "livro2video.cli",
            # opções globais vêm ANTES do subcomando. Sem exemplos inventados pela IA: tudo que o vídeo diz
            # vem do texto da aula, que foi conferido
            "--set", "script.allow_complement=false",
            "gerar", str(pdf), "--paginas", f"{entry['page_start']}-{entry['page_end']}", "--nome", entry["slug"],
            "--profundidade", depth, "--minutos", str(minutes)]
-    return cmd + (["--ate", until] if until else [])
+    return cmd + (["--ate", until] if until else []) + (["--refazer", redo] if redo else [])
 
 
 def work_dir_of(log_file: Path, gen: Path) -> Path | None:
@@ -69,6 +70,20 @@ def run_generator(gen: Path, pdf: Path, entry: dict, minutes: float, depth: str,
     return _log_file_run(generator_cmd(gen, pdf, entry, minutes, depth, None), gen, env, log_file, timeout_s)
 
 
+def refresh_series(gen: Path, pdf: Path, entry: dict, minutes: float, depth: str, log_file: Path, timeout_s: int) -> bool:
+    """Troca as cenas da série (abertura/revisão/próxima aula) no roteiro já pronto e refaz só visuais, voz e vídeo.
+    Roteiro, notas e a voz dos textos que não mudaram vêm do cache."""
+    work = work_dir_of(log_file, gen) if log_file.exists() else None
+    if work is None or not (work / "roteiro.json").exists():
+        return False
+    env = {**os.environ, "PYTHONPATH": f"{gen / 'src'}:{ROOT}"}
+    inject = [str(gen / ".venv/bin/python"), str(ROOT / "tools/video_course/inject_series.py"),
+              "--work", str(work), "--lesson-id", entry["lesson_id"], "--replace"]
+    if not _log_file_run(inject, gen, env, log_file, 300):
+        return False
+    return _log_file_run(generator_cmd(gen, pdf, entry, minutes, depth, None, redo="visuais"), gen, env, log_file, timeout_s)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--generator-dir", required=True, type=Path)
@@ -79,6 +94,8 @@ def main() -> int:
     ap.add_argument("--depth", default="resumo", choices=["resumo", "padrao", "aprofundado"])
     ap.add_argument("--only", default="")
     ap.add_argument("--force", action="store_true")
+    ap.add_argument("--refresh-series", action="store_true",
+                    help="refaz só as cenas da série (abertura/revisão/próxima aula) das aulas já geradas")
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--timeout-min", type=int, default=45, help="tempo máximo por vídeo")
     args = ap.parse_args()
@@ -99,7 +116,7 @@ def main() -> int:
     for n, entry in enumerate(todo, start=1):
         lid, slug = entry["lesson_id"], entry["slug"]
         manifest = load_manifest(args.media_dir)
-        if not args.force and lid in manifest["lessons"] and (args.media_dir / manifest["lessons"][lid]["video"]).exists():
+        if not args.force and not args.refresh_series and lid in manifest["lessons"] and (args.media_dir / manifest["lessons"][lid]["video"]).exists():
             log(f"[{n}/{len(todo)}] {lid} já publicada, pulando")
             continue
         if args.limit and done_now >= args.limit:
@@ -107,6 +124,25 @@ def main() -> int:
 
         mp4 = gen / "output" / f"{slug}.mp4"
         t0 = time.time()
+        if args.refresh_series:
+            log(f"[{n}/{len(todo)}] {lid} {entry['title']}: refazendo as cenas da série")
+            ok = (refresh_series(gen, pdf, entry, args.minutes, args.depth, logs / f"{slug}.log", args.timeout_min * 60)
+                  and mp4.exists() and mp4.stat().st_mtime >= t0)
+            if not ok:
+                failed.append(lid)
+                status[lid] = {"state": "refresh_failed", "at": time.strftime("%F %T")}
+                log(f"[{n}/{len(todo)}] {lid} FALHOU ao refazer a série (veja {logs / (slug + '.log')}); o vídeo anterior foi mantido")
+            else:
+                try:
+                    info = publish(mp4, mp4.with_suffix(".srt"), lid, entry["title"], args.media_dir, source=slug)
+                    status[lid] = {"state": "done", "seconds": round(time.time() - t0), "video_s": info["duration_s"]}
+                    done_now += 1
+                    log(f"[{n}/{len(todo)}] {lid} pronta: vídeo de {info['duration_s']}s em {round(time.time() - t0)}s de processamento")
+                except Exception as exc:  # noqa: BLE001
+                    failed.append(lid)
+                    log(f"[{n}/{len(todo)}] {lid} gerada, mas a publicação falhou: {exc}")
+            status_path.write_text(json.dumps(status, ensure_ascii=False, indent=1), encoding="utf-8")
+            continue
         ok = mp4.exists() and not args.force
         for attempt in (1, 2):
             if ok:

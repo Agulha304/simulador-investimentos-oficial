@@ -39,39 +39,41 @@ def scene(sid: str, title: str, concept: str, elements: list[dict], beats: list[
 
 
 def opening(i: int, lesson, prev, module) -> dict:
+    """Os desenhos acompanham falas longas: o gerador estende a cena até o desenho acabar, e uma fala curta
+    sobre um desenho demorado vira silêncio (a mão desenhando sem ninguém falar)."""
     n, total = i + 1, TOTAL_LESSONS
-    beats = [beat(f"Curso de educação financeira e investimentos. Aula {num_to_words(n)} de {num_to_words(total)}.",
-                  ("draw", "e1"), ("write", "e2"))]
+    head = f"Curso de educação financeira e investimentos. Aula {num_to_words(n)} de {num_to_words(total)}."
     if prev is None:
-        beats.append(beat("Ao longo da série, você vai organizar o seu dinheiro e aprender a investir, passo a passo."))
-        beats.append(beat("Este conteúdo é educacional e não é recomendação de investimento."))
+        link = "Ao longo da série, você vai organizar o seu dinheiro e aprender a investir, passo a passo."
     else:
         prev_mod = MODULE_OF[prev.id]
-        if prev_mod.id == module.id:
-            beats.append(beat(speak_pt(f"Na aula anterior, você viu: {prev.title}.")))
-        else:
-            beats.append(beat(speak_pt(f"Você concluiu o módulo {prev_mod.title}. Agora começa um novo módulo: {module.title}.")))
+        link = (speak_pt(f"Na aula anterior, você viu: {prev.title}.") if prev_mod.id == module.id
+                else speak_pt(f"Você concluiu o módulo {prev_mod.title}. Agora começa um novo módulo: {module.title}."))
+    beats = [beat(f"{head} {link}", ("draw", "e1"), ("write", "e2"))]
+    if prev is None:
+        beats.append(beat("Este conteúdo é educacional e não é recomendação de investimento."))
     beats.append(beat(speak_pt(f"Hoje, o tema é: {lesson.title}. {lesson.summary}"), ("write", "e3")))
     return scene(f"cena000_{MARK}abertura", f"Aula {n} de {total}", f"Abertura da aula {n}: {lesson.title}",
                  [element("e1", "illustration", query="book"), element("e2", "keyword", text=module.title),
                   element("e3", "text", text=lesson.title)], beats)
 
 
+def _question_line(q) -> str:
+    answer = q.options[q.correct]
+    if q.text.endswith(":"):                                          # pergunta de completar: vira uma frase natural
+        first = answer.split()[0]
+        if not (first.isupper() and len(first) > 1):                  # mantém siglas (CDB); "Que..." vira "que..."
+            answer = answer[0].lower() + answer[1:]
+        return speak_pt(f"{q.text[:-1]} {answer}.")
+    return speak_pt(f"{q.text} Resposta: {answer}.")
+
+
 def review(lesson) -> dict:
     items = [q.explanation for q in lesson.quiz]                     # frases completas: fazem sentido sozinhas na tela
-    beats = [beat("Para fixar o que você aprendeu, vamos revisar três perguntas.", ("draw", "e1"), ("write", "e2"))]
-    for k, q in enumerate(lesson.quiz):
-        # pergunta terminada em ":" é uma frase a completar: "O ETF IVVB11 replica:" + resposta = frase natural
-        answer = q.options[q.correct]
-        if q.text.endswith(":"):
-            first = answer.split()[0]
-            if not (first.isupper() and len(first) > 1):             # mantém siglas (CDB); "Que..." vira "que..."
-                answer = answer[0].lower() + answer[1:]
-            said = f"{q.text[:-1]} {answer}."
-        else:
-            said = f"{q.text} Resposta: {answer}."
-        beats.append(beat(speak_pt(said), *([("write", "e3")] if k == 0 else [])))
-    beats.append(beat("Agora, responda ao quiz desta aula no site para registrar o seu progresso."))
+    lines = [_question_line(q) for q in lesson.quiz]
+    beats = [beat(f"Para fixar o que você aprendeu, vamos revisar três perguntas. {lines[0]}", ("draw", "e1"), ("write", "e2")),
+             beat(lines[1], ("write", "e3")), beat(lines[2]),
+             beat("Agora, responda ao quiz desta aula no site para registrar o seu progresso.")]
     return scene(f"cena900_{MARK}revisao", "Revisão", f"Revisão da aula: {lesson.title}",
                  [element("e1", "illustration", query="checklist"), element("e2", "keyword", text="Para fixar"),
                   element("e3", "bullets", items=items)], beats)
@@ -79,12 +81,12 @@ def review(lesson) -> dict:
 
 def closing(nxt) -> dict:
     if nxt is None:
-        beats = [beat("Esta foi a última aula da série.", ("draw", "e1"), ("write", "e2")),
-                 beat("Pratique no simulador, revise as aulas quando precisar e invista com calma e com método. Obrigado por assistir!")]
+        beats = [beat("Esta foi a última aula da série. Pratique no simulador, revise as aulas quando precisar e invista "
+                      "com calma e com método. Obrigado por assistir!", ("draw", "e1"), ("write", "e2"))]
         elements = [element("e1", "illustration", query="trophy"), element("e2", "keyword", text="Fim da série")]
     else:
-        beats = [beat("Na próxima aula:", ("draw", "e1"), ("write", "e2")),
-                 beat(speak_pt(f"{nxt.title}. {nxt.summary} Até lá!"), ("write", "e3"))]
+        beats = [beat(speak_pt(f"Na próxima aula: {nxt.title}. {nxt.summary} Até lá!"),
+                      ("draw", "e1"), ("write", "e2"), ("write", "e3"))]
         elements = [element("e1", "illustration", query="rocket"), element("e2", "keyword", text="Próxima aula"),
                     element("e3", "text", text=nxt.title)]
     return scene(f"cena901_{MARK}proxima", "Próxima aula", "Ligação com a próxima aula da série", elements, beats)
@@ -156,7 +158,7 @@ def dedupe_scenes(scenes: list[dict], threshold: float = 0.7, min_tokens: int = 
     return stats
 
 
-def inject(work: Path, lesson_id: str) -> dict:
+def inject(work: Path, lesson_id: str, replace: bool = False) -> dict:
     from livro2video.script.schema import Script
     from livro2video.utils import atomic_write_text, read_json, write_json
     from livro2video.pipeline import script_markdown
@@ -168,8 +170,10 @@ def inject(work: Path, lesson_id: str) -> dict:
 
     path = work / "roteiro.json"
     data = read_json(path)
-    if any(MARK in s["id"] for s in data["scenes"]):
+    had_series = any(MARK in s["id"] for s in data["scenes"])
+    if had_series and not replace:
         return {"inserted": False, "scenes": len(data["scenes"])}                    # idempotente
+    data["scenes"] = [s for s in data["scenes"] if MARK not in s["id"]]              # (replace) tira as da série antiga
     removed = dedupe_scenes(data["scenes"])
     scenes = [opening(i, lesson, prev, MODULE_OF[lesson.id])] + data["scenes"] + [review(lesson), closing(nxt)]
     for k, s in enumerate(scenes):
@@ -187,5 +191,6 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--work", required=True, type=Path)
     ap.add_argument("--lesson-id", required=True)
+    ap.add_argument("--replace", action="store_true", help="troca as cenas da série já inseridas")
     a = ap.parse_args()
-    print(inject(a.work, a.lesson_id))
+    print(inject(a.work, a.lesson_id, replace=a.replace))

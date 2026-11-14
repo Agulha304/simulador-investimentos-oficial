@@ -119,7 +119,7 @@ def test_series_scenes_are_consistent_for_every_lesson():
         scenes = [series.opening(i, lesson, prev, MODULE_OF[lesson.id]), series.review(lesson), series.closing(nxt)]
         for sc in scenes:
             ids = [e["id"] for e in sc["elements"]]
-            assert len(ids) == len(set(ids)) and 2 <= len(ids) <= 4 and 2 <= len(sc["beats"]) <= 7, (lesson.id, sc["id"])
+            assert len(ids) == len(set(ids)) and 2 <= len(ids) <= 4 and 1 <= len(sc["beats"]) <= 7, (lesson.id, sc["id"])   # a cena final tem uma fala só, de propósito
             for b in sc["beats"]:
                 assert all(a["target"] in ids for a in b["actions"]), (lesson.id, sc["id"])
                 assert not any(ch.isdigit() for ch in b["narration"]) and "%" not in b["narration"], (lesson.id, b["narration"])

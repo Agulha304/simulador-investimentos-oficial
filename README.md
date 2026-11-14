@@ -105,6 +105,9 @@ curso passa por um PDF:
 Refazer: `PYTHONPATH=. <venv-do-livro2video>/bin/python tools/video_course/build_pdf.py --out <livros>/curso-educacao-financeira.pdf` e
 `python tools/video_course/generate_all.py --generator-dir <livro2video> --pdf livros/curso-educacao-financeira.pdf` (opções `--only m0-l3`,
 `--force`). Em máquina com RTX 3050 cada vídeo leva cerca de 4 minutos.
+Para mudar só as cenas da série (abertura, revisão, próxima aula) sem refazer roteiro nem notas, use `--refresh-series`: reaproveita tudo
+que está em cache e leva cerca de 2,5 minutos por aula. As cenas da série seguem uma regra: **o desenho acompanha uma fala longa**. O gerador
+estende a cena até a mão terminar de desenhar, então um desenho demorado sob uma fala curta vira silêncio (era 10% do tempo dos vídeos).
 
 ## Aulas, Desempenho e Ranking
 
