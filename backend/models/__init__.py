@@ -1,9 +1,12 @@
 """Importa todos os models para que o Alembic e o metadata os enxerguem."""
 from backend.models.asset import Asset
+from backend.models.budget import (
+    BudgetCategory, BudgetItem, FinanceAccount, LedgerEntry, RecurringItem, RecurringItemVersion, SimMonth,
+)
 from backend.models.chart_layout import ChartLayout
 from backend.models.distribution import Dividend, DividendEligibility, DividendPayment
 from backend.models.enums import (
-    AssetClass, Currency, DistributionKind, EligibilityStatus, EventKind, EventStatus, FixedIncomeType,
+    AccountKind, AssetClass, Currency, EntryOrigin, FlowKind, Frequency, MonthStatus, DistributionKind, EligibilityStatus, EventKind, EventStatus, FixedIncomeType,
     IndexName, Indexer, InvestmentStatus, Liquidity, PaymentFrequency, ProductSource, RateMode, RiskLevel,
     TaxRegime, TransactionSource, TransactionType,
 )
@@ -15,6 +18,8 @@ from backend.models.transaction import Transaction
 from backend.models.user import User
 
 __all__ = [
+    "AccountKind", "BudgetCategory", "BudgetItem", "EntryOrigin", "FinanceAccount", "FlowKind", "Frequency",
+    "LedgerEntry", "MonthStatus", "RecurringItem", "RecurringItemVersion", "SimMonth",
     "Asset", "AssetClass", "ChartLayout", "Dividend", "DividendEligibility", "DividendPayment",
     "DistributionKind", "EligibilityStatus", "EventKind", "EventStatus", "FinancialEvent", "FixedIncomeInvestment",
     "FixedIncomeProduct", "FixedIncomeType", "IndexName", "IndexRate", "Indexer", "InvestmentStatus", "Liquidity",

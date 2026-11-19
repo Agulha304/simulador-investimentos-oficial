@@ -140,6 +140,42 @@ export const tokenStore = {
   clear() { try { localStorage.removeItem(TOKEN_KEY); } catch { /* ignore */ } },
 };
 
+// ------------------------------------------------------------------ orçamento mensal
+export type FlowKind = "INCOME" | "EXPENSE";
+export type Frequency = "MONTHLY" | "QUARTERLY" | "SEMIANNUAL" | "ANNUAL";
+export interface BudgetCategory { id: number; name: string; kind: FlowKind; active: boolean; is_default: boolean }
+export interface BudgetItem {
+  id: number; name: string; kind: FlowKind; category_id: number; category_name: string;
+  planned_amount: Decimal; realized: Decimal; remaining: Decimal; recurring: boolean;
+  frequency: Frequency | null; end_month: string | null; entry_count: number;
+}
+export interface CategoryTotal { category_id: number | null; category_name: string; kind: FlowKind; planned: Decimal; realized: Decimal; remaining: Decimal }
+export interface MonthSummary {
+  ref_month: string; status: "OPEN" | "CLOSED"; opening_balance: Decimal; closing_balance: Decimal | null;
+  planned_investment: Decimal; balance: Decimal; planned_income: Decimal; planned_expense: Decimal;
+  realized_income: Decimal; realized_expense: Decimal; forecast_income: Decimal; forecast_expense: Decimal;
+  remaining_income: Decimal; remaining_expense: Decimal; invested: Decimal; result: Decimal;
+  projected_closing_balance: Decimal; free_after_investment: Decimal; items: BudgetItem[]; by_category: CategoryTotal[];
+}
+export interface ClosePreview {
+  ref_month: string; next_month: string; income: Decimal; expense: Decimal; invested: Decimal; result: Decimal;
+  carried_balance: Decimal; pending: string[]; shortfall: Decimal; can_close: boolean;
+}
+export interface BudgetOverview { account: { id: number; name: string; kind: string; balance: Decimal }; month: MonthSummary; close: ClosePreview }
+export interface MonthRow {
+  ref_month: string; status: "OPEN" | "CLOSED"; opening_balance: Decimal; closing_balance: Decimal | null;
+  income: Decimal; expense: Decimal; invested: Decimal; result: Decimal;
+}
+export interface LedgerEntryOut {
+  id: number; kind: FlowKind; amount: Decimal; description: string; category_id: number | null; category_name: string | null;
+  entry_date: string; ref_month: string; origin: string; budget_item_id: number | null; reverses_id: number | null;
+  reversed: boolean; created_at: string;
+}
+export interface ItemInput {
+  name: string; kind: FlowKind; category_id: number; planned_amount: string; recurring: boolean;
+  frequency: Frequency; end_month: string | null;
+}
+
 export class ApiError extends Error {
   constructor(public status: number, message: string) { super(message); }
 }
@@ -207,6 +243,28 @@ export const api = {
   lesson: (id: string) => request<Lesson>(`/learn/lessons/${id}`),
   submitQuiz: (id: string, answers: number[]) =>
     request<QuizResult>(`/learn/lessons/${id}/quiz`, { method: "POST", body: JSON.stringify({ answers }) }),
+  budgetOverview: () => request<BudgetOverview>("/budget/overview"),
+  budgetMonths: () => request<MonthRow[]>("/budget/months"),
+  budgetMonth: (ref: string) => request<MonthSummary>(`/budget/months/${ref}`),
+  budgetEntries: (ref?: string) => request<LedgerEntryOut[]>(`/budget/entries${ref ? `?ref_month=${ref}` : ""}`),
+  budgetCategories: () => request<BudgetCategory[]>("/budget/categories"),
+  budgetCreateCategory: (name: string, kind: FlowKind) =>
+    request<BudgetCategory>("/budget/categories", { method: "POST", body: JSON.stringify({ name, kind }) }),
+  budgetUpdateCategory: (id: number, body: { name?: string; active?: boolean }) =>
+    request<BudgetCategory>(`/budget/categories/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
+  budgetAddItem: (body: ItemInput) => request<MonthSummary>("/budget/items", { method: "POST", body: JSON.stringify(body) }),
+  budgetUpdateItem: (id: number, body: Partial<Omit<ItemInput, "kind" | "recurring">> & { apply_to_future?: boolean; clear_end_month?: boolean }) =>
+    request<MonthSummary>(`/budget/items/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
+  budgetDeleteItem: (id: number, stopRecurring: boolean) =>
+    request<MonthSummary>(`/budget/items/${id}?stop_recurring=${stopRecurring}`, { method: "DELETE" }),
+  budgetExample: () => request<MonthSummary>("/budget/example", { method: "POST" }),
+  budgetSetInvestment: (planned_investment: string) =>
+    request<MonthSummary>("/budget/months/current", { method: "PATCH", body: JSON.stringify({ planned_investment }) }),
+  budgetCreateEntry: (body: { kind: FlowKind; amount: string; description: string; category_id?: number; budget_item_id?: number }) =>
+    request<LedgerEntryOut>("/budget/entries", { method: "POST", body: JSON.stringify({ ...body, idempotency_key: crypto.randomUUID() }) }),
+  budgetReverseEntry: (id: number) => request<LedgerEntryOut>(`/budget/entries/${id}/reverse`, { method: "POST" }),
+  budgetClose: (ref_month: string) =>
+    request<BudgetOverview>("/budget/close", { method: "POST", body: JSON.stringify({ ref_month, confirm: true }) }),
   deposit: (amount: string) => request<Transaction>("/portfolio/deposit", { method: "POST", body: JSON.stringify({ amount }) }),
   portfolio: () => request<PortfolioSummary>("/portfolio"),
   transactions: (limit = 20) => request<Transaction[]>(`/portfolio/transactions?limit=${limit}`),

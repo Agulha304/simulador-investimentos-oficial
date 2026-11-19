@@ -24,6 +24,8 @@ export const TX_LABEL: Record<string, string> = {
   FIXED_INCOME_REDEEM: "Resgate RF",
   FIXED_INCOME_COUPON: "Juros RF",
   FIXED_INCOME_MATURITY: "Vencimento RF",
+  BUDGET_INCOME: "Receita (orçamento)",
+  BUDGET_EXPENSE: "Despesa (orçamento)",
 };
 
 export const CLASS_LABEL: Record<string, string> = {
@@ -62,3 +64,17 @@ export function fmtDuration(totalSeconds: number): string {
   if (h) return `${h} h ${String(m).padStart(2, "0")} min`;
   return m ? `${m} min${sec ? ` ${String(sec).padStart(2, "0")} s` : ""}` : `${sec} s`;
 }
+
+/** "2026-11-01" -> "novembro de 2026". */
+export const fmtMonth = (iso: string) =>
+  new Intl.DateTimeFormat("pt-BR", { month: "long", year: "numeric" }).format(new Date(`${iso.slice(0, 7)}-01T12:00:00`));
+export const fmtMonthShort = (iso: string) =>
+  new Intl.DateTimeFormat("pt-BR", { month: "short", year: "2-digit" }).format(new Date(`${iso.slice(0, 7)}-01T12:00:00`));
+export const FREQUENCY_LABEL: Record<string, string> = { MONTHLY: "Mensal", QUARTERLY: "Trimestral", SEMIANNUAL: "Semestral", ANNUAL: "Anual" };
+export const ORIGIN_LABEL: Record<string, string> = { MANUAL: "Manual", RECURRING: "Recorrente", INVESTMENT: "Investimento", SYSTEM: "Sistema", REVERSAL: "Estorno" };
+
+/** Aceita "1.500,50" ou "1500.50" e devolve "1500.50" (a validação de verdade é do servidor). */
+export const parseMoneyInput = (s: string) => {
+  const t = s.trim().replace(/\s|R\$/g, "");
+  return t.includes(",") ? t.replace(/\./g, "").replace(",", ".") : t;
+};

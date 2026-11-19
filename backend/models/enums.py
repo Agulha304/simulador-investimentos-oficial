@@ -27,6 +27,45 @@ class TransactionType(StrEnum):
     FIXED_INCOME_REDEEM = "FIXED_INCOME_REDEEM"
     FIXED_INCOME_COUPON = "FIXED_INCOME_COUPON"
     FIXED_INCOME_MATURITY = "FIXED_INCOME_MATURITY"
+    BUDGET_INCOME = "BUDGET_INCOME"      # receita do orçamento (salário, renda extra...); conta como patrimônio
+    BUDGET_EXPENSE = "BUDGET_EXPENSE"    # despesa do orçamento (moradia, alimentação...)
+
+
+# ------------------------------------------------------- orçamento e ciclo mensal
+
+class AccountKind(StrEnum):
+    """Tipo de conta financeira. Só PERSONAL é usada na etapa 1; as demais já existem
+    para que empresas e carteiras possam ter contas próprias sem misturar saldos."""
+    PERSONAL = "PERSONAL"
+    INVESTMENT = "INVESTMENT"
+    BUSINESS = "BUSINESS"
+
+
+class FlowKind(StrEnum):
+    INCOME = "INCOME"
+    EXPENSE = "EXPENSE"
+
+
+class Frequency(StrEnum):
+    MONTHLY = "MONTHLY"
+    QUARTERLY = "QUARTERLY"
+    SEMIANNUAL = "SEMIANNUAL"
+    ANNUAL = "ANNUAL"
+
+
+class EntryOrigin(StrEnum):
+    """De onde veio a movimentação — hoje manual e recorrente; módulos futuros
+    (imóveis, empresas, família...) entram como novos valores."""
+    MANUAL = "MANUAL"
+    RECURRING = "RECURRING"
+    INVESTMENT = "INVESTMENT"
+    SYSTEM = "SYSTEM"
+    REVERSAL = "REVERSAL"
+
+
+class MonthStatus(StrEnum):
+    OPEN = "OPEN"
+    CLOSED = "CLOSED"
 
 
 class TransactionSource(StrEnum):

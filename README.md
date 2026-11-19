@@ -125,6 +125,31 @@ estende a cena até a mão terminar de desenhar, então um desenho demorado sob 
   daltonismo), grade recessiva, composição em barras ordenadas (sem pizza), sinal de ganho/perda também por direção e ▲/▼ (nunca só
   por cor) e uma visão em tabela de cada gráfico.
 
+## Orçamento mensal e ciclo do simulador (etapa 1 da "vida financeira")
+
+Aba **Orçamento** (`/orcamento`). Código: `backend/models/budget.py`, `services/finance_ledger.py`, `budget_service.py`,
+`month_service.py`, `routers/budget.py`; frontend em `pages/BudgetPage.tsx`.
+
+- **Tempo mensal controlado pelo usuário.** Não há worker nem cron: o mês só avança em "Fechar mês e avançar", que mostra um resumo e
+  exige confirmação. O primeiro mês é o mês real do primeiro acesso à aba (usuários antigos são preparados no primeiro acesso, nada é
+  migrado à força).
+- **Planejado ≠ realizado.** O valor previsto (`budget_items`) nunca mexe no saldo. Só uma movimentação registrada (`ledger_entries`) ou a
+  cobrança de uma recorrente no fechamento altera o caixa. Recorrente que você já registrou à mão no mês não é cobrada de novo.
+- **Livro de movimentações imutável.** `LedgerEntry` não é editado nem apagado; correção = estorno (nova linha ligada à original).
+  Cada movimentação na conta pessoal gera uma `Transaction` (`BUDGET_INCOME`/`BUDGET_EXPENSE`) pelo `ledger_service.record`, que continua
+  sendo o único ponto que altera `cash_balance`. A conta pessoal usa o `cash_balance` existente (sem duplicar saldo); `finance_accounts`
+  já tem os tipos `INVESTMENT` e `BUSINESS` para empresas e carteiras futuras. `origin`/`origin_ref` identificam o módulo de origem.
+- **Histórico de valores.** Mudar o valor de uma recorrência cria uma versão (`recurring_item_versions`) vigente a partir do mês atual, e cada
+  mês guarda seus próprios itens: o aluguel de R$ 1.500 até março continua R$ 1.500 depois de virar R$ 2.000 em abril.
+- **Fechamento atômico e idempotente.** Uma única transação trava a carteira, lança as recorrentes pendentes (receitas antes das despesas),
+  grava o resumo, fecha o mês e abre o próximo com o saldo transportado. Qualquer erro desfaz tudo. Fechar duas vezes devolve 409 sem
+  cobrar de novo; há índice único `(recurring_item_id, ref_month)` para recorrentes e chave de idempotência no caixa. Se faltar saldo para
+  as recorrentes, o fechamento é recusado (422) e nada é lançado.
+- **Impacto no ranking (decisão):** receitas e despesas do orçamento **contam como patrimônio** (diferente dos aportes virtuais extras).
+  Salário aumenta lucro e posição no ranking; despesas diminuem. Para voltar a medir só investimentos, basta incluir os dois tipos novos em
+  `portfolio_service.sum_net_deposits`.
+- **Investimentos** continuam em Mercado/Renda Fixa. O orçamento só mostra o investido no mês (compras e aplicações) e um valor planejado.
+
 ## Decisões de arquitetura
 
 - **Precisão.** Tudo é `Decimal`: dinheiro `NUMERIC(20,2)`, preços/câmbio `NUMERIC(28,10)`, quantidades `NUMERIC(38,18)`.
