@@ -27,6 +27,7 @@ export interface PortfolioSummary {
   total_deposits_brl: Decimal;
   fixed_income_invested_brl: Decimal;
   fixed_income_value_brl: Decimal;
+  goods_net_brl: Decimal;
   pnl_brl: Decimal;
   pnl_pct: Decimal | null;
   holdings: Holding[];
@@ -147,7 +148,7 @@ export interface BudgetCategory { id: number; name: string; kind: FlowKind; acti
 export interface BudgetItem {
   id: number; name: string; kind: FlowKind; category_id: number; category_name: string;
   planned_amount: Decimal; realized: Decimal; remaining: Decimal; recurring: boolean;
-  frequency: Frequency | null; end_month: string | null; entry_count: number;
+  frequency: Frequency | null; end_month: string | null; entry_count: number; capital: boolean; source: string | null;
 }
 export interface CategoryTotal { category_id: number | null; category_name: string; kind: FlowKind; planned: Decimal; realized: Decimal; remaining: Decimal }
 export interface MonthSummary {
@@ -155,7 +156,8 @@ export interface MonthSummary {
   planned_investment: Decimal; balance: Decimal; planned_income: Decimal; planned_expense: Decimal;
   realized_income: Decimal; realized_expense: Decimal; forecast_income: Decimal; forecast_expense: Decimal;
   remaining_income: Decimal; remaining_expense: Decimal; invested: Decimal; result: Decimal;
-  projected_closing_balance: Decimal; free_after_investment: Decimal; items: BudgetItem[]; by_category: CategoryTotal[];
+  projected_closing_balance: Decimal; free_after_investment: Decimal; capital_in: Decimal; capital_out: Decimal;
+  items: BudgetItem[]; by_category: CategoryTotal[];
 }
 export interface ClosePreview {
   ref_month: string; next_month: string; income: Decimal; expense: Decimal; invested: Decimal; result: Decimal;
@@ -169,11 +171,59 @@ export interface MonthRow {
 export interface LedgerEntryOut {
   id: number; kind: FlowKind; amount: Decimal; description: string; category_id: number | null; category_name: string | null;
   entry_date: string; ref_month: string; origin: string; budget_item_id: number | null; reverses_id: number | null;
-  reversed: boolean; created_at: string;
+  reversed: boolean; created_at: string; capital: boolean; origin_ref: string | null;
 }
 export interface ItemInput {
   name: string; kind: FlowKind; category_id: number; planned_amount: string; recurring: boolean;
   frequency: Frequency; end_month: string | null;
+}
+
+// ------------------------------------------------------------------ bens e patrimônio
+export type GoodCategory = "RESIDENTIAL" | "COMMERCIAL" | "LAND" | "CAR" | "MOTORCYCLE" | "INSTRUMENT" | "EQUIPMENT" | "ANTIQUE" | "COLLECTIBLE" | "OTHER";
+export type Occupancy = "OWNER_OCCUPIED" | "VACANT" | "LISTED_FOR_RENT" | "RENTED";
+export type AmortSystem = "PRICE" | "SAC";
+export interface Listing {
+  key: string; category: GoodCategory; name: string; description: string; price: Decimal; purchase_fee: Decimal;
+  location: string; condition: string | null; property_type: string | null; address: string | null;
+  area_m2: Decimal | null; bedrooms: number | null; suggested_rent: Decimal | null; owned: boolean;
+  financing: { max_ltv_pct: Decimal; min_down_payment: Decimal; annual_rate_pct: Decimal; max_term_months: number } | null;
+}
+export interface Good {
+  id: number; name: string; category: GoodCategory; status: "ACTIVE" | "SOLD" | "LOST"; condition: string | null;
+  location: string | null; acquired_on: string; purchase_price: Decimal; acquisition_cost: Decimal; current_value: Decimal;
+  unrealized_result: Decimal; occupancy: Occupancy | null; monthly_rent: Decimal | null; loan_balance: Decimal | null;
+  sold_on: string | null; sale_result: Decimal | null;
+}
+export interface Installment {
+  number: number; due_month: string; payment: Decimal; interest: Decimal; amortization: Decimal; balance_after: Decimal; status?: string | null;
+}
+export interface GoodDetail {
+  good: Good; description: string | null;
+  real_estate: { property_type: string; address: string; area_m2: Decimal; bedrooms: number | null; occupancy: Occupancy;
+    monthly_rent: Decimal; rent_tax_pct: Decimal; market_rent: Decimal } | null;
+  vehicle_usage_km_month: number | null;
+  costs: { id: number; kind: string; name: string; amount: Decimal; frequency: Frequency; start_month: string; active: boolean }[];
+  values: { ref_month: string; value: Decimal; source: string }[];
+  events: { ref_month: string; type: string; description: string; amount: Decimal | null; created_at: string }[];
+  loan: { principal: Decimal; down_payment: Decimal; annual_rate_pct: Decimal; term_months: number; system: AmortSystem;
+    start_month: string; end_month: string; balance: Decimal; status: string; paid_installments: number;
+    next_payment: Decimal | null; installments: Installment[] } | null;
+  entries: { id: number; kind: string; amount: Decimal; description: string; ref_month: string; capital: boolean; origin: string }[];
+  income_total: Decimal; expense_total: Decimal;
+  appraisal: { estimate: Decimal; low: Decimal; high: Decimal; uncertainty_pct: Decimal };
+}
+export interface Simulation {
+  price: Decimal; down_payment: Decimal; financed: Decimal; annual_rate_pct: Decimal; first_payment: Decimal;
+  last_payment: Decimal; total_interest: Decimal; total_paid: Decimal; purchase_fee: Decimal; cash_needed_now: Decimal;
+  preview: Installment[];
+}
+export interface SaleQuote { sale_price: Decimal; fees: Decimal; loan_payoff: Decimal; net_cash: Decimal; result: Decimal }
+export interface WealthOverview {
+  count: number; sold_count: number; total_value: Decimal; total_acquisition_cost: Decimal; debts: Decimal; net_worth: Decimal;
+  unrealized_result: Decimal; monthly_income: Decimal; monthly_expense: Decimal; monthly_debt_service: Decimal;
+  income_received_total: Decimal; expense_paid_total: Decimal;
+  by_category: { category: GoodCategory; count: number; value: Decimal }[];
+  series: { ref_month: string; goods_value: Decimal; debts: Decimal; net: Decimal }[];
 }
 
 export class ApiError extends Error {
@@ -265,6 +315,30 @@ export const api = {
   budgetReverseEntry: (id: number) => request<LedgerEntryOut>(`/budget/entries/${id}/reverse`, { method: "POST" }),
   budgetClose: (ref_month: string) =>
     request<BudgetOverview>("/budget/close", { method: "POST", body: JSON.stringify({ ref_month, confirm: true }) }),
+  wealth: () => request<WealthOverview>("/goods/overview"),
+  market: (p: Record<string, string> = {}) => request<Listing[]>(`/goods/market?${new URLSearchParams(p)}`),
+  simulateFinancing: (body: { listing_key: string; down_payment: string; term_months: number; system: AmortSystem }) =>
+    request<Simulation>("/goods/market/simulate", { method: "POST", body: JSON.stringify(body) }),
+  buyGood: (body: { listing_key: string; idempotency_key: string; financed: boolean; down_payment?: string; term_months?: number;
+    system?: AmortSystem; extra_costs?: string; usage_km_month?: number }) =>
+    request<GoodDetail>("/goods/purchase", { method: "POST", body: JSON.stringify(body) }),
+  myGoods: (p: Record<string, string> = {}) => request<Good[]>(`/goods?${new URLSearchParams(p)}`),
+  good: (id: number) => request<GoodDetail>(`/goods/${id}`),
+  saleQuote: (id: number, salePrice?: string) =>
+    request<SaleQuote>(`/goods/${id}/sale-quote${salePrice ? `?sale_price=${encodeURIComponent(salePrice)}` : ""}`),
+  sellGood: (id: number, body: { sale_price?: string; extra_fees?: string }) =>
+    request<GoodDetail>(`/goods/${id}/sell`, { method: "POST", body: JSON.stringify(body) }),
+  writeOffGood: (id: number, reason: string) =>
+    request<GoodDetail>(`/goods/${id}/write-off`, { method: "POST", body: JSON.stringify({ reason }) }),
+  setOccupancy: (id: number, body: { mode: Occupancy; monthly_rent?: string; end_recurring_item_ids?: number[] }) =>
+    request<GoodDetail>(`/goods/${id}/occupancy`, { method: "POST", body: JSON.stringify(body) }),
+  housingCandidates: () => request<{ id: number; name: string; amount: Decimal | null }[]>("/goods/housing-candidates"),
+  goodMaintenance: (id: number, amount: string, description: string) =>
+    request<GoodDetail>(`/goods/${id}/maintenance`, { method: "POST", body: JSON.stringify({ amount, description, idempotency_key: crypto.randomUUID() }) }),
+  addGoodCost: (id: number, body: { kind: string; name: string; amount: string; frequency: Frequency }) =>
+    request<GoodDetail>(`/goods/${id}/costs`, { method: "POST", body: JSON.stringify(body) }),
+  updateGoodCost: (id: number, costId: number, body: { amount?: string; active?: boolean }) =>
+    request<GoodDetail>(`/goods/${id}/costs/${costId}`, { method: "PATCH", body: JSON.stringify(body) }),
   deposit: (amount: string) => request<Transaction>("/portfolio/deposit", { method: "POST", body: JSON.stringify({ amount }) }),
   portfolio: () => request<PortfolioSummary>("/portfolio"),
   transactions: (limit = 20) => request<Transaction[]>(`/portfolio/transactions?limit=${limit}`),

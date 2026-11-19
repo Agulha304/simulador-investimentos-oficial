@@ -6,11 +6,15 @@ from backend.models.budget import (
 from backend.models.chart_layout import ChartLayout
 from backend.models.distribution import Dividend, DividendEligibility, DividendPayment
 from backend.models.enums import (
-    AccountKind, AssetClass, Currency, EntryOrigin, FlowKind, Frequency, MonthStatus, DistributionKind, EligibilityStatus, EventKind, EventStatus, FixedIncomeType,
+    AccountKind, AmortizationSystem, AssetClass, Condition, CostKind, GoodCategory, GoodEventType, GoodStatus,
+    InstallmentStatus, LoanStatus, Occupancy, REAL_ESTATE, ValueSource, Currency, EntryOrigin, FlowKind, Frequency, MonthStatus, DistributionKind, EligibilityStatus, EventKind, EventStatus, FixedIncomeType,
     IndexName, Indexer, InvestmentStatus, Liquidity, PaymentFrequency, ProductSource, RateMode, RiskLevel,
     TaxRegime, TransactionSource, TransactionType,
 )
 from backend.models.fixed_income import FinancialEvent, FixedIncomeInvestment, FixedIncomeProduct, IndexRate
+from backend.models.goods import (
+    Good, GoodCost, GoodEvent, GoodValue, Loan, LoanInstallment, RealEstateDetails, ValuationRule, VehicleDetails,
+)
 from backend.models.holding import Holding
 from backend.models.performance import LessonProgress, PortfolioSnapshot
 from backend.models.portfolio import Portfolio
@@ -18,6 +22,9 @@ from backend.models.transaction import Transaction
 from backend.models.user import User
 
 __all__ = [
+    "AmortizationSystem", "Condition", "CostKind", "Good", "GoodCategory", "GoodCost", "GoodEvent", "GoodEventType",
+    "GoodStatus", "GoodValue", "InstallmentStatus", "Loan", "LoanInstallment", "LoanStatus", "Occupancy", "REAL_ESTATE",
+    "RealEstateDetails", "ValuationRule", "ValueSource", "VehicleDetails",
     "AccountKind", "BudgetCategory", "BudgetItem", "EntryOrigin", "FinanceAccount", "FlowKind", "Frequency",
     "LedgerEntry", "MonthStatus", "RecurringItem", "RecurringItemVersion", "SimMonth",
     "Asset", "AssetClass", "ChartLayout", "Dividend", "DividendEligibility", "DividendPayment",

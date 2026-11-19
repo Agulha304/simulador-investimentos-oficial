@@ -238,6 +238,8 @@ def update_item(db: Session, user_id: int, item_id: int, *, name: str | None = N
     bi = get_item(db, user_id, item_id)
     month = db.get(SimMonth, bi.month_id)
     require_open(month)
+    if bi.source_key:
+        raise ConflictError("este item é gerado por um bem ou financiamento; altere-o no próprio bem")
     r = db.get(RecurringItem, bi.recurring_item_id) if bi.recurring_item_id else None
     if name is not None:
         if not name.strip():
@@ -283,6 +285,8 @@ def remove_item(db: Session, user_id: int, item_id: int, *, stop_recurring: bool
     bi = get_item(db, user_id, item_id)
     month = db.get(SimMonth, bi.month_id)
     require_open(month)
+    if bi.source_key:
+        raise ConflictError("este item é gerado por um bem ou financiamento; altere-o no próprio bem")
     if db.scalar(select(LedgerEntry.id).where(LedgerEntry.budget_item_id == bi.id).limit(1)):
         raise ConflictError("este item já tem movimentações registradas e não pode ser removido")
     if bi.recurring_item_id and stop_recurring:
@@ -332,7 +336,7 @@ def register_entry(db: Session, user_id: int, month: SimMonth, *, kind: FlowKind
     return finance_ledger.post_entry(
         db, user_id, kind=kind, amount=amount, description=description, ref_month=month.ref_month,
         entry_date=entry_date, category_id=category_id, budget_item_id=budget_item_id,
-        idempotency_key=idempotency_key,
+        idempotency_key=idempotency_key, capital=bool(bi and bi.capital),
     )
 
 
@@ -362,6 +366,10 @@ class MonthSummary:
     pending_income: Decimal = ZERO       # recorrentes que ainda serão lançadas no fechamento
     pending_expense: Decimal = ZERO
     invested: Decimal = ZERO
+    realized_capital_in: Decimal = ZERO     # movimentações patrimoniais (compra/venda de bens, amortização)
+    realized_capital_out: Decimal = ZERO
+    pending_capital_in: Decimal = ZERO
+    pending_capital_out: Decimal = ZERO
     balance: Decimal = ZERO              # caixa atual (mês aberto) ou saldo final (mês fechado)
     projected_closing_balance: Decimal = ZERO
 
@@ -386,14 +394,19 @@ def summarize(db: Session, user_id: int, month: SimMonth) -> MonthSummary:
     unplanned: dict[tuple[FlowKind, int | None], Decimal] = {}
     for e in entries:
         v = signed_amount(e)
-        if e.kind == FlowKind.INCOME:
+        if e.capital:
+            if e.kind == FlowKind.INCOME:
+                s.realized_capital_in += v
+            else:
+                s.realized_capital_out += v
+        elif e.kind == FlowKind.INCOME:
             s.realized_income += v
         else:
             s.realized_expense += v
         if e.budget_item_id:
             realized_by_item[e.budget_item_id] = realized_by_item.get(e.budget_item_id, ZERO) + v
             count_by_item[e.budget_item_id] = count_by_item.get(e.budget_item_id, 0) + 1
-        else:
+        elif not e.capital:
             key = (e.kind, e.category_id)
             unplanned[key] = unplanned.get(key, ZERO) + v
 
@@ -405,17 +418,22 @@ def summarize(db: Session, user_id: int, month: SimMonth) -> MonthSummary:
         s.items.append(ItemView(bi, cats.get(bi.category_id, "?"), realized,
                                 quantize_money(bi.planned_amount - realized), recurring, n))
         forecast = max(bi.planned_amount, realized)
-        if bi.kind == FlowKind.INCOME:
-            s.planned_income += bi.planned_amount
-            s.forecast_income += forecast
-        else:
-            s.planned_expense += bi.planned_amount
-            s.forecast_expense += forecast
-        if recurring and n == 0 and month.status == MonthStatus.OPEN:
+        if not bi.capital:
+            if bi.kind == FlowKind.INCOME:
+                s.planned_income += bi.planned_amount
+                s.forecast_income += forecast
+            else:
+                s.planned_expense += bi.planned_amount
+                s.forecast_expense += forecast
+        if (recurring or bi.source_key) and n == 0 and month.status == MonthStatus.OPEN:
             if bi.kind == FlowKind.INCOME:
                 s.pending_income += bi.planned_amount
+                if bi.capital:
+                    s.pending_capital_in += bi.planned_amount
             else:
                 s.pending_expense += bi.planned_amount
+                if bi.capital:
+                    s.pending_capital_out += bi.planned_amount
     for (kind, cat_id), v in unplanned.items():
         s.unplanned.append((kind, cat_id, cats.get(cat_id, "Sem categoria"), v))
         if kind == FlowKind.INCOME:
@@ -433,7 +451,8 @@ def summarize(db: Session, user_id: int, month: SimMonth) -> MonthSummary:
         s.invested = month.invested or ZERO
         s.projected_closing_balance = month.closing_balance
     for name in ("planned_income", "planned_expense", "realized_income", "realized_expense", "forecast_income",
-                 "forecast_expense", "pending_income", "pending_expense"):
+                 "forecast_expense", "pending_income", "pending_expense", "realized_capital_in", "realized_capital_out",
+                 "pending_capital_in", "pending_capital_out"):
         setattr(s, name, quantize_money(getattr(s, name)))
     return s
 

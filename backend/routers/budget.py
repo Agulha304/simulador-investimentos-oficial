@@ -68,7 +68,10 @@ def _summary_out(db: Session, user_id: int, summary: bs.MonthSummary) -> s.Month
             id=v.item.id, name=v.item.name, kind=v.item.kind, category_id=v.item.category_id,
             category_name=v.category_name, planned_amount=v.item.planned_amount, realized=v.realized,
             remaining=v.remaining, recurring=v.recurring, frequency=r.frequency if r else None,
-            end_month=r.end_month if r else None, entry_count=v.entry_count))
+            end_month=r.end_month if r else None, entry_count=v.entry_count,
+            capital=v.item.capital, source=v.item.source_key))
+        if v.item.capital:
+            continue                              # movimentação patrimonial não entra nos totais por categoria
         t = totals.setdefault((v.item.kind, v.item.category_id), [v.category_name, bs.ZERO, bs.ZERO])
         t[1] += v.item.planned_amount
         t[2] += v.realized
@@ -91,6 +94,7 @@ def _summary_out(db: Session, user_id: int, summary: bs.MonthSummary) -> s.Month
         invested=summary.invested, result=quantize_money(summary.realized_income - summary.realized_expense),
         projected_closing_balance=summary.projected_closing_balance,
         free_after_investment=quantize_money(summary.projected_closing_balance - m.planned_investment),
+        capital_in=summary.realized_capital_in, capital_out=summary.realized_capital_out,
         items=items, by_category=by_category,
     )
 
@@ -100,9 +104,10 @@ def _close_out(user_id: int, db: Session, month: SimMonth) -> s.ClosePreviewOut:
     sm = p.summary
     return s.ClosePreviewOut(
         ref_month=month.ref_month, next_month=p.next_month,
-        income=quantize_money(sm.realized_income + sm.pending_income),
-        expense=quantize_money(sm.realized_expense + sm.pending_expense), invested=sm.invested,
-        result=quantize_money(sm.realized_income + sm.pending_income - sm.realized_expense - sm.pending_expense),
+        income=quantize_money(sm.realized_income + sm.pending_income - sm.pending_capital_in),
+        expense=quantize_money(sm.realized_expense + sm.pending_expense - sm.pending_capital_out), invested=sm.invested,
+        result=quantize_money((sm.realized_income + sm.pending_income - sm.pending_capital_in)
+                              - (sm.realized_expense + sm.pending_expense - sm.pending_capital_out)),
         carried_balance=p.carried_balance, pending=[b.name for b in p.pending], shortfall=p.shortfall,
         can_close=p.can_close)
 
@@ -121,7 +126,7 @@ def _entry_out(db: Session, user_id: int, entries: list[LedgerEntry]) -> list[s.
         id=e.id, kind=e.kind, amount=e.amount, description=e.description, category_id=e.category_id,
         category_name=cats.get(e.category_id), entry_date=e.entry_date, ref_month=e.ref_month, origin=e.origin,
         budget_item_id=e.budget_item_id, reverses_id=e.reverses_id, reversed=e.id in reversed_ids,
-        created_at=e.created_at) for e in entries]
+        created_at=e.created_at, capital=e.capital, origin_ref=e.origin_ref) for e in entries]
 
 
 # ------------------------------------------------------------------ painel e meses

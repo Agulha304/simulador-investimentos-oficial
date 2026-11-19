@@ -85,6 +85,8 @@ class ItemOut(BaseModel):
     frequency: Frequency | None
     end_month: date | None
     entry_count: int
+    capital: bool = False             # movimentação patrimonial (ex.: amortização)
+    source: str | None = None         # gerado por um bem/financiamento (não editável aqui)
 
 
 class CategoryTotalOut(BaseModel):
@@ -122,6 +124,8 @@ class MonthSummaryOut(BaseModel):
     result: Decimal                  # receitas − despesas realizadas
     projected_closing_balance: Decimal
     free_after_investment: Decimal   # saldo projetado − investimento planejado
+    capital_in: Decimal = Decimal("0.00")     # movimentações patrimoniais (compra/venda de bens, amortizações)
+    capital_out: Decimal = Decimal("0.00")
     items: list[ItemOut]
     by_category: list[CategoryTotalOut]
 
@@ -170,3 +174,5 @@ class EntryOut(BaseModel):
     reverses_id: int | None
     reversed: bool
     created_at: datetime
+    capital: bool = False
+    origin_ref: str | None = None

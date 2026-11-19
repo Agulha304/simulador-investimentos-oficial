@@ -61,6 +61,7 @@ class EntryOrigin(StrEnum):
     INVESTMENT = "INVESTMENT"
     SYSTEM = "SYSTEM"
     REVERSAL = "REVERSAL"
+    ASSET = "ASSET"              # efeitos de bens (compra, venda, parcelas, aluguel, custos)
 
 
 class MonthStatus(StrEnum):
@@ -174,3 +175,89 @@ class IndexName(StrEnum):
     SELIC = "SELIC"
     IPCA = "IPCA"
     IGPM = "IGPM"
+
+
+# ----------------------------------------------------------- bens e patrimônio (etapa 2)
+
+class GoodCategory(StrEnum):
+    RESIDENTIAL = "RESIDENTIAL"
+    COMMERCIAL = "COMMERCIAL"
+    LAND = "LAND"
+    CAR = "CAR"
+    MOTORCYCLE = "MOTORCYCLE"
+    INSTRUMENT = "INSTRUMENT"
+    EQUIPMENT = "EQUIPMENT"
+    ANTIQUE = "ANTIQUE"
+    COLLECTIBLE = "COLLECTIBLE"
+    OTHER = "OTHER"
+
+
+REAL_ESTATE = (GoodCategory.RESIDENTIAL, GoodCategory.COMMERCIAL, GoodCategory.LAND)
+
+
+class GoodStatus(StrEnum):
+    ACTIVE = "ACTIVE"
+    SOLD = "SOLD"
+    LOST = "LOST"
+
+
+class Condition(StrEnum):
+    NEW = "NEW"
+    EXCELLENT = "EXCELLENT"
+    GOOD = "GOOD"
+    FAIR = "FAIR"
+    POOR = "POOR"
+
+
+class Occupancy(StrEnum):
+    OWNER_OCCUPIED = "OWNER_OCCUPIED"      # o usuário mora
+    VACANT = "VACANT"                      # sem uso e sem anúncio
+    LISTED_FOR_RENT = "LISTED_FOR_RENT"    # anunciado, aguardando inquilino (vacância)
+    RENTED = "RENTED"                      # alugado, gerando renda
+
+
+class CostKind(StrEnum):
+    IPTU = "IPTU"
+    CONDO = "CONDO"
+    MAINTENANCE = "MAINTENANCE"
+    FUEL = "FUEL"
+    INSURANCE = "INSURANCE"
+    IPVA = "IPVA"
+    LICENSING = "LICENSING"
+    PARKING = "PARKING"
+    OTHER = "OTHER"
+
+
+class AmortizationSystem(StrEnum):
+    PRICE = "PRICE"
+    SAC = "SAC"
+
+
+class LoanStatus(StrEnum):
+    ACTIVE = "ACTIVE"
+    PAID = "PAID"            # todas as parcelas pagas
+    SETTLED = "SETTLED"      # quitado na venda do bem
+
+
+class InstallmentStatus(StrEnum):
+    PENDING = "PENDING"
+    PAID = "PAID"
+    CANCELLED = "CANCELLED"
+
+
+class ValueSource(StrEnum):
+    PURCHASE = "PURCHASE"
+    MONTHLY = "MONTHLY"
+    SALE = "SALE"
+    WRITE_OFF = "WRITE_OFF"
+
+
+class GoodEventType(StrEnum):
+    PURCHASE = "PURCHASE"
+    SALE = "SALE"
+    OCCUPANCY = "OCCUPANCY"
+    RENTED = "RENTED"
+    VACATED = "VACATED"
+    MAINTENANCE = "MAINTENANCE"
+    COST_CHANGE = "COST_CHANGE"
+    WRITE_OFF = "WRITE_OFF"

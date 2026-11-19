@@ -16,14 +16,14 @@ from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from decimal import Decimal
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from backend.core.money import quantize_money
 from backend.models import (
     BudgetItem, EntryOrigin, FlowKind, LedgerEntry, MonthStatus, Portfolio, SimMonth, TransactionSource,
 )
-from backend.services import budget_service, finance_ledger, ledger_service
+from backend.services import budget_service, finance_ledger, goods_service, ledger_service
 from backend.services.finance_ledger import ConflictError, NotFoundError
 
 log = logging.getLogger(__name__)
@@ -43,10 +43,12 @@ class ClosePreview:
 
 
 def _pending_recurring(db: Session, month: SimMonth) -> list[BudgetItem]:
-    """Itens recorrentes do mês sem nenhuma movimentação registrada: serão lançados no fechamento."""
+    """Itens recorrentes e itens gerados por bens (aluguel, custos, parcelas) sem nenhuma movimentação
+    registrada: serão lançados no fechamento."""
     out = []
     for bi in db.scalars(select(BudgetItem).where(
-            BudgetItem.month_id == month.id, BudgetItem.recurring_item_id.is_not(None)).order_by(BudgetItem.id)):
+            BudgetItem.month_id == month.id,
+            or_(BudgetItem.recurring_item_id.is_not(None), BudgetItem.source_key.is_not(None))).order_by(BudgetItem.id)):
         has_entry = db.scalar(select(LedgerEntry.id).where(LedgerEntry.budget_item_id == bi.id).limit(1))
         if not has_entry:
             out.append(bi)
@@ -78,6 +80,14 @@ def close_month(db: Session, user_id: int, ref_month: date) -> SimMonth:
     pending = _pending_recurring(db, month)
     pending.sort(key=lambda b: (b.kind != FlowKind.INCOME, b.id))   # receitas antes das despesas
     for bi in pending:
+        if bi.source_key:                                      # gerado por um bem: aluguel, custo, parcela
+            finance_ledger.post_entry(
+                db, user_id, kind=bi.kind, amount=bi.planned_amount, description=bi.name,
+                ref_month=month.ref_month, entry_date=month.ref_month, category_id=bi.category_id,
+                origin=EntryOrigin.ASSET, origin_ref=bi.source_key, budget_item_id=bi.id, capital=bi.capital,
+                idempotency_key=f"asset:{bi.source_key}:{month.ref_month:%Y-%m}", source=TransactionSource.SYSTEM,
+            )
+            continue
         finance_ledger.post_entry(
             db, user_id, kind=bi.kind, amount=bi.planned_amount, description=bi.name,
             ref_month=month.ref_month, entry_date=month.ref_month, category_id=bi.category_id,
@@ -85,6 +95,7 @@ def close_month(db: Session, user_id: int, ref_month: date) -> SimMonth:
             recurring_item_id=bi.recurring_item_id, idempotency_key=f"recurring:{bi.recurring_item_id}:{month.ref_month:%Y-%m}",
             source=TransactionSource.SYSTEM,
         )
+    goods_service.settle_month(db, user_id, month)             # parcelas pagas, saldo devedor atualizado
 
     summary = budget_service.summarize(db, user_id, month)
     now = datetime.now(timezone.utc)
@@ -103,5 +114,6 @@ def close_month(db: Session, user_id: int, ref_month: date) -> SimMonth:
     db.add(nxt)
     db.flush()
     budget_service.generate_items(db, user_id, nxt)
+    goods_service.advance_to_month(db, user_id, nxt)          # valorização, ocupação e itens dos bens
     log.info("mês %s fechado user=%s saldo=%s", month.ref_month, user_id, portfolio.cash_balance)
     return nxt

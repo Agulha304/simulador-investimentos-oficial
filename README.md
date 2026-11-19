@@ -150,6 +150,34 @@ Aba **Orçamento** (`/orcamento`). Código: `backend/models/budget.py`, `service
   `portfolio_service.sum_net_deposits`.
 - **Investimentos** continuam em Mercado/Renda Fixa. O orçamento só mostra o investido no mês (compras e aplicações) e um valor planejado.
 
+## Bens e patrimônio (etapa 2)
+
+Aba **Patrimônio** (`/patrimonio`, detalhe em `/patrimonio/:id`). Código: `models/goods.py`, `services/goods_service.py`,
+`goods_rules.py`, `loan_math.py`, `wealth_service.py`, `routers/goods.py`; frontend em `pages/WealthPage.tsx` e `GoodPage.tsx`.
+
+- **Mercado simulado.** Anúncios internos (imóveis, carros, motos, instrumentos, equipamentos, antiguidades, colecionáveis) em
+  `goods_rules.CATALOG`, sem dados externos. O preço acompanha o mês do simulador com ruído determinístico por categoria.
+- **Tudo passa pelo ledger e pelo orçamento.** Compra, venda, taxas, aluguel, custos e parcelas viram `ledger_entries` (e `Transaction`).
+  Aluguel, custos do bem e parcelas aparecem como itens do orçamento do mês (`budget_items.source_key`, ex. `good:12:rent`,
+  `loan:3:7:interest`) e são lançados **uma vez** no fechamento, com chave de idempotência e índice único. Não existe saldo paralelo.
+- **Movimentação patrimonial (`capital`).** Entrada da compra, venda, quitação e amortização mexem no caixa mas **não** são receita nem
+  despesa: ficam fora do resultado do mês (aparecem como "movimentações patrimoniais"). Taxas, juros, custos e IR sobre aluguel são
+  despesas de verdade.
+- **Patrimônio total = caixa + investimentos + bens (valor de mercado) − dívidas dos bens** (`portfolio_service`). Comprar um imóvel não
+  vira prejuízo no desempenho/ranking (só as taxas pagas); valorização e depreciação mensais passam a contar, como o salário já contava.
+- **Financiamento.** Price ou SAC, taxa efetiva anual convertida em mensal composta, entrada mínima e prazo máximo por categoria.
+  Cronograma completo gravado na contratação (`loan_installments`, soma das amortizações = principal). A parcela é paga a partir do mês
+  seguinte e separada em juros (despesa) e amortização (patrimonial); o saldo devedor cai a cada fechamento. Vender o bem quita a dívida.
+- **Valorização/depreciação** por categoria (`DEFAULT_RULES`: carros depreciam ~1%/mês, imóveis valorizam ~0,4%/mês com volatilidade,
+  antiguidades/colecionáveis têm mais incerteza). A tabela `valuation_rules` sobrescreve os padrões sem mudar código. O valor é
+  atualizado ao abrir cada mês e o histórico (`good_values`) nunca é reescrito.
+- **Imóveis.** Morar (um só imóvel residencial por vez) encerra o aluguel residencial que o usuário marcar, sem apagar o histórico.
+  Para alugar, o usuário anuncia; o inquilino chega pela simulação (probabilidade mensal que depende do preço pedido vs. mercado),
+  pode sair depois (vacância) e **não há ocupação garantida**. Aluguel recebido no fechamento, com IR simplificado de 7,5%.
+- **Eventos mensais determinísticos:** o sorteio usa hash de (bem, mês), então testes e telas são reproduzíveis.
+- **Fora desta etapa (de propósito):** contratos de locação detalhados, financiamento de bens de coleção, inventário de seguros e contas
+  empresariais (`owner_account_id` já existe para a etapa de empresas).
+
 ## Decisões de arquitetura
 
 - **Precisão.** Tudo é `Decimal`: dinheiro `NUMERIC(20,2)`, preços/câmbio `NUMERIC(28,10)`, quantidades `NUMERIC(38,18)`.

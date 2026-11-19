@@ -236,6 +236,8 @@ def allocation_and_positions(db: Session, summary: portfolio_service.PortfolioSu
         buckets["Renda fixa"] += net
         positions.append({"name": inv.product.name, "value": net, "protected": False, "market": False})
     buckets["Caixa"] += summary.cash_balance
+    if summary.goods_net_brl > 0:
+        buckets["Bens (líquido de dívidas)"] += summary.goods_net_brl
     total = sum(buckets.values(), D(0))
     allocation = [{"label": k, "value": quantize_money(v), "pct": _pct(v, total)}
                   for k, v in sorted(buckets.items(), key=lambda kv: kv[1], reverse=True) if v > 0]

@@ -78,3 +78,22 @@ export const parseMoneyInput = (s: string) => {
   const t = s.trim().replace(/\s|R\$/g, "");
   return t.includes(",") ? t.replace(/\./g, "").replace(",", ".") : t;
 };
+
+export const CATEGORY_LABEL: Record<string, string> = {
+  RESIDENTIAL: "Imóvel residencial", COMMERCIAL: "Imóvel comercial", LAND: "Terreno", CAR: "Automóvel", MOTORCYCLE: "Motocicleta",
+  INSTRUMENT: "Instrumento musical", EQUIPMENT: "Equipamento", ANTIQUE: "Antiguidade", COLLECTIBLE: "Colecionável", OTHER: "Outros",
+};
+export const OCCUPANCY_LABEL: Record<string, string> = {
+  OWNER_OCCUPIED: "Moradia própria", VACANT: "Desocupado", LISTED_FOR_RENT: "Anunciado para alugar (vago)", RENTED: "Alugado",
+};
+export const GOOD_STATUS_LABEL: Record<string, string> = { ACTIVE: "Ativo", SOLD: "Vendido", LOST: "Baixado" };
+export const COST_LABEL: Record<string, string> = {
+  IPTU: "IPTU", CONDO: "Condomínio", MAINTENANCE: "Manutenção", FUEL: "Combustível", INSURANCE: "Seguro", IPVA: "IPVA",
+  LICENSING: "Licenciamento", PARKING: "Estacionamento", OTHER: "Outros",
+};
+export const CONDITION_LABEL: Record<string, string> = { NEW: "Novo", EXCELLENT: "Excelente", GOOD: "Bom", FAIR: "Regular", POOR: "Ruim" };
+export const EVENT_LABEL: Record<string, string> = {
+  PURCHASE: "Compra", SALE: "Venda", OCCUPANCY: "Ocupação", RENTED: "Alugado", VACATED: "Vacância", MAINTENANCE: "Manutenção",
+  COST_CHANGE: "Custos", WRITE_OFF: "Baixa",
+};
+export const REAL_ESTATE_CATS = ["RESIDENTIAL", "COMMERCIAL", "LAND"];

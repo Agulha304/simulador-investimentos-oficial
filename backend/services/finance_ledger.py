@@ -65,7 +65,7 @@ def post_entry(
     entry_date: date, category_id: int | None = None, origin: EntryOrigin = EntryOrigin.MANUAL,
     origin_ref: str | None = None, budget_item_id: int | None = None, recurring_item_id: int | None = None,
     idempotency_key: str | None = None, source: TransactionSource = TransactionSource.USER,
-    note: str | None = None, reverses_id: int | None = None,
+    note: str | None = None, reverses_id: int | None = None, capital: bool = False,
 ) -> LedgerEntry:
     """Registra uma receita/despesa efetiva. Repetir a mesma `idempotency_key` devolve a entrada original."""
     amount = quantize_money(amount)
@@ -92,7 +92,7 @@ def post_entry(
         source_account_id=account.id if cash < 0 else None,
         dest_account_id=account.id if cash > 0 else None,
         origin=origin, origin_ref=origin_ref, budget_item_id=budget_item_id,
-        recurring_item_id=recurring_item_id, transaction_id=tx.id, reverses_id=reverses_id,
+        recurring_item_id=recurring_item_id, transaction_id=tx.id, reverses_id=reverses_id, capital=capital,
         idempotency_key=idempotency_key, note=note,
     )
     db.add(entry)
@@ -116,5 +116,5 @@ def reverse_entry(db: Session, user_id: int, entry_id: int, *, ref_month: date, 
         ref_month=ref_month, entry_date=entry_date, category_id=original.category_id, origin=EntryOrigin.REVERSAL,
         origin_ref=str(original.id), reverses_id=original.id,
         budget_item_id=original.budget_item_id if original.ref_month == ref_month else None,
-        idempotency_key=f"reversal:{original.id}", note=note,
+        idempotency_key=f"reversal:{original.id}", note=note, capital=original.capital,
     )

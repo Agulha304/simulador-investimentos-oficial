@@ -116,6 +116,9 @@ class BudgetItem(Base):
     __table_args__ = (
         UniqueConstraint("month_id", "recurring_item_id", name="uq_budget_items_month_recurring"),
         CheckConstraint("planned_amount >= 0", name="ck_budget_items_planned_nonneg"),
+        # Itens gerados por outros módulos (bens, financiamentos...) são identificados por `source_key`.
+        Index("uq_budget_items_month_source", "month_id", "source_key", unique=True,
+              postgresql_where=text("source_key IS NOT NULL")),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -126,6 +129,9 @@ class BudgetItem(Base):
     name: Mapped[str] = mapped_column(String(80))
     kind: Mapped[FlowKind] = mapped_column(StrEnumType(FlowKind, "flow_kind"))
     planned_amount: Mapped[Decimal] = mapped_column(Money())
+    source_key: Mapped[str | None] = mapped_column(String(80))      # ex.: good:12:rent, loan:3:7:interest
+    # Movimentação patrimonial (compra de bem, amortização, venda): mexe no caixa, mas não é receita/despesa.
+    capital: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -161,6 +167,7 @@ class LedgerEntry(Base):
     recurring_item_id: Mapped[int | None] = mapped_column(ForeignKey("recurring_items.id", ondelete="SET NULL"))
     transaction_id: Mapped[int | None] = mapped_column(ForeignKey("transactions.id", ondelete="RESTRICT"))
     reverses_id: Mapped[int | None] = mapped_column(ForeignKey("ledger_entries.id", ondelete="RESTRICT"), unique=True)
+    capital: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     idempotency_key: Mapped[str | None] = mapped_column(String(128), unique=True)
     note: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session, selectinload
 from backend.core.money import quantize_money
 from backend.models import Holding, Portfolio, Transaction, TransactionType
 from backend.core.dates import today_br
-from backend.services import fixed_income_service, index_data, market_data
+from backend.services import fixed_income_service, index_data, market_data, wealth_service
 
 
 @dataclass
@@ -36,6 +36,7 @@ class PortfolioSummary:
     pnl_pct: Decimal | None
     fixed_income_invested_brl: Decimal = Decimal("0.00")   # custo das aplicações ativas
     fixed_income_value_brl: Decimal = Decimal("0.00")      # líquido estimado se resgatadas hoje
+    goods_net_brl: Decimal = Decimal("0.00")               # bens (valor de mercado) − dívidas dos bens
     holdings: list[HoldingView] = field(default_factory=list)
 
 
@@ -77,7 +78,8 @@ def build_summary(db: Session, portfolio: Portfolio) -> PortfolioSummary:
     market = sum((v.market_value_brl for v in views), Decimal("0"))
     net_deposits = sum_net_deposits(db, portfolio.id)
     fi_invested, fi_value = fixed_income_service.portfolio_totals(db, portfolio.id, index_data.load(db), today_br())
-    equity = quantize_money(portfolio.cash_balance + market + fi_value)
+    goods_net = wealth_service.goods_net_value(db, portfolio.user_id)
+    equity = quantize_money(portfolio.cash_balance + market + fi_value + goods_net)
     pnl = quantize_money(equity - net_deposits)
     return PortfolioSummary(
         portfolio=portfolio,
@@ -90,6 +92,7 @@ def build_summary(db: Session, portfolio: Portfolio) -> PortfolioSummary:
         pnl_pct=_pct(pnl, net_deposits),
         fixed_income_invested_brl=quantize_money(fi_invested),
         fixed_income_value_brl=quantize_money(fi_value),
+        goods_net_brl=goods_net,
         holdings=views,
     )
 

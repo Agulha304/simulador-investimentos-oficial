@@ -3,6 +3,8 @@ import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { Layout } from "./components/Layout";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 import { BudgetPage } from "./pages/BudgetPage";
+import { GoodPage } from "./pages/GoodPage";
+import { WealthPage } from "./pages/WealthPage";
 import { AuthPage } from "./pages/AuthPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { LearnPage } from "./pages/LearnPage";
@@ -32,6 +34,8 @@ export default function App() {
               <Route path="mercado" element={<MarketPage />} />
               <Route path="carteira" element={<PortfolioPage />} />
               <Route path="orcamento" element={<BudgetPage />} />
+              <Route path="patrimonio" element={<WealthPage />} />
+              <Route path="patrimonio/:id" element={<GoodPage />} />
               <Route path="renda-fixa" element={<FixedIncomePage />} />
               <Route path="desempenho" element={<PerformancePage />} />
               <Route path="ranking" element={<RankingPage />} />

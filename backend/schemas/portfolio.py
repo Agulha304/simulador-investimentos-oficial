@@ -43,6 +43,7 @@ class PortfolioSummaryOut(BaseModel):
     pnl_pct: Decimal | None
     fixed_income_invested_brl: Decimal
     fixed_income_value_brl: Decimal
+    goods_net_brl: Decimal = Decimal("0.00")
     holdings: list[HoldingOut]
 
 
