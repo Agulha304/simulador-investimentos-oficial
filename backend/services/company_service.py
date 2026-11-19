@@ -23,6 +23,7 @@ from backend.models import (
     InstallmentStatus, InventoryItem, LeaseKind, LedgerEntry, LoanStatus, Occupancy, RealEstateDetails, SimMonth,
 )
 from backend.services import company_rules as rules
+from backend.services import economy_service
 from backend.services import finance_ledger, loan_math, wealth_service
 from backend.services.budget_service import months_between, require_open, shift_month
 from backend.services.finance_ledger import ConflictError, FinanceError, NotFoundError
@@ -285,7 +286,7 @@ def fire(db: Session, user_id: int, month: SimMonth, company_id: int, employee_i
 
 # ------------------------------------------------------------------ estoque
 
-def supplier_cost(item: InventoryItem, ref: date) -> Decimal:
+def supplier_cost(item: InventoryItem, ref: date, mult: Decimal = D(1)) -> Decimal:
     """Preço do fornecedor no mês: custo de referência ± 3% (determinístico)."""
     seg_cost = None
     for seg in rules.SEGMENTS.values():
@@ -294,14 +295,14 @@ def supplier_cost(item: InventoryItem, ref: date) -> Decimal:
                 seg_cost = s.unit_cost
                 break
     base = seg_cost or item.unit_cost
-    return (base * (1 + D(str((hash01("supplier", item.id, ref.isoformat()) - 0.5) * 0.06)))).quantize(D("0.0001"))
+    return (base * mult * (1 + D(str((hash01("supplier", item.id, ref.isoformat()) - 0.5) * 0.06)))).quantize(D("0.0001"))
 
 
 def _buy_stock(db: Session, c: Company, item: InventoryItem, qty: Decimal, ref: date, key: str, seg: rules.Segment) -> Decimal:
     qty = qty.quantize(D("0.001")) if seg.fractional else D(math.ceil(qty))
     if qty <= 0:
         return ZERO
-    price = supplier_cost(item, ref)
+    price = supplier_cost(item, ref, economy_service.supplier_mult(db, c, ref))
     total = quantize_money(qty * price)
     _post(db, c, ref, kind=FlowKind.EXPENSE, amount=total, desc=f"Compra de estoque: {item.name} ({qty} {item.unit})",
           line="STOCK_PURCHASE", key=key)
@@ -472,16 +473,17 @@ def take_loan(db: Session, user_id: int, month: SimMonth, company_id: int, amoun
     if amount > limit:
         raise FinanceError(f"valor acima do limite de crédito da empresa: {limit}")
     ref = month.ref_month
-    loan = CompanyLoan(company_id=c.id, principal=amount, annual_rate_pct=rules.LOAN_ANNUAL_RATE, term_months=term_months,
+    rate = rules.LOAN_ANNUAL_RATE + economy_service.financing_rate_add(db, c.user_id, ref)
+    loan = CompanyLoan(company_id=c.id, principal=amount, annual_rate_pct=rate, term_months=term_months,
                        system=AmortizationSystem.PRICE, start_month=ref, balance=amount)
     db.add(loan)
     db.flush()
-    for r in loan_math.schedule(amount, rules.LOAN_ANNUAL_RATE, term_months, AmortizationSystem.PRICE):
+    for r in loan_math.schedule(amount, rate, term_months, AmortizationSystem.PRICE):
         db.add(CompanyLoanInstallment(loan_id=loan.id, number=r.number, due_month=shift_month(ref, r.number), payment=r.payment,
                                       interest=r.interest, amortization=r.amortization, balance_after=r.balance_after))
     _post(db, c, ref, kind=FlowKind.INCOME, amount=amount, desc=f"Empréstimo bancário ({term_months}x)", line="LOAN_IN",
           key=f"co:{c.id}:loan:{loan.id}")
-    _event(db, c, ref, CompanyEventType.LOAN, f"Empréstimo de {amount} em {term_months} meses a {rules.LOAN_ANNUAL_RATE}% a.a.", amount)
+    _event(db, c, ref, CompanyEventType.LOAN, f"Empréstimo de {amount} em {term_months} meses a {rate}% a.a.", amount)
     return loan
 
 
@@ -519,6 +521,7 @@ def _process_company(db: Session, c: Company, month: SimMonth) -> CompanyMonth:
     marketing = c.marketing_until is not None and ref <= c.marketing_until
     demand = rules.demand_units(seg, location=c.location, size=c.size, units=c.units, reputation=c.reputation, price=c.price,
                                 company_id=c.id, ref=ref, marketing=marketing)
+    demand *= economy_service.company_demand_mult(db, c, ref)          # economia e eventos (etapa 5)
     capacity = rules.capacity_units(seg, size=c.size, units=c.units, capacity_level=c.capacity_level,
                                     staff=[(e.role, e.productivity) for e in staff], equipment_factor=_equipment_factor(db, c))
     # 2) consumo de estoque limita as vendas
@@ -589,7 +592,7 @@ def _process_company(db: Session, c: Company, month: SimMonth) -> CompanyMonth:
         for i in items:
             need = D(str(max(sold, potential if not math.isinf(potential) else 0) * 1.1)) * i.units_per_sale * (1 + i.waste_pct / 100)
             if i.quantity < max(need * D("0.6"), i.min_quantity):
-                price = supplier_cost(i, ref)
+                price = supplier_cost(i, ref, economy_service.supplier_mult(db, c, ref))
                 buy = need - i.quantity
                 affordable = (max(cash(db, c), ZERO) * D("0.9") / price) if price > 0 else D(0)
                 qty = min(buy, affordable)

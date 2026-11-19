@@ -15,6 +15,7 @@ from backend.routers.budget import _run
 from backend.schemas import goods as s
 from backend.services import budget_service as bs
 from backend.services import goods_rules as rules
+from backend.services import economy_service
 from backend.services import goods_service as gs
 from backend.services import finance_ledger, wealth_service
 from backend.services.finance_ledger import FinanceError, NotFoundError
@@ -122,7 +123,8 @@ def simulate(body: s.SimulateIn, user: CurrentUser, db: DbSession):
         if listing is None:
             raise NotFoundError("anúncio não encontrado")
         price = gs.market_price(listing, month.ref_month, gs.load_rules(db))
-        rate, rows = gs.simulate_financing(listing.category, price, body.down_payment, body.term_months, body.system, body.annual_rate_pct)
+        rate, rows = gs.simulate_financing(listing.category, price, body.down_payment, body.term_months, body.system, body.annual_rate_pct,
+                                      economy_service.financing_rate_add(db, user.id, month.ref_month))
         fee = quantize_money(price * rules.PURCHASE_FEE_PCT.get(listing.category, Decimal(0)) / 100)
         down = quantize_money(body.down_payment)
         return s.SimulationOut(

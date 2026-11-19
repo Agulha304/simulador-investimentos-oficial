@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from backend.config import get_settings
 from backend.core.logging import setup_logging
 from backend.database import SessionLocal, check_connection
-from backend.routers import assets, auth, budget, companies, distributions, engagement, fixed_income, goods, health, life, media, portfolio, trades
+from backend.routers import assets, auth, budget, companies, distributions, economy, engagement, fixed_income, goods, health, life, media, portfolio, trades
 from backend.core.dates import today_br
 from backend.services import fixed_income_catalog, index_data
 from backend.services.asset_catalog import seed_assets
@@ -63,5 +63,6 @@ app.include_router(budget.router, prefix=API_PREFIX)
 app.include_router(goods.router, prefix=API_PREFIX)
 app.include_router(companies.router, prefix=API_PREFIX)
 app.include_router(life.router, prefix=API_PREFIX)
+app.include_router(economy.router, prefix=API_PREFIX)
 for _r in (engagement.performance_router, engagement.ranking_router, engagement.learn_router):
     app.include_router(_r, prefix=API_PREFIX)

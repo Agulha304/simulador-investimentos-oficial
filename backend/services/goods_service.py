@@ -23,6 +23,7 @@ from backend.models import (
     ValueSource, VehicleDetails,
 )
 from backend.services import finance_ledger, loan_math
+from backend.services import economy_service
 from backend.services import goods_rules as rules
 from backend.services.budget_service import first_of, months_between, require_open, shift_month
 from backend.services.finance_ledger import ConflictError, FinanceError, NotFoundError
@@ -117,7 +118,7 @@ def financing_terms(category: GoodCategory) -> rules.FinancingTerms:
 
 
 def simulate_financing(category: GoodCategory, price: Decimal, down_payment: Decimal, term: int,
-                       system: AmortizationSystem, annual_rate_pct: Decimal | None):
+                       system: AmortizationSystem, annual_rate_pct: Decimal | None, rate_add: Decimal = ZERO):
     t = financing_terms(category)
     price, down_payment = quantize_money(price), quantize_money(down_payment)
     min_down = quantize_money(price * (100 - t.max_ltv_pct) / 100)
@@ -127,7 +128,7 @@ def simulate_financing(category: GoodCategory, price: Decimal, down_payment: Dec
         raise FinanceError("a entrada deve ser menor que o preço para haver financiamento")
     if not 1 <= term <= t.max_term_months:
         raise FinanceError(f"prazo deve ficar entre 1 e {t.max_term_months} meses")
-    rate = t.annual_rate_pct if annual_rate_pct is None else annual_rate_pct
+    rate = t.annual_rate_pct + rate_add if annual_rate_pct is None else annual_rate_pct
     if rate < 0 or rate > 100:
         raise FinanceError("taxa de juros inválida")
     return rate, loan_math.schedule(price - down_payment, rate, term, system)
@@ -161,7 +162,8 @@ def purchase(db: Session, user_id: int, month: SimMonth, *, listing_key: str, pu
     rate, rows = None, []
     if financed:
         down = quantize_money(down_payment if down_payment is not None else price * Decimal("0.2"))
-        rate, rows = simulate_financing(cat, price, down, term_months, system, annual_rate_pct)
+        rate, rows = simulate_financing(cat, price, down, term_months, system, annual_rate_pct,
+                                        economy_service.financing_rate_add(db, user_id, month.ref_month))
     else:
         down = price
 
@@ -526,6 +528,7 @@ def advance_to_month(db: Session, user_id: int, new_month: SimMonth) -> None:
             factor = rules.monthly_factor(rule, f"good:{g.id}", ref)
             if g.condition == Condition.POOR:
                 factor -= Decimal("0.003")
+            factor += economy_service.asset_adjust(db, user_id, ref, g.category) / 100      # economia e eventos
             g.current_value = max(quantize_money(g.current_value * factor), ZERO)
             db.add(GoodValue(good_id=g.id, ref_month=ref, value=g.current_value, source=ValueSource.MONTHLY))
         det = db.get(RealEstateDetails, g.id)

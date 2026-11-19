@@ -16,6 +16,7 @@ from backend.models.enums import (
     IndexName, Indexer, InvestmentStatus, Liquidity, PaymentFrequency, ProductSource, RateMode, RiskLevel,
     TaxRegime, TransactionSource, TransactionType,
 )
+from backend.models.economy import EconomyState, GameProfile, WorldEvent
 from backend.models.fixed_income import FinancialEvent, FixedIncomeInvestment, FixedIncomeProduct, IndexRate
 from backend.models.goods import (
     Good, GoodCost, GoodEvent, GoodValue, Loan, LoanInstallment, RealEstateDetails, ValuationRule, VehicleDetails,
@@ -28,6 +29,7 @@ from backend.models.transaction import Transaction
 from backend.models.user import User
 
 __all__ = [
+    "EconomyState", "GameProfile", "WorldEvent",
     "Child", "LifeLog", "LifeProfile", "Person", "Relationship",
     "Company", "CompanyCost", "CompanyCostKind", "CompanyEvent", "CompanyEventType", "CompanyLease", "CompanyLoan",
     "CompanyLoanInstallment", "CompanyMonth", "CompanySegment", "CompanySize", "CompanyStatus", "Employee", "EmployeeLevel",

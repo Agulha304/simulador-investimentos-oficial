@@ -21,7 +21,7 @@ from backend.models import (
     BudgetCategory, BudgetItem, Child, EntryOrigin, FlowKind, LedgerEntry, LifeLog, LifeProfile, Person, Portfolio,
     Relationship, SimMonth, TransactionSource,
 )
-from backend.services import budget_service, finance_ledger, pricing
+from backend.services import budget_service, finance_ledger, item_sync, pricing
 from backend.services import life_rules as R
 from backend.services.finance_ledger import ConflictError, FinanceError, NotFoundError
 
@@ -480,22 +480,7 @@ def sync_month(db: Session, user_id: int, month: SimMonth) -> None:
         want("family:partner:contribution", f"Contribuição de {person.name} às despesas comuns", FlowKind.INCOME,
              "Outras receitas", contribution)
 
-    existing = {bi.source_key: bi for bi in db.scalars(select(BudgetItem).where(
-        BudgetItem.month_id == month.id, BudgetItem.source_key.is_not(None))) if bi.source_key.startswith(OWN_PREFIXES)}
-    with_entries = set(db.scalars(select(LedgerEntry.budget_item_id).where(
-        LedgerEntry.user_id == user_id, LedgerEntry.ref_month == ref, LedgerEntry.budget_item_id.is_not(None))))
-    for key, d in desired.items():
-        cat = _category(db, user_id, d["kind"], d["cat"])
-        bi = existing.get(key)
-        if bi is None:
-            db.add(BudgetItem(user_id=user_id, month_id=month.id, category_id=cat.id, name=d["name"], kind=d["kind"],
-                              planned_amount=d["amount"], source_key=key))
-        elif bi.id not in with_entries:
-            bi.name, bi.kind, bi.category_id, bi.planned_amount = d["name"], d["kind"], cat.id, d["amount"]
-    for key, bi in existing.items():
-        if key not in desired and bi.id not in with_entries:
-            db.delete(bi)
-    db.flush()
+    item_sync.reconcile(db, user_id, month, desired, OWN_PREFIXES)
 
 
 # ------------------------------------------------------------------ ciclo mensal

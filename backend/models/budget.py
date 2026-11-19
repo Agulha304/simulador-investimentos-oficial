@@ -68,6 +68,9 @@ class RecurringItem(Base):
     start_month: Mapped[date] = mapped_column(Date)               # sempre dia 1
     end_month: Mapped[date | None] = mapped_column(Date)          # último mês em que vale (dia 1)
     active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    # Reajuste pela inflação (etapa 5): NONE = valor contratual fixo (padrão); MONTHLY; ANNUAL = no aniversário do item
+    indexation: Mapped[str] = mapped_column(String(8), default="NONE", server_default="NONE")
+    index_category: Mapped[str | None] = mapped_column(String(32))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
