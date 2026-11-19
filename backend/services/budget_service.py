@@ -388,7 +388,7 @@ def summarize(db: Session, user_id: int, month: SimMonth) -> MonthSummary:
     s = MonthSummary(month=month)
     cats = {c.id: c.name for c in db.scalars(select(BudgetCategory).where(BudgetCategory.user_id == user_id))}
     entries = list(db.scalars(select(LedgerEntry).where(
-        LedgerEntry.user_id == user_id, LedgerEntry.ref_month == month.ref_month)))
+        LedgerEntry.user_id == user_id, LedgerEntry.ref_month == month.ref_month, LedgerEntry.company_id.is_(None))))
     realized_by_item: dict[int, Decimal] = {}
     count_by_item: dict[int, int] = {}
     unplanned: dict[tuple[FlowKind, int | None], Decimal] = {}
@@ -463,4 +463,5 @@ def list_months(db: Session, user_id: int) -> list[SimMonth]:
 
 def list_entries(db: Session, user_id: int, ref: date) -> list[LedgerEntry]:
     return list(db.scalars(select(LedgerEntry).where(
-        LedgerEntry.user_id == user_id, LedgerEntry.ref_month == ref).order_by(LedgerEntry.id.desc())))
+        LedgerEntry.user_id == user_id, LedgerEntry.ref_month == ref, LedgerEntry.company_id.is_(None))
+        .order_by(LedgerEntry.id.desc())))

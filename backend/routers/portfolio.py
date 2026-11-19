@@ -26,6 +26,7 @@ def get_portfolio(user: CurrentUser, db: DbSession):
         fixed_income_invested_brl=s.fixed_income_invested_brl,
         fixed_income_value_brl=s.fixed_income_value_brl,
         goods_net_brl=s.goods_net_brl,
+        companies_net_brl=s.companies_net_brl,
         holdings=[
             HoldingOut(
                 asset=AssetBrief.model_validate(v.holding.asset),

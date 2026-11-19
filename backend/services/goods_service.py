@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 from backend.core.money import quantize_money
 from backend.models import (
     REAL_ESTATE, AmortizationSystem, BudgetCategory, BudgetItem, Condition, CostKind, EntryOrigin, FlowKind, Frequency,
-    Good, GoodCategory, GoodCost, GoodEvent, GoodEventType, GoodStatus, GoodValue, InstallmentStatus, LedgerEntry,
+    Company, FinanceAccount, Good, GoodCategory, GoodCost, GoodEvent, GoodEventType, GoodStatus, GoodValue, InstallmentStatus, LedgerEntry,
     Loan, LoanInstallment, LoanStatus, Occupancy, RealEstateDetails, RecurringItem, SimMonth, ValuationRule,
     ValueSource, VehicleDetails,
 )
@@ -89,6 +89,11 @@ def get_good(db: Session, user_id: int, good_id: int, *, lock: bool = False) -> 
     return g
 
 
+def _personal_only(db: Session, good: Good) -> None:
+    if good.owner_account_id != finance_ledger.personal_account(db, good.user_id).id:
+        raise ConflictError("este bem pertence a uma empresa: administre-o no painel da empresa")
+
+
 def _event(db, good: Good, month: date, etype: GoodEventType, text: str, amount: Decimal | None = None) -> None:
     db.add(GoodEvent(good_id=good.id, user_id=good.user_id, ref_month=month, type=etype, description=text, amount=amount))
     db.flush()                                   # a sessão não faz autoflush: a leitura seguinte já deve ver o evento
@@ -133,8 +138,10 @@ def simulate_financing(category: GoodCategory, price: Decimal, down_payment: Dec
 def purchase(db: Session, user_id: int, month: SimMonth, *, listing_key: str, purchase_key: str, financed: bool = False,
              down_payment: Decimal | None = None, term_months: int = 0,
              system: AmortizationSystem = AmortizationSystem.PRICE, annual_rate_pct: Decimal | None = None,
-             extra_costs: Decimal = ZERO, usage_km_month: int | None = None) -> Good:
+             extra_costs: Decimal = ZERO, usage_km_month: int | None = None, company: Company | None = None) -> Good:
     require_open(month)
+    if company is not None and financed:
+        raise FinanceError("bens de empresa só podem ser comprados à vista nesta versão (use o empréstimo da empresa)")
     prev = db.scalar(select(Good).where(Good.user_id == user_id, Good.purchase_key == purchase_key))
     if prev:
         return prev                                           # repetição da mesma solicitação: nada é cobrado de novo
@@ -158,7 +165,7 @@ def purchase(db: Session, user_id: int, month: SimMonth, *, listing_key: str, pu
     else:
         down = price
 
-    account = finance_ledger.personal_account(db, user_id)
+    account = db.get(FinanceAccount, company.account_id) if company else finance_ledger.personal_account(db, user_id)
     cond = Condition(listing.condition) if listing.condition else None
     good = Good(user_id=user_id, owner_account_id=account.id, category=cat, name=listing.name,
                 description=listing.description, listing_key=listing.key, condition=cond, location=listing.location,
@@ -196,17 +203,21 @@ def purchase(db: Session, user_id: int, month: SimMonth, *, listing_key: str, pu
     _event(db, good, month.ref_month, GoodEventType.PURCHASE,
            f"Compra por {price}" + (f", financiada ({term_months}x, {system.value})" if financed else " à vista"), price)
 
-    cat_goods = _category(db, user_id, FlowKind.EXPENSE, "Bens e imóveis")
+    cid = company.id if company else None
+    cat_goods = None if company else _category(db, user_id, FlowKind.EXPENSE, "Bens e imóveis")
     finance_ledger.post_entry(
         db, user_id, kind=FlowKind.EXPENSE, amount=down, description=f"Compra: {good.name}" + (" (entrada)" if financed else ""),
-        ref_month=month.ref_month, entry_date=month.ref_month, category_id=cat_goods.id, origin=EntryOrigin.ASSET,
-        origin_ref=f"good:{good.id}:purchase", idempotency_key=f"good:{good.id}:purchase", capital=True)
+        ref_month=month.ref_month, entry_date=month.ref_month, category_id=cat_goods.id if cat_goods else None,
+        origin=EntryOrigin.ASSET, origin_ref=f"good:{good.id}:purchase", idempotency_key=f"good:{good.id}:purchase",
+        capital=True, company_id=cid, line="EQUIPMENT" if company else None)
     if fee > 0:
         finance_ledger.post_entry(
             db, user_id, kind=FlowKind.EXPENSE, amount=fee, description=f"Taxas e impostos da compra: {good.name}",
-            ref_month=month.ref_month, entry_date=month.ref_month, category_id=cat_goods.id, origin=EntryOrigin.ASSET,
-            origin_ref=f"good:{good.id}:fees", idempotency_key=f"good:{good.id}:fees")
-    sync_month(db, user_id, month)
+            ref_month=month.ref_month, entry_date=month.ref_month, category_id=cat_goods.id if cat_goods else None,
+            origin=EntryOrigin.ASSET, origin_ref=f"good:{good.id}:fees", idempotency_key=f"good:{good.id}:fees",
+            company_id=cid, line="FEES" if company else None)
+    if company is None:
+        sync_month(db, user_id, month)
     log.info("compra good=%s user=%s preço=%s financiado=%s", good.id, user_id, price, financed)
     return good
 
@@ -226,12 +237,16 @@ def sell(db: Session, user_id: int, month: SimMonth, good_id: int, *, sale_price
          extra_fees: Decimal = ZERO) -> Good:
     require_open(month)
     good = get_good(db, user_id, good_id, lock=True)           # trava a linha: duas vendas simultâneas se enfileiram
+    _personal_only(db, good)
     if good.status != GoodStatus.ACTIVE:
         raise ConflictError("este bem já foi vendido ou baixado")
     if sale_price is not None and sale_price <= 0:
         raise FinanceError("o preço de venda deve ser positivo")
     if extra_fees < 0:
         raise FinanceError("as taxas não podem ser negativas")
+    det = db.get(RealEstateDetails, good.id)
+    if det is not None and det.occupancy == Occupancy.COMPANY_USE:
+        raise ConflictError("este imóvel está cedido a uma empresa sua: encerre o contrato de locação antes de vender")
     q = sale_quote(db, good, sale_price, extra_fees)
     cat_in = _category(db, user_id, FlowKind.INCOME, "Venda de bens")
     cat_out = _category(db, user_id, FlowKind.EXPENSE, "Bens e imóveis")
@@ -274,6 +289,7 @@ def write_off(db: Session, user_id: int, month: SimMonth, good_id: int, reason: 
     """Perda do bem (roubo, destruição...). Sem dinheiro envolvido; só pode se não houver dívida."""
     require_open(month)
     good = get_good(db, user_id, good_id, lock=True)
+    _personal_only(db, good)
     if good.status != GoodStatus.ACTIVE:
         raise ConflictError("este bem não está ativo")
     if _active_loan(db, good.id):
@@ -306,11 +322,16 @@ def set_occupancy(db: Session, user_id: int, month: SimMonth, good_id: int, mode
                   monthly_rent: Decimal | None = None, end_recurring_item_ids: tuple[int, ...] = ()) -> Good:
     require_open(month)
     good = get_good(db, user_id, good_id, lock=True)
+    _personal_only(db, good)
     if good.status != GoodStatus.ACTIVE:
         raise ConflictError("este bem não está ativo")
     det = db.get(RealEstateDetails, good.id)
     if det is None:
         raise FinanceError("ocupação só se aplica a imóveis")
+    if det.occupancy == Occupancy.COMPANY_USE:
+        raise ConflictError("este imóvel está cedido a uma empresa sua: encerre o contrato de locação primeiro")
+    if mode == Occupancy.COMPANY_USE:
+        raise FinanceError("o uso por empresa é definido pelo contrato de locação da empresa")
     if mode == Occupancy.RENTED:
         raise FinanceError("o inquilino chega pela simulação: anuncie o imóvel para alugar (LISTED_FOR_RENT)")
     if good.category == GoodCategory.LAND and mode != Occupancy.VACANT:
@@ -354,6 +375,7 @@ def add_cost(db: Session, user_id: int, month: SimMonth, good_id: int, *, kind: 
              frequency: Frequency) -> GoodCost:
     require_open(month)
     good = get_good(db, user_id, good_id)
+    _personal_only(db, good)
     if good.status != GoodStatus.ACTIVE:
         raise ConflictError("este bem não está ativo")
     if amount <= 0:
@@ -371,6 +393,7 @@ def update_cost(db: Session, user_id: int, month: SimMonth, good_id: int, cost_i
                 active: bool | None = None, frequency: Frequency | None = None) -> GoodCost:
     require_open(month)
     good = get_good(db, user_id, good_id)
+    _personal_only(db, good)
     c = db.get(GoodCost, cost_id)
     if c is None or c.good_id != good.id:
         raise NotFoundError("custo não encontrado")
@@ -392,6 +415,7 @@ def register_maintenance(db: Session, user_id: int, month: SimMonth, good_id: in
                          key: str | None) -> LedgerEntry:
     require_open(month)
     good = get_good(db, user_id, good_id)
+    _personal_only(db, good)
     if good.status != GoodStatus.ACTIVE:
         raise ConflictError("este bem não está ativo")
     cat = _category(db, user_id, FlowKind.EXPENSE, rules.COST_BUDGET_CATEGORY[CostKind.MAINTENANCE])
@@ -429,7 +453,9 @@ def sync_month(db: Session, user_id: int, month: SimMonth) -> None:
         if amount > 0:
             desired[key] = {"name": name[:80], "kind": kind, "cat": cat_name, "amount": quantize_money(amount), "capital": capital}
 
-    for g in db.scalars(select(Good).where(Good.user_id == user_id, Good.status == GoodStatus.ACTIVE)):
+    personal_id = finance_ledger.personal_account(db, user_id).id
+    for g in db.scalars(select(Good).where(Good.user_id == user_id, Good.status == GoodStatus.ACTIVE,
+                                           Good.owner_account_id == personal_id)):
         for c in db.scalars(select(GoodCost).where(GoodCost.good_id == g.id)):
             if _cost_due(c, ref):
                 want(f"good:{g.id}:cost:{c.id}", f"{c.name} — {g.name}", FlowKind.EXPENSE,

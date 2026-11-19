@@ -178,6 +178,42 @@ Aba **Patrimônio** (`/patrimonio`, detalhe em `/patrimonio/:id`). Código: `mod
 - **Fora desta etapa (de propósito):** contratos de locação detalhados, financiamento de bens de coleção, inventário de seguros e contas
   empresariais (`owner_account_id` já existe para a etapa de empresas).
 
+## Empresas (etapa 3)
+
+Aba **Empresas** (`/empresas`, detalhe em `/empresas/:id`). Código: `models/company.py`, `services/company_service.py`,
+`company_rules.py`, `routers/companies.py`; frontend em `pages/CompaniesPage.tsx` e `CompanyPage.tsx`.
+
+- **Contas separadas, mesmo ledger.** Cada empresa tem uma `finance_accounts` (BUSINESS) com saldo próprio. Os lançamentos usam o mesmo
+  `post_entry`/`ledger_entries`, com `company_id` e `line` (natureza contábil). Eles **nunca** aparecem no orçamento pessoal. Só o que
+  pertence ao usuário aparece lá: aporte (saída patrimonial), distribuição de lucros e pró-labore (entradas), aluguel de imóvel pessoal usado
+  pela empresa (entrada). Dinheiro empresarial só chega ao pessoal por esses mecanismos.
+- **Patrimônio.** Patrimônio total = caixa + investimentos + bens − dívidas + **participação nas empresas**
+  (`caixa + estoque + bens da empresa − empréstimos`, ponderado pela participação societária). Por isso aportar, distribuir ou comprar
+  estoque não vira ganho ou perda falsos. Caixa negativo da empresa conta como dívida (com juros de 4% ao mês).
+- **12 segmentos** em `company_rules.SEGMENTS` (restaurante, cafeteria, roupas, supermercado, oficina, tecnologia, agência, indústria,
+  construtora, transporte, imobiliária, e-commerce). Cada um tem preço, demanda, elasticidade ao preço, sazonalidade, cargos, estoque
+  (ou não), custos variáveis, aluguel, impostos e custo de abertura próprios. Para criar um setor novo basta incluir um `Segment`.
+- **Vendas = min(demanda, capacidade, estoque).** Demanda depende de localização, porte, unidades, reputação, preço (elasticidade),
+  sazonalidade determinística e campanhas. Capacidade depende do dono, dos funcionários (cargo e nível), das expansões e dos equipamentos.
+  Faltar estoque derruba vendas e reputação. Lucro não é garantido: o resultado padrão fica entre ~3% e ~18% de margem e o prejuízo é possível.
+- **Fechamento mensal global.** `month_service.close_month` processa as empresas (antes dos itens pessoais, para o pró-labore e o aluguel
+  entrarem no caixa pessoal) na MESMA transação: demanda e vendas, consumo de estoque (custo da mercadoria não mexe no caixa), receita,
+  folha com encargos, pró-labore, aluguel e custos fixos, custos dos bens da empresa, impostos, parcelas do empréstimo (juros = despesa,
+  amortização = redução da dívida), juros do saldo negativo, reposição de estoque e demonstrativo (`company_months`, imutável).
+  `UNIQUE(company_id, ref_month)` e chaves de idempotência por lançamento impedem processar duas vezes; se qualquer empresa falhar, nada
+  é aplicado em nenhuma.
+- **Pessoas.** Contratar custa meio salário e exige aviso explícito (`confirm_risk`) se o caixa cobrir menos de 2 meses de custos; demitir
+  custa uma rescisão. Níveis júnior/pleno/sênior mudam salário e produtividade.
+- **Lucros.** Só se distribui o lucro acumulado ainda não distribuído, limitado ao caixa positivo; a parte do usuário segue a participação
+  societária. Distribuir não é receita operacional da empresa.
+- **Instalações.** Aluguel de terceiros, imóvel pessoal cedido à empresa (contrato interno: ela paga, você recebe; o imóvel fica `COMPANY_USE`
+  e não pode ser vendido, alugado a outros nem usado por outra empresa — índice único) ou imóvel da própria empresa. Bens (equipamentos,
+  veículos, imóveis) são comprados no mesmo mercado da etapa 2, pagos pela empresa e **não** se misturam com os bens pessoais.
+- **Expansão** (capacidade, nova unidade, instalações maiores, publicidade) tem custo à vista e consequências (mais custos fixos), sem
+  garantia de lucro. Empréstimos têm limite de crédito (o maior entre R$ 50 mil e 2× o patrimônio da empresa), 18% a.a., tabela Price.
+- **Limitações desta versão (de propósito):** bens de empresa só à vista e sem venda; um único estoque principal por segmento (os itens
+  são genéricos); sem concorrência simulada entre jogadores; encerramento de empresa ainda não implementado (o campo de situação já existe).
+
 ## Decisões de arquitetura
 
 - **Precisão.** Tudo é `Decimal`: dinheiro `NUMERIC(20,2)`, preços/câmbio `NUMERIC(28,10)`, quantidades `NUMERIC(38,18)`.

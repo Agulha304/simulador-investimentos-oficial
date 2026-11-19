@@ -97,3 +97,19 @@ export const EVENT_LABEL: Record<string, string> = {
   COST_CHANGE: "Custos", WRITE_OFF: "Baixa",
 };
 export const REAL_ESTATE_CATS = ["RESIDENTIAL", "COMMERCIAL", "LAND"];
+
+export const LEVEL_LABEL: Record<string, string> = { JUNIOR: "Júnior", MID: "Pleno", SENIOR: "Sênior" };
+export const CO_COST_LABEL: Record<string, string> = {
+  UTILITIES: "Energia, água e internet", TOOLS: "Ferramentas e manutenção", INSURANCE: "Seguro", MARKETING: "Marketing",
+  ACCOUNTING: "Contabilidade", OTHER: "Outros",
+};
+export const CO_EVENT_LABEL: Record<string, string> = {
+  CREATED: "Criação", CAPITAL: "Capital", HIRE: "Contratação", FIRE: "Desligamento", STOCK: "Estoque", EXPANSION: "Expansão",
+  LEASE: "Instalações", LOAN: "Empréstimo", DISTRIBUTION: "Lucros", EQUIPMENT: "Equipamento", SETTINGS: "Ajustes", MONTH: "Fechamento", CLOSED: "Encerramento",
+};
+export const LEDGER_LINE_LABEL: Record<string, string> = {
+  CAPITAL_IN: "Aporte de capital", REVENUE: "Receitas", VARIABLE: "Custos variáveis", PAYROLL: "Folha", PRO_LABORE: "Pró-labore",
+  RENT: "Aluguel", FIXED: "Custos fixos", ASSET_COSTS: "Custos de bens", TAX: "Impostos", INTEREST: "Juros", LOAN_IN: "Empréstimo",
+  LOAN_PRINCIPAL: "Amortização", STOCK_PURCHASE: "Compra de estoque", EQUIPMENT: "Equipamentos", FEES: "Taxas", SETUP: "Estruturação",
+  HIRING: "Contratação", SEVERANCE: "Rescisão", EXPANSION: "Expansão", MARKETING: "Marketing", DISTRIBUTION: "Distribuição de lucros",
+};

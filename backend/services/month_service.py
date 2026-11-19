@@ -23,7 +23,7 @@ from backend.core.money import quantize_money
 from backend.models import (
     BudgetItem, EntryOrigin, FlowKind, LedgerEntry, MonthStatus, Portfolio, SimMonth, TransactionSource,
 )
-from backend.services import budget_service, finance_ledger, goods_service, ledger_service
+from backend.services import budget_service, company_service, finance_ledger, goods_service, ledger_service
 from backend.services.finance_ledger import ConflictError, NotFoundError
 
 log = logging.getLogger(__name__)
@@ -77,6 +77,7 @@ def close_month(db: Session, user_id: int, ref_month: date) -> SimMonth:
     if month.status != MonthStatus.OPEN:
         raise ConflictError("este mês já foi fechado")
 
+    company_service.process_month(db, user_id, month)          # empresas primeiro: pró-labore e aluguel entram no caixa pessoal
     pending = _pending_recurring(db, month)
     pending.sort(key=lambda b: (b.kind != FlowKind.INCOME, b.id))   # receitas antes das despesas
     for bi in pending:

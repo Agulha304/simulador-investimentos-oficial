@@ -29,7 +29,7 @@ def _migrate():
 def _clean_db():
     yield
     with engine.begin() as conn:
-        conn.execute(text("TRUNCATE loan_installments, loans, good_events, good_values, good_costs, real_estate_details, vehicle_details, goods, valuation_rules, ledger_entries, budget_items, recurring_item_versions, recurring_items, sim_months, budget_categories, finance_accounts, lesson_progress, portfolio_snapshots, financial_events, fixed_income_investments, fixed_income_products, index_rates, dividend_payments, dividend_eligibilities, dividends, chart_layouts, transactions, holdings, portfolios, assets, users RESTART IDENTITY CASCADE"))
+        conn.execute(text("TRUNCATE company_loan_installments, company_loans, company_months, company_events, company_leases, company_costs, inventory_items, employees, loan_installments, loans, good_events, good_values, good_costs, real_estate_details, vehicle_details, goods, valuation_rules, ledger_entries, companies, budget_items, recurring_item_versions, recurring_items, sim_months, budget_categories, finance_accounts, lesson_progress, portfolio_snapshots, financial_events, fixed_income_investments, fixed_income_products, index_rates, dividend_payments, dividend_eligibilities, dividends, chart_layouts, transactions, holdings, portfolios, assets, users RESTART IDENTITY CASCADE"))
 
 
 @pytest.fixture

@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 
 from backend.core.money import quantize_money
 from backend.models import (
-    AccountKind, EntryOrigin, FinanceAccount, FlowKind, LedgerEntry, Portfolio, TransactionSource, TransactionType,
+    AccountKind, Company, EntryOrigin, FinanceAccount, FlowKind, LedgerEntry, Portfolio, TransactionSource, TransactionType,
 )
 from backend.services import ledger_service
 from backend.services.ledger_service import CashMovement
@@ -55,6 +55,15 @@ def personal_account(db: Session, user_id: int) -> FinanceAccount:
     return acc
 
 
+def business_account(db: Session, company_id: int) -> FinanceAccount:
+    """Conta da empresa, travada para escrita (FOR UPDATE): movimentações concorrentes se enfileiram."""
+    acc = db.scalar(select(FinanceAccount).join(Company, Company.account_id == FinanceAccount.id).where(
+        Company.id == company_id).with_for_update())
+    if acc is None:
+        raise NotFoundError("conta empresarial não encontrada")
+    return acc
+
+
 def _cash_effect(kind: FlowKind, amount: Decimal, *, reversal: bool) -> Decimal:
     sign = 1 if kind == FlowKind.INCOME else -1
     return amount * sign * (-1 if reversal else 1)
@@ -66,6 +75,7 @@ def post_entry(
     origin_ref: str | None = None, budget_item_id: int | None = None, recurring_item_id: int | None = None,
     idempotency_key: str | None = None, source: TransactionSource = TransactionSource.USER,
     note: str | None = None, reverses_id: int | None = None, capital: bool = False,
+    company_id: int | None = None, line: str | None = None, allow_overdraft: bool = False,
 ) -> LedgerEntry:
     """Registra uma receita/despesa efetiva. Repetir a mesma `idempotency_key` devolve a entrada original."""
     amount = quantize_money(amount)
@@ -78,21 +88,32 @@ def post_entry(
                 raise ConflictError("chave de idempotência já utilizada")
             return prev
 
-    account = personal_account(db, user_id)
     reversal = origin == EntryOrigin.REVERSAL
-    cash = quantize_money(_cash_effect(kind, amount, reversal=reversal))
-    tx = ledger_service.record(db, account.portfolio_id, CashMovement(
-        type=TransactionType.BUDGET_INCOME if kind == FlowKind.INCOME else TransactionType.BUDGET_EXPENSE,
-        gross_amount_brl=amount, cash_amount_brl=cash, source=source,
-        idempotency_key=f"entry:{idempotency_key}" if idempotency_key else None, note=description,
-    ))
+    if company_id is not None:
+        # Conta EMPRESARIAL: saldo próprio, separado do caixa pessoal. Mesmo livro de movimentações, outro `company_id`.
+        account = business_account(db, company_id)
+        cash = quantize_money(_cash_effect(kind, amount, reversal=reversal))
+        if not allow_overdraft and account.balance + cash < 0:
+            raise ledger_service.InsufficientFundsError(
+                f"saldo da empresa insuficiente: disponível {account.balance}, necessário {-cash}")
+        account.balance = quantize_money(account.balance + cash)
+        tx = None
+    else:
+        account = personal_account(db, user_id)
+        cash = quantize_money(_cash_effect(kind, amount, reversal=reversal))
+        tx = ledger_service.record(db, account.portfolio_id, CashMovement(
+            type=TransactionType.BUDGET_INCOME if kind == FlowKind.INCOME else TransactionType.BUDGET_EXPENSE,
+            gross_amount_brl=amount, cash_amount_brl=cash, source=source,
+            idempotency_key=f"entry:{idempotency_key}" if idempotency_key else None, note=description,
+        ))
     entry = LedgerEntry(
         user_id=user_id, kind=kind, amount=amount, category_id=category_id, description=description,
         entry_date=entry_date, ref_month=ref_month,
         source_account_id=account.id if cash < 0 else None,
         dest_account_id=account.id if cash > 0 else None,
         origin=origin, origin_ref=origin_ref, budget_item_id=budget_item_id,
-        recurring_item_id=recurring_item_id, transaction_id=tx.id, reverses_id=reverses_id, capital=capital,
+        recurring_item_id=recurring_item_id, transaction_id=tx.id if tx else None, reverses_id=reverses_id, capital=capital,
+        company_id=company_id, line=line,
         idempotency_key=idempotency_key, note=note,
     )
     db.add(entry)
@@ -107,6 +128,8 @@ def reverse_entry(db: Session, user_id: int, entry_id: int, *, ref_month: date, 
     original = db.get(LedgerEntry, entry_id)
     if original is None or original.user_id != user_id:
         raise NotFoundError("movimentação não encontrada")
+    if original.company_id is not None:
+        raise ConflictError("movimentações empresariais não são estornadas pelo orçamento pessoal")
     if original.origin == EntryOrigin.REVERSAL:
         raise ConflictError("um estorno não pode ser estornado")
     if db.scalar(select(LedgerEntry.id).where(LedgerEntry.reverses_id == original.id)):

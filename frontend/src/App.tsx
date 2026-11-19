@@ -3,6 +3,8 @@ import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { Layout } from "./components/Layout";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 import { BudgetPage } from "./pages/BudgetPage";
+import { CompaniesPage } from "./pages/CompaniesPage";
+import { CompanyPage } from "./pages/CompanyPage";
 import { GoodPage } from "./pages/GoodPage";
 import { WealthPage } from "./pages/WealthPage";
 import { AuthPage } from "./pages/AuthPage";
@@ -35,6 +37,8 @@ export default function App() {
               <Route path="carteira" element={<PortfolioPage />} />
               <Route path="orcamento" element={<BudgetPage />} />
               <Route path="patrimonio" element={<WealthPage />} />
+              <Route path="empresas" element={<CompaniesPage />} />
+              <Route path="empresas/:id" element={<CompanyPage />} />
               <Route path="patrimonio/:id" element={<GoodPage />} />
               <Route path="renda-fixa" element={<FixedIncomePage />} />
               <Route path="desempenho" element={<PerformancePage />} />

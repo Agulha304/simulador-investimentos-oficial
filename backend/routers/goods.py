@@ -16,7 +16,7 @@ from backend.schemas import goods as s
 from backend.services import budget_service as bs
 from backend.services import goods_rules as rules
 from backend.services import goods_service as gs
-from backend.services import wealth_service
+from backend.services import finance_ledger, wealth_service
 from backend.services.finance_ledger import FinanceError, NotFoundError
 
 router = APIRouter(prefix="/goods", tags=["goods"])
@@ -153,7 +153,8 @@ def purchase(body: s.PurchaseIn, user: CurrentUser, db: DbSession):
 def my_goods(user: CurrentUser, db: DbSession, category: GoodCategory | None = None, status_: GoodStatus | None = Query(None, alias="status")):
     def go():
         bs.ensure_setup(db, user.id)
-        q = select(Good).where(Good.user_id == user.id).order_by(Good.id.desc())
+        personal = finance_ledger.personal_account(db, user.id)
+        q = select(Good).where(Good.user_id == user.id, Good.owner_account_id == personal.id).order_by(Good.id.desc())
         if category:
             q = q.where(Good.category == category)
         if status_:

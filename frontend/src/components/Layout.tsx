@@ -8,6 +8,7 @@ const NAV = [
   { to: "/carteira", label: "Carteira", ready: true },
   { to: "/orcamento", label: "Orçamento", ready: true },
   { to: "/patrimonio", label: "Patrimônio", ready: true },
+  { to: "/empresas", label: "Empresas", ready: true },
   { to: "/renda-fixa", label: "Renda Fixa", ready: true },
   { to: "/desempenho", label: "Desempenho", ready: true },
   { to: "/ranking", label: "Ranking", ready: true },

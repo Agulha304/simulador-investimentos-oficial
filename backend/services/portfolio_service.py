@@ -37,6 +37,7 @@ class PortfolioSummary:
     fixed_income_invested_brl: Decimal = Decimal("0.00")   # custo das aplicações ativas
     fixed_income_value_brl: Decimal = Decimal("0.00")      # líquido estimado se resgatadas hoje
     goods_net_brl: Decimal = Decimal("0.00")               # bens (valor de mercado) − dívidas dos bens
+    companies_net_brl: Decimal = Decimal("0.00")           # participação nas empresas (patrimônio empresarial)
     holdings: list[HoldingView] = field(default_factory=list)
 
 
@@ -79,7 +80,8 @@ def build_summary(db: Session, portfolio: Portfolio) -> PortfolioSummary:
     net_deposits = sum_net_deposits(db, portfolio.id)
     fi_invested, fi_value = fixed_income_service.portfolio_totals(db, portfolio.id, index_data.load(db), today_br())
     goods_net = wealth_service.goods_net_value(db, portfolio.user_id)
-    equity = quantize_money(portfolio.cash_balance + market + fi_value + goods_net)
+    companies_net = wealth_service.companies_net_value(db, portfolio.user_id)
+    equity = quantize_money(portfolio.cash_balance + market + fi_value + goods_net + companies_net)
     pnl = quantize_money(equity - net_deposits)
     return PortfolioSummary(
         portfolio=portfolio,
@@ -93,6 +95,7 @@ def build_summary(db: Session, portfolio: Portfolio) -> PortfolioSummary:
         fixed_income_invested_brl=quantize_money(fi_invested),
         fixed_income_value_brl=quantize_money(fi_value),
         goods_net_brl=goods_net,
+        companies_net_brl=companies_net,
         holdings=views,
     )
 

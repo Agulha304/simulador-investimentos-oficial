@@ -28,6 +28,7 @@ export interface PortfolioSummary {
   fixed_income_invested_brl: Decimal;
   fixed_income_value_brl: Decimal;
   goods_net_brl: Decimal;
+  companies_net_brl: Decimal;
   pnl_brl: Decimal;
   pnl_pct: Decimal | null;
   holdings: Holding[];
@@ -226,6 +227,51 @@ export interface WealthOverview {
   series: { ref_month: string; goods_value: Decimal; debts: Decimal; net: Decimal }[];
 }
 
+// ------------------------------------------------------------------ empresas
+export type Segment = string;
+export interface CoRole { key: string; label: string; salary: Decimal; units: number }
+export interface CoSegment {
+  key: Segment; label: string; description: string; unit_label: string; price: Decimal; tax_pct: Decimal;
+  roles: CoRole[]; stock: string[]; required_capital: Decimal;
+}
+export interface CoCatalog {
+  segments: CoSegment[];
+  locations: { key: string; label: string; demand: number; rent_factor: string }[];
+  sizes: { key: string; label: string; demand: number; setup_factor: string }[];
+}
+export interface CoQuote { required_capital: Decimal; setup_cost: Decimal; monthly_fixed: Decimal; monthly_payroll: Decimal; initial_stock: Decimal; expected_units: number }
+export interface Company {
+  id: number; name: string; segment: Segment; segment_label: string; business_type: string; location: string; location_label: string;
+  size: string; units: number; capacity_level: number; price: Decimal; reputation: number; owner_share_pct: Decimal; owner_salary: Decimal;
+  auto_restock: boolean; status: string; founded_on: string; marketing_until: string | null; cash: Decimal; debts: Decimal; equity: Decimal;
+  last_revenue: Decimal | null; last_net_result: Decimal | null;
+}
+export interface CoMonth {
+  ref_month: string; demand_units: Decimal; capacity_units: Decimal; units_sold: Decimal; stockout: boolean; revenue: Decimal;
+  variable_costs: Decimal; fixed_costs: Decimal; payroll: Decimal; taxes: Decimal; interest: Decimal; operating_result: Decimal;
+  net_result: Decimal; cash_end: Decimal; debts_end: Decimal; equity_end: Decimal; reputation_end: number;
+}
+export interface CompanyDetail {
+  company: Company; distributable_profit: Decimal; runway_months: Decimal | null; monthly_obligations: Decimal; loan_limit: Decimal;
+  expected_demand: number; expected_capacity: number; expansion_costs: Record<string, Decimal>; roles: CoRole[];
+  employees: { id: number; role: string; role_label: string; level: string; salary: Decimal; total_cost: Decimal; hours_week: number;
+    productivity: Decimal; status: string; hired_on: string; terminated_on: string | null }[];
+  inventory: { id: number; name: string; unit: string; quantity: Decimal; unit_cost: Decimal; value: Decimal; supplier: string;
+    min_quantity: Decimal; monthly_consumption_est: Decimal; low: boolean }[];
+  costs: { id: number; kind: string; name: string; amount: Decimal; active: boolean }[];
+  lease: { kind: string; good_id: number | null; name: string; monthly_rent: Decimal; start_month: string } | null;
+  loans: { id: number; principal: Decimal; annual_rate_pct: Decimal; term_months: number; start_month: string; balance: Decimal; status: string;
+    installments: Installment[] }[];
+  goods: { id: number; name: string; category: string; current_value: Decimal; status: string }[];
+  months: CoMonth[];
+  events: { ref_month: string; type: string; description: string; amount: Decimal | null; created_at: string }[];
+  ledger: { id: number; kind: string; amount: Decimal; description: string; line: string | null; capital: boolean; ref_month: string }[];
+}
+export interface CoOverview {
+  count: number; equity_total: Decimal; equity_user_share: Decimal; cash_total: Decimal; debts_total: Decimal;
+  revenue_last_month: Decimal; expenses_last_month: Decimal; net_last_month: Decimal; companies: Company[];
+}
+
 export class ApiError extends Error {
   constructor(public status: number, message: string) { super(message); }
 }
@@ -339,6 +385,31 @@ export const api = {
     request<GoodDetail>(`/goods/${id}/costs`, { method: "POST", body: JSON.stringify(body) }),
   updateGoodCost: (id: number, costId: number, body: { amount?: string; active?: boolean }) =>
     request<GoodDetail>(`/goods/${id}/costs/${costId}`, { method: "PATCH", body: JSON.stringify(body) }),
+  coCatalog: () => request<CoCatalog>("/companies/catalog"),
+  coQuote: (segment: string, location: string, size: string) =>
+    request<CoQuote>("/companies/quote", { method: "POST", body: JSON.stringify({ segment, location, size }) }),
+  coOverview: () => request<CoOverview>("/companies/overview"),
+  coCreate: (body: { name: string; segment: string; location: string; size: string; capital: string; owner_share_pct: string; business_type: string }) =>
+    request<CompanyDetail>("/companies", { method: "POST", body: JSON.stringify(body) }),
+  company: (id: number) => request<CompanyDetail>(`/companies/${id}`),
+  coContribute: (id: number, amount: string) =>
+    request<CompanyDetail>(`/companies/${id}/contribute`, { method: "POST", body: JSON.stringify({ amount, idempotency_key: crypto.randomUUID() }) }),
+  coDistribute: (id: number, amount: string) =>
+    request<CompanyDetail>(`/companies/${id}/distribute`, { method: "POST", body: JSON.stringify({ amount, idempotency_key: crypto.randomUUID() }) }),
+  coSettings: (id: number, body: { price?: string; owner_salary?: string; auto_restock?: boolean }) =>
+    request<CompanyDetail>(`/companies/${id}/settings`, { method: "PATCH", body: JSON.stringify(body) }),
+  coHire: (id: number, role: string, level: string, confirm_risk: boolean) =>
+    request<CompanyDetail>(`/companies/${id}/employees`, { method: "POST", body: JSON.stringify({ role, level, confirm_risk }) }),
+  coFire: (id: number, employeeId: number) => request<CompanyDetail>(`/companies/${id}/employees/${employeeId}`, { method: "DELETE" }),
+  coStock: (id: number, item_id: number, quantity: string) =>
+    request<CompanyDetail>(`/companies/${id}/stock`, { method: "POST", body: JSON.stringify({ item_id, quantity, idempotency_key: crypto.randomUUID() }) }),
+  coExpand: (id: number, kind: string) => request<CompanyDetail>(`/companies/${id}/expand`, { method: "POST", body: JSON.stringify({ kind }) }),
+  coLease: (id: number, body: { kind: string; good_id?: number; monthly_rent?: string }) =>
+    request<CompanyDetail>(`/companies/${id}/lease`, { method: "POST", body: JSON.stringify(body) }),
+  coLoan: (id: number, amount: string, term_months: number) =>
+    request<CompanyDetail>(`/companies/${id}/loans`, { method: "POST", body: JSON.stringify({ amount, term_months }) }),
+  coBuyGood: (id: number, listing_key: string) =>
+    request<CompanyDetail>(`/companies/${id}/goods/purchase`, { method: "POST", body: JSON.stringify({ listing_key, idempotency_key: crypto.randomUUID() }) }),
   deposit: (amount: string) => request<Transaction>("/portfolio/deposit", { method: "POST", body: JSON.stringify({ amount }) }),
   portfolio: () => request<PortfolioSummary>("/portfolio"),
   transactions: (limit = 20) => request<Transaction[]>(`/portfolio/transactions?limit=${limit}`),

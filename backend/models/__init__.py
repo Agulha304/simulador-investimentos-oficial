@@ -4,9 +4,14 @@ from backend.models.budget import (
     BudgetCategory, BudgetItem, FinanceAccount, LedgerEntry, RecurringItem, RecurringItemVersion, SimMonth,
 )
 from backend.models.chart_layout import ChartLayout
+from backend.models.company import (
+    Company, CompanyCost, CompanyEvent, CompanyLease, CompanyLoan, CompanyLoanInstallment, CompanyMonth, Employee,
+    InventoryItem,
+)
 from backend.models.distribution import Dividend, DividendEligibility, DividendPayment
 from backend.models.enums import (
-    AccountKind, AmortizationSystem, AssetClass, Condition, CostKind, GoodCategory, GoodEventType, GoodStatus,
+    AccountKind, AmortizationSystem, CompanyCostKind, CompanyEventType, CompanySegment, CompanySize, CompanyStatus,
+    EmployeeLevel, EmployeeStatus, LeaseKind, AssetClass, Condition, CostKind, GoodCategory, GoodEventType, GoodStatus,
     InstallmentStatus, LoanStatus, Occupancy, REAL_ESTATE, ValueSource, Currency, EntryOrigin, FlowKind, Frequency, MonthStatus, DistributionKind, EligibilityStatus, EventKind, EventStatus, FixedIncomeType,
     IndexName, Indexer, InvestmentStatus, Liquidity, PaymentFrequency, ProductSource, RateMode, RiskLevel,
     TaxRegime, TransactionSource, TransactionType,
@@ -22,6 +27,9 @@ from backend.models.transaction import Transaction
 from backend.models.user import User
 
 __all__ = [
+    "Company", "CompanyCost", "CompanyCostKind", "CompanyEvent", "CompanyEventType", "CompanyLease", "CompanyLoan",
+    "CompanyLoanInstallment", "CompanyMonth", "CompanySegment", "CompanySize", "CompanyStatus", "Employee", "EmployeeLevel",
+    "EmployeeStatus", "InventoryItem", "LeaseKind",
     "AmortizationSystem", "Condition", "CostKind", "Good", "GoodCategory", "GoodCost", "GoodEvent", "GoodEventType",
     "GoodStatus", "GoodValue", "InstallmentStatus", "Loan", "LoanInstallment", "LoanStatus", "Occupancy", "REAL_ESTATE",
     "RealEstateDetails", "ValuationRule", "ValueSource", "VehicleDetails",

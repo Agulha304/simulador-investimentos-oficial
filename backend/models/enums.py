@@ -62,6 +62,7 @@ class EntryOrigin(StrEnum):
     SYSTEM = "SYSTEM"
     REVERSAL = "REVERSAL"
     ASSET = "ASSET"              # efeitos de bens (compra, venda, parcelas, aluguel, custos)
+    COMPANY = "COMPANY"          # transferências entre a conta pessoal e as empresas (aporte, lucros, pró-labore, aluguel)
 
 
 class MonthStatus(StrEnum):
@@ -214,6 +215,7 @@ class Occupancy(StrEnum):
     VACANT = "VACANT"                      # sem uso e sem anúncio
     LISTED_FOR_RENT = "LISTED_FOR_RENT"    # anunciado, aguardando inquilino (vacância)
     RENTED = "RENTED"                      # alugado, gerando renda
+    COMPANY_USE = "COMPANY_USE"            # cedido a uma empresa do usuário (contrato de locação interno)
 
 
 class CostKind(StrEnum):
@@ -261,3 +263,73 @@ class GoodEventType(StrEnum):
     MAINTENANCE = "MAINTENANCE"
     COST_CHANGE = "COST_CHANGE"
     WRITE_OFF = "WRITE_OFF"
+
+
+# ----------------------------------------------------------------- empresas (etapa 3)
+
+class CompanySegment(StrEnum):
+    RESTAURANT = "RESTAURANT"
+    CAFE = "CAFE"
+    CLOTHING = "CLOTHING"
+    SUPERMARKET = "SUPERMARKET"
+    WORKSHOP = "WORKSHOP"
+    TECH = "TECH"
+    AGENCY = "AGENCY"
+    INDUSTRY = "INDUSTRY"
+    CONSTRUCTION = "CONSTRUCTION"
+    TRANSPORT = "TRANSPORT"
+    REAL_ESTATE_AGENCY = "REAL_ESTATE_AGENCY"
+    ECOMMERCE = "ECOMMERCE"
+
+
+class CompanySize(StrEnum):
+    SMALL = "SMALL"
+    MEDIUM = "MEDIUM"
+    LARGE = "LARGE"
+
+
+class CompanyStatus(StrEnum):
+    ACTIVE = "ACTIVE"
+    CLOSED = "CLOSED"
+
+
+class EmployeeLevel(StrEnum):
+    JUNIOR = "JUNIOR"
+    MID = "MID"
+    SENIOR = "SENIOR"
+
+
+class EmployeeStatus(StrEnum):
+    ACTIVE = "ACTIVE"
+    TERMINATED = "TERMINATED"
+
+
+class CompanyCostKind(StrEnum):
+    UTILITIES = "UTILITIES"
+    TOOLS = "TOOLS"
+    INSURANCE = "INSURANCE"
+    MARKETING = "MARKETING"
+    ACCOUNTING = "ACCOUNTING"
+    OTHER = "OTHER"
+
+
+class LeaseKind(StrEnum):
+    EXTERNAL = "EXTERNAL"            # imóvel de terceiros
+    OWN_GOOD = "OWN_GOOD"            # imóvel pessoal do usuário alugado à empresa (gera receita pessoal)
+    COMPANY_GOOD = "COMPANY_GOOD"    # imóvel da própria empresa (sem aluguel)
+
+
+class CompanyEventType(StrEnum):
+    CREATED = "CREATED"
+    CAPITAL = "CAPITAL"
+    HIRE = "HIRE"
+    FIRE = "FIRE"
+    STOCK = "STOCK"
+    EXPANSION = "EXPANSION"
+    LEASE = "LEASE"
+    LOAN = "LOAN"
+    DISTRIBUTION = "DISTRIBUTION"
+    EQUIPMENT = "EQUIPMENT"
+    SETTINGS = "SETTINGS"
+    MONTH = "MONTH"
+    CLOSED = "CLOSED"
