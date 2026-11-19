@@ -1,3 +1,4 @@
+from tests.conftest import credit
 from datetime import timedelta
 from decimal import Decimal
 
@@ -210,7 +211,7 @@ def test_daily_liquidity_redeem_same_day_and_double_redeem(client, auth_headers,
 
 
 def test_iof_applies_in_first_30_days(client, auth_headers, db, products):
-    client.post("/api/portfolio/deposit", headers=auth_headers, json={"amount": "100000"})
+    credit(client, auth_headers, "100000")
     invest(client, auth_headers, products["cdb-liquidez-diaria"], "100000")
     inv, idx = first_investment(db), index_data.load(db)
     on = TODAY + timedelta(days=10)

@@ -1,3 +1,4 @@
+from tests.conftest import credit
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
@@ -59,7 +60,7 @@ def test_return_board_and_ties(client, db):
 def test_extra_virtual_deposits_do_not_climb_the_ranking(client, db):
     ha, ua, pa = make_user(client, db, "Ana", "a@example.com", "100000")
     hb, _, _ = make_user(client, db, "Bruno", "b@example.com", "100500")
-    assert client.post("/api/portfolio/deposit", headers=ha, json={"amount": "5000000"}).status_code == 201
+    credit(client, ha, "5000000")
     performance_service.take_snapshot(db, portfolio_service.load_portfolio(db, pa))       # foto nova, mesmo horário
     snap = db.scalar(select(PortfolioSnapshot).where(PortfolioSnapshot.portfolio_id == pa))
     db.refresh(snap)

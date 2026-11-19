@@ -172,3 +172,20 @@ def _fake_fixed_income_sources():
 def _empty_media_dir(tmp_path, monkeypatch):
     from backend.services import video_service
     monkeypatch.setattr(video_service, "media_dir", lambda: tmp_path / "media_vazia")
+
+
+# ------------------------------------------------ crédito de saldo para testes
+def credit(client, headers, amount) -> None:
+    """Credita saldo direto na carteira. NÃO existe depósito pela API: o dinheiro do usuário vem de trabalho,
+    empresas e investimentos. Testes que precisam de caixa grande usam este atalho (aporte de sistema)."""
+    from decimal import Decimal
+
+    from sqlalchemy import select
+
+    from backend.models import Portfolio, TransactionSource
+    from backend.services import ledger_service
+    uid = client.get("/api/auth/me", headers=headers).json()["id"]
+    with SessionLocal() as s:
+        pid = s.scalar(select(Portfolio.id).where(Portfolio.user_id == uid))
+        ledger_service.deposit(s, pid, Decimal(str(amount)), source=TransactionSource.USER)
+        s.commit()

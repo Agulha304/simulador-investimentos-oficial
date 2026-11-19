@@ -1,3 +1,4 @@
+from tests.conftest import credit
 """Bens, imóveis, financiamentos e patrimônio (etapa 2) integrados ao orçamento, ao ledger e ao fechamento do mês."""
 import uuid
 from decimal import Decimal
@@ -31,9 +32,7 @@ def cash(client, h) -> Decimal:
 
 
 def fund(client, h, amount="3000000"):
-    for _ in range(int(D(amount) // D("10000000")) or 1):
-        r = client.post("/api/portfolio/deposit", headers=h, json={"amount": str(min(D(amount), D("10000000")))})
-        assert r.status_code == 201, r.text
+    credit(client, h, amount)
 
 
 def listing(client, h, key):

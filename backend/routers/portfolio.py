@@ -1,9 +1,8 @@
-from fastapi import APIRouter, Query, status
+from fastapi import APIRouter, Query
 
 from backend.dependencies import CurrentUser, DbSession
-from backend.schemas.market import DepositRequest
 from backend.schemas.portfolio import AssetBrief, HoldingOut, PortfolioSummaryOut, TransactionOut
-from backend.services import ledger_service, portfolio_service
+from backend.services import portfolio_service
 
 router = APIRouter(prefix="/portfolio", tags=["portfolio"])
 
@@ -55,12 +54,3 @@ def get_transactions(
     portfolio = portfolio_service.get_portfolio_for_user(db, user.id)
     return portfolio_service.list_transactions(db, portfolio.id, limit=limit, offset=offset)
 
-
-@router.post("/deposit", response_model=TransactionOut, status_code=status.HTTP_201_CREATED)
-def deposit(body: DepositRequest, user: CurrentUser, db: DbSession):
-    """Adiciona saldo virtual (aporte fictício)."""
-    portfolio = portfolio_service.get_portfolio_for_user(db, user.id)
-    tx = ledger_service.deposit(db, portfolio.id, body.amount, note="Depósito virtual")
-    db.commit()
-    db.refresh(tx)
-    return tx

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { StatCard } from "../components/StatCard";
 import { api, type PortfolioSummary } from "../services/api";
@@ -7,19 +7,9 @@ import { CLASS_LABEL, fmtBRL, fmtMoney, fmtPct, fmtQty, trend } from "../lib/for
 export function PortfolioPage() {
   const [data, setData] = useState<PortfolioSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [amount, setAmount] = useState("");
-  const [busy, setBusy] = useState(false);
 
   const load = useCallback(() => { api.portfolio().then(setData).catch((e: Error) => setError(e.message)); }, []);
   useEffect(load, [load]);
-
-  async function deposit(e: FormEvent) {
-    e.preventDefault();
-    setBusy(true); setError(null);
-    try { await api.deposit(amount.replace(",", ".")); setAmount(""); load(); }
-    catch (err) { setError(err instanceof Error ? err.message : "Erro"); }
-    finally { setBusy(false); }
-  }
 
   if (!data) return error ? <div className="alert">{error}</div> : <div className="muted">Carregando…</div>;
 
@@ -54,15 +44,6 @@ export function PortfolioPage() {
         )}
       </section>
 
-      <form className="card inline-form" onSubmit={deposit}>
-        <h2>Depósito virtual</h2>
-        <p className="muted small">Adicione mais saldo fictício para continuar praticando.</p>
-        <div className="row-gap">
-          <input inputMode="decimal" placeholder="Valor em R$" value={amount} onChange={(e) => setAmount(e.target.value)} required />
-          <button className="btn primary" disabled={busy}>Depositar</button>
-        </div>
-        {error && <div className="alert">{error}</div>}
-      </form>
     </div>
   );
 }

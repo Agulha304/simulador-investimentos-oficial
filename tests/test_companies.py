@@ -1,3 +1,4 @@
+from tests.conftest import credit
 """Empresas (etapa 3): contas separadas, folha, estoque, receitas, expansão, locação, lucros e fechamento mensal."""
 import uuid
 from decimal import Decimal
@@ -17,8 +18,7 @@ G = "/api/goods"
 
 
 def fund(client, h, amount="10000000"):
-    r = client.post("/api/portfolio/deposit", headers=h, json={"amount": amount})
-    assert r.status_code == 201, r.text
+    credit(client, h, amount)
 
 
 def portfolio(client, h):

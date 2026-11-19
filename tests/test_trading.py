@@ -99,9 +99,9 @@ def test_market_down_does_not_break_portfolio(client, auth_headers, assets, _fak
     assert buy(client, auth_headers, assets["PETR4"], quantity="1").status_code == 422
 
 
-def test_virtual_deposit(client, auth_headers):
-    r = client.post("/api/portfolio/deposit", headers=auth_headers, json={"amount": "250.50"})
-    assert r.status_code == 201
-    p = portfolio(client, auth_headers)
-    assert p["cash_balance"] == "100250.50" and p["total_deposits_brl"] == "100250.50"
-    assert client.post("/api/portfolio/deposit", headers=auth_headers, json={"amount": "-5"}).status_code == 422
+def test_no_virtual_deposit_endpoint(client, auth_headers):
+    """O saldo vem só de trabalho, empresas e investimentos: não há depósito fictício pela API."""
+    for method in ("post", "put", "patch"):
+        r = getattr(client, method)("/api/portfolio/deposit", headers=auth_headers, json={"amount": "250.50"})
+        assert r.status_code in (404, 405)
+    assert portfolio(client, auth_headers)["cash_balance"] == "100000.00"

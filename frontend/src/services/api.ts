@@ -410,7 +410,6 @@ export const api = {
     request<CompanyDetail>(`/companies/${id}/loans`, { method: "POST", body: JSON.stringify({ amount, term_months }) }),
   coBuyGood: (id: number, listing_key: string) =>
     request<CompanyDetail>(`/companies/${id}/goods/purchase`, { method: "POST", body: JSON.stringify({ listing_key, idempotency_key: crypto.randomUUID() }) }),
-  deposit: (amount: string) => request<Transaction>("/portfolio/deposit", { method: "POST", body: JSON.stringify({ amount }) }),
   portfolio: () => request<PortfolioSummary>("/portfolio"),
   transactions: (limit = 20) => request<Transaction[]>(`/portfolio/transactions?limit=${limit}`),
 };

@@ -1,3 +1,4 @@
+from tests.conftest import credit
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
@@ -36,7 +37,7 @@ def perf(client, h, rng="30d"):
 
 def test_snapshot_excludes_extra_deposits_from_wealth(client, auth_headers, db):
     pid = db.scalar(select(Portfolio.id))
-    client.post("/api/portfolio/deposit", headers=auth_headers, json={"amount": "5000"})
+    credit(client, auth_headers, "5000")
     s = performance_service.take_snapshot(db, portfolio_service.load_portfolio(db, pid), datetime.now(UTC) + timedelta(hours=1))
     assert (s.equity_brl, s.wealth_brl, s.net_deposits_brl, s.initial_brl) == (D("105000.00"), D("100000.00"), D("105000.00"), D("100000.00"))
 
@@ -178,7 +179,7 @@ def test_concentration_insight_points_to_the_right_lesson(client, auth_headers, 
 
 
 def test_extra_deposit_is_not_profit_in_the_performance_tab(client, auth_headers):
-    client.post("/api/portfolio/deposit", headers=auth_headers, json={"amount": "50000"})
+    credit(client, auth_headers, "50000")
     s = perf(client, auth_headers)["summary"]
     assert (s["equity_brl"], s["wealth_brl"], s["pnl_brl"], s["total_return_pct"]) == ("150000.00", "100000.00", "0.00", "0.00")
 
