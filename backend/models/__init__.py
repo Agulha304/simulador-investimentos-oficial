@@ -25,10 +25,12 @@ from backend.models.holding import Holding
 from backend.models.life import Child, LifeLog, LifeProfile, Person, Relationship
 from backend.models.performance import LessonProgress, PortfolioSnapshot
 from backend.models.portfolio import Portfolio
+from backend.models.progress import Achievement, Goal, MonthReport
 from backend.models.transaction import Transaction
 from backend.models.user import User
 
 __all__ = [
+    "Achievement", "Goal", "MonthReport",
     "EconomyState", "GameProfile", "WorldEvent",
     "Child", "LifeLog", "LifeProfile", "Person", "Relationship",
     "Company", "CompanyCost", "CompanyCostKind", "CompanyEvent", "CompanyEventType", "CompanyLease", "CompanyLoan",

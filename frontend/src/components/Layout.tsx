@@ -4,13 +4,18 @@ import { SearchBar } from "./SearchBar";
 
 const NAV = [
   { to: "/", label: "Dashboard", ready: true },
+  { to: "/visao-geral", label: "Vida financeira", ready: true },
   { to: "/mercado", label: "Mercado", ready: true },
   { to: "/carteira", label: "Carteira", ready: true },
   { to: "/orcamento", label: "Orçamento", ready: true },
   { to: "/patrimonio", label: "Patrimônio", ready: true },
   { to: "/empresas", label: "Empresas", ready: true },
+  { to: "/vida", label: "Vida pessoal", ready: true },
+  { to: "/economia", label: "Economia", ready: true },
   { to: "/renda-fixa", label: "Renda Fixa", ready: true },
   { to: "/desempenho", label: "Desempenho", ready: true },
+  { to: "/resumos", label: "Resumos", ready: true },
+  { to: "/partida", label: "Partida", ready: true },
   { to: "/ranking", label: "Ranking", ready: true },
   { to: "/aulas", label: "Aulas", ready: true },
   { to: "/historico", label: "Histórico", ready: true },

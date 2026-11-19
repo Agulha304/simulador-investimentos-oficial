@@ -23,7 +23,7 @@ from backend.core.money import quantize_money
 from backend.models import (
     BudgetItem, EntryOrigin, FlowKind, LedgerEntry, MonthStatus, Portfolio, SimMonth, TransactionSource,
 )
-from backend.services import budget_service, company_service, economy_service, finance_ledger, goods_service, ledger_service, life_service
+from backend.services import budget_service, company_service, economy_service, finance_ledger, goods_service, ledger_service, life_service, progression_service
 from backend.services.finance_ledger import ConflictError, NotFoundError
 
 log = logging.getLogger(__name__)
@@ -127,5 +127,6 @@ def close_month(db: Session, user_id: int, ref_month: date) -> SimMonth:
     budget_service.generate_items(db, user_id, nxt)
     goods_service.advance_to_month(db, user_id, nxt)          # valorização, ocupação e itens dos bens
     life_service.advance_to_month(db, user_id, nxt)           # nascimentos, mudanças, escola e itens da família
+    progression_service.on_month_closed(db, user_id, month, nxt)   # objetivos, conquistas e relatório do mês
     log.info("mês %s fechado user=%s saldo=%s", month.ref_month, user_id, portfolio.cash_balance)
     return nxt

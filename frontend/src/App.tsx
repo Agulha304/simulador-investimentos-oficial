@@ -16,6 +16,11 @@ import { FixedIncomePage } from "./pages/FixedIncomePage";
 import { HistoryPage } from "./pages/HistoryPage";
 import { PortfolioPage } from "./pages/PortfolioPage";
 import { RankingPage } from "./pages/RankingPage";
+import { EconomyPage } from "./pages/EconomyPage";
+import { GamePage } from "./pages/GamePage";
+import { LifePage } from "./pages/LifePage";
+import { OverviewPage } from "./pages/OverviewPage";
+import { ReportsPage } from "./pages/ReportsPage";
 import { AuthProvider } from "./services/auth";
 
 // páginas com bibliotecas de gráficos pesadas são carregadas só quando visitadas
@@ -40,6 +45,11 @@ export default function App() {
               <Route path="empresas" element={<CompaniesPage />} />
               <Route path="empresas/:id" element={<CompanyPage />} />
               <Route path="patrimonio/:id" element={<GoodPage />} />
+              <Route path="visao-geral" element={<OverviewPage />} />
+              <Route path="vida" element={<LifePage />} />
+              <Route path="economia" element={<EconomyPage />} />
+              <Route path="resumos" element={<ReportsPage />} />
+              <Route path="partida" element={<GamePage />} />
               <Route path="renda-fixa" element={<FixedIncomePage />} />
               <Route path="desempenho" element={<PerformancePage />} />
               <Route path="ranking" element={<RankingPage />} />
