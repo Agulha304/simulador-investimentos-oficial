@@ -23,7 +23,7 @@ from backend.core.money import quantize_money
 from backend.models import (
     BudgetItem, EntryOrigin, FlowKind, LedgerEntry, MonthStatus, Portfolio, SimMonth, TransactionSource,
 )
-from backend.services import budget_service, company_service, finance_ledger, goods_service, ledger_service
+from backend.services import budget_service, company_service, finance_ledger, goods_service, ledger_service, life_service
 from backend.services.finance_ledger import ConflictError, NotFoundError
 
 log = logging.getLogger(__name__)
@@ -40,6 +40,14 @@ class ClosePreview:
     @property
     def can_close(self) -> bool:
         return self.shortfall == 0
+
+
+def _origin_of(source_key: str) -> EntryOrigin:
+    if source_key.startswith(("family:", "child:", "life:")):
+        return EntryOrigin.FAMILY
+    if source_key.startswith("econ:"):
+        return EntryOrigin.EVENT
+    return EntryOrigin.ASSET
 
 
 def _pending_recurring(db: Session, month: SimMonth) -> list[BudgetItem]:
@@ -78,6 +86,7 @@ def close_month(db: Session, user_id: int, ref_month: date) -> SimMonth:
         raise ConflictError("este mês já foi fechado")
 
     company_service.process_month(db, user_id, month)          # empresas primeiro: pró-labore e aluguel entram no caixa pessoal
+    life_service.process_month(db, user_id, month)             # atributos e relacionamentos do mês que termina
     pending = _pending_recurring(db, month)
     pending.sort(key=lambda b: (b.kind != FlowKind.INCOME, b.id))   # receitas antes das despesas
     for bi in pending:
@@ -85,7 +94,7 @@ def close_month(db: Session, user_id: int, ref_month: date) -> SimMonth:
             finance_ledger.post_entry(
                 db, user_id, kind=bi.kind, amount=bi.planned_amount, description=bi.name,
                 ref_month=month.ref_month, entry_date=month.ref_month, category_id=bi.category_id,
-                origin=EntryOrigin.ASSET, origin_ref=bi.source_key, budget_item_id=bi.id, capital=bi.capital,
+                origin=_origin_of(bi.source_key), origin_ref=bi.source_key, budget_item_id=bi.id, capital=bi.capital,
                 idempotency_key=f"asset:{bi.source_key}:{month.ref_month:%Y-%m}", source=TransactionSource.SYSTEM,
             )
             continue
@@ -116,5 +125,6 @@ def close_month(db: Session, user_id: int, ref_month: date) -> SimMonth:
     db.flush()
     budget_service.generate_items(db, user_id, nxt)
     goods_service.advance_to_month(db, user_id, nxt)          # valorização, ocupação e itens dos bens
+    life_service.advance_to_month(db, user_id, nxt)           # nascimentos, mudanças, escola e itens da família
     log.info("mês %s fechado user=%s saldo=%s", month.ref_month, user_id, portfolio.cash_balance)
     return nxt

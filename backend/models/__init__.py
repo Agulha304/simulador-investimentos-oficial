@@ -21,12 +21,14 @@ from backend.models.goods import (
     Good, GoodCost, GoodEvent, GoodValue, Loan, LoanInstallment, RealEstateDetails, ValuationRule, VehicleDetails,
 )
 from backend.models.holding import Holding
+from backend.models.life import Child, LifeLog, LifeProfile, Person, Relationship
 from backend.models.performance import LessonProgress, PortfolioSnapshot
 from backend.models.portfolio import Portfolio
 from backend.models.transaction import Transaction
 from backend.models.user import User
 
 __all__ = [
+    "Child", "LifeLog", "LifeProfile", "Person", "Relationship",
     "Company", "CompanyCost", "CompanyCostKind", "CompanyEvent", "CompanyEventType", "CompanyLease", "CompanyLoan",
     "CompanyLoanInstallment", "CompanyMonth", "CompanySegment", "CompanySize", "CompanyStatus", "Employee", "EmployeeLevel",
     "EmployeeStatus", "InventoryItem", "LeaseKind",

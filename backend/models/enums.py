@@ -63,6 +63,8 @@ class EntryOrigin(StrEnum):
     REVERSAL = "REVERSAL"
     ASSET = "ASSET"              # efeitos de bens (compra, venda, parcelas, aluguel, custos)
     COMPANY = "COMPANY"          # transferências entre a conta pessoal e as empresas (aporte, lucros, pró-labore, aluguel)
+    FAMILY = "FAMILY"            # vida pessoal e família (filhos, moradia compartilhada, atividades, contribuição do parceiro)
+    EVENT = "EVENT"              # consequências financeiras de eventos (pessoais, econômicos, empresariais)
 
 
 class MonthStatus(StrEnum):

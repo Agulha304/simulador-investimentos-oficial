@@ -477,7 +477,7 @@ def sync_month(db: Session, user_id: int, month: SimMonth) -> None:
                      FlowKind.EXPENSE, "Dívidas", inst.amortization, capital=True)
 
     existing = {bi.source_key: bi for bi in db.scalars(select(BudgetItem).where(
-        BudgetItem.month_id == month.id, BudgetItem.source_key.is_not(None)))}
+        BudgetItem.month_id == month.id, BudgetItem.source_key.is_not(None))) if bi.source_key.startswith(("good:", "loan:"))}
     with_entries = set(db.scalars(select(LedgerEntry.budget_item_id).where(
         LedgerEntry.user_id == user_id, LedgerEntry.ref_month == ref, LedgerEntry.budget_item_id.is_not(None))))
     for key, d in desired.items():
