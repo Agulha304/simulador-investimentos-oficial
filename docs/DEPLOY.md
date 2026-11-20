@@ -41,6 +41,13 @@ Health check do host: `GET /api/health`. Teste: `https://SEU-BACKEND/api/health`
 > Planos gratuitos que "dormem" por inatividade derrubam os workers enquanto o app está parado. Para o Stop Loss, os proventos
 > e os snapshots funcionarem, use um plano que fique sempre ligado.
 
+### Banco no Supabase
+
+O banco de produção é o Postgres do Supabase (projeto `kqvpqbdupafpbasrytqw`). Use a URL do **Session pooler** (porta 5432) em `DATABASE_URL`.
+As migrações (`alembic upgrade head`) criam as tabelas e ligam o **RLS** em todas elas: o backend conecta com o usuário `postgres` (ignora RLS), e a
+chave pública do Supabase fica sem acesso a nada. **Toda tabela nova precisa de `ENABLE ROW LEVEL SECURITY`** na migration.
+Os testes (`pytest`) usam `TEST_DATABASE_URL` (Postgres local) e se recusam a rodar se ele apontar para o Supabase.
+
 ## 2. Cloudflare (Workers & Pages → Create → conectar o repositório do GitHub)
 
 | Campo | O que colocar |

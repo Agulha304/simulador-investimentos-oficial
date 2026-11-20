@@ -4,6 +4,7 @@ import os
 
 from backend.config import get_settings
 
+assert "supabase" not in get_settings().test_database_url, "TEST_DATABASE_URL não pode apontar para o Supabase: os testes apagam as tabelas"
 os.environ["DATABASE_URL"] = get_settings().test_database_url
 os.environ["SCHEDULER_ENABLED"] = "false"
 get_settings.cache_clear()

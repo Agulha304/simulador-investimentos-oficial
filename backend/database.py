@@ -11,7 +11,8 @@ class Base(DeclarativeBase):
     pass
 
 
-engine = create_engine(get_settings().database_url, pool_pre_ping=True, future=True)
+# pool pequeno: o pooler do Supabase limita conexões; pre_ping descarta conexões fechadas pelo pooler
+engine = create_engine(get_settings().database_url, pool_pre_ping=True, pool_size=5, max_overflow=5, pool_recycle=1800, future=True)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
 
 
