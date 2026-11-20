@@ -64,6 +64,7 @@ export function GameLayout() {
         </div>
       </header>
       {training && <div className="training-banner">🎓 <b>Modo treino:</b> tudo aqui é simulado e o dinheiro é de mentirinha. Os preços são os <b>reais do passado</b>; você pode avançar meses ou voltar no tempo.</div>}
+      {!training && g?.started && inInvest && <div className="sim-banner-game">🎲 <b>Mercado simulado:</b> o preço de partida de cada ativo é a cotação real de quando você começou; daqui para a frente os preços são <b>gerados pelo jogo</b> (economia, juros, crises). Não são previsões do mundo real.</div>}
       {err && <div className="alert" style={{ margin: "8px 16px" }}>{err}</div>}
       <div className="game-body">
         <nav className="game-nav" aria-label="Menu da partida">

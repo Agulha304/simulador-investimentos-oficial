@@ -391,3 +391,5 @@ input.xl, select.xl { font-size: 1.15rem; padding: 14px 16px; }
   .gnav { flex-direction: column; gap: 2px; padding: 6px 10px; font-size: 11px; min-width: 64px; align-items: center; } .gnav-icon { font-size: 1.4rem; } .gnav-dot { right: 6px; top: 2px; }
   .game-top { padding: 8px 12px; gap: 8px; } .game-date { margin-left: 0; }
 }
+
+.sim-banner-game { background: #7a3cff33; border-bottom: 2px solid #7a3cff; padding: 8px 20px; font-weight: 700; }
