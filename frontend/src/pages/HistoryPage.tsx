@@ -5,8 +5,10 @@ import { KIND_LABEL, SOURCE_LABEL, STATUS_LABEL, TX_LABEL, fmtBRL, fmtDate, fmtD
 
 const FILTERS = [
   { id: "ALL", label: "Tudo" }, { id: "BUY", label: "Compras" }, { id: "SELL", label: "Vendas" },
-  { id: "DIVIDEND", label: "Proventos" }, { id: "DEPOSIT", label: "Depósitos" },
+  { id: "DIVIDEND", label: "Proventos" }, { id: "FIXED", label: "Renda fixa" },
 ];
+// o histórico mostra só operações de INVESTIMENTO: ficam de fora depósitos, saques e movimentos do orçamento
+const INVEST_TYPES = new Set(["BUY", "SELL", "DIVIDEND", "FIXED_INCOME_APPLY", "FIXED_INCOME_REDEEM", "FIXED_INCOME_COUPON", "FIXED_INCOME_MATURITY"]);
 
 export function HistoryPage() {
   const [tab, setTab] = useState<"tx" | "div">("tx");
@@ -33,11 +35,11 @@ export function HistoryPage() {
     finally { setBusy(false); }
   }
 
-  const rows = (txs ?? []).filter((t) => filter === "ALL" || t.type === filter);
+  const rows = (txs ?? []).filter((t) => INVEST_TYPES.has(t.type) && (filter === "ALL" || t.type === filter || (filter === "FIXED" && t.type.startsWith("FIXED_INCOME"))));
 
   return (
     <div className="page">
-      <header className="page-head"><h1>Histórico</h1></header>
+      <header className="page-head"><h1>Histórico de operações</h1></header>
       {error && <div className="alert">{error}</div>}
       <div className="seg compact tabs">
         <button className={tab === "tx" ? "on" : ""} onClick={() => setTab("tx")}>Transações</button>

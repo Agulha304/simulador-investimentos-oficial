@@ -372,7 +372,8 @@ def validate_free_config(cash: Decimal, salary: Decimal, expenses: list[P.Expens
 
 
 def start_game(db: Session, user_id: int, *, mode: str, scenario_key: str | None = None, seed: int | None = None,
-               name: str = "Você", free: dict | None = None, economy: dict | None = None, sim: dict | None = None) -> dict:
+               name: str = "Você", free: dict | None = None, economy: dict | None = None, sim: dict | None = None,
+               gender: str | None = None, interested_in: str | None = None, career_field: str | None = None) -> dict:
     if mode not in P.MODES:
         raise FinanceError("modo inválido (use FREE ou CAREER)")
     month = budget_service.ensure_setup(db, user_id)
@@ -402,6 +403,12 @@ def start_game(db: Session, user_id: int, *, mode: str, scenario_key: str | None
         validate_free_config(cash, salary, [e for e in expenses if e.category != "Moradia"], rent)
         goals, age = [], int(free.get("age", 28))
         init_econ = dict(economy or {})
+    from backend.services import career_rules
+    career_field = career_field or career_rules.DEFAULT_FIELD
+    if career_field not in career_rules.FIELDS:
+        raise FinanceError("área de atuação inválida")
+    if mode == "CAREER":                  # cenário: a área ajusta levemente o salário inicial (todas começam parecidas); no modo livre vale o valor digitado
+        salary = (salary * D(str(career_rules.FIELDS[career_field]["start"]))).quantize(D("0.01"))
     seed = int(seed if seed is not None else user_id)
     _set_cash(db, user_id, cash)
     if salary > 0:
@@ -416,7 +423,8 @@ def start_game(db: Session, user_id: int, *, mode: str, scenario_key: str | None
                                      planned_amount=D(e.amount), recurring=True)
         if e.index:
             economy_service.set_indexation(db, user_id, bi.recurring_item_id, "MONTHLY", e.index)
-    life_service.create_character(db, user_id, name=name, age_years=age)
+    life_service.create_character(db, user_id, name=name, age_years=age, gender=gender, interested_in=interested_in)
+    life_service.set_initial_field(db, user_id, month, career_field)
     if sc and sc.partner:
         _seed_family(db, user_id, month, sc)
     game = economy_service.get_game(db, user_id)
@@ -429,6 +437,7 @@ def start_game(db: Session, user_id: int, *, mode: str, scenario_key: str | None
         _goal_from(db, user_id, month, g, "SCENARIO")
     life_service.sync_month(db, user_id, month)
     economy_service.sync_month(db, user_id, month)
+    economy_service.ensure_monthly_decision(db, user_id, month)          # decisão do primeiro mês
     return {"mode": mode, "scenario": scenario_key, "seed": seed}
 
 

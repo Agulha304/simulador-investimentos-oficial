@@ -67,24 +67,64 @@ ACTIVITIES = {
     "restaurant": dict(label="Jantar fora", cost=180, hours=6, social=+1, wellbeing=+2, satisfaction=+1, meets=0.12, interest="gastronomia"),
     "party": dict(label="Festa/balada", cost=220, hours=8, social=+3, wellbeing=+1, health=-1, meets=0.35, interest="música"),
     "trip": dict(label="Viagem de fim de semana", cost=1400, hours=30, social=+2, wellbeing=+4, quality=+2, satisfaction=+3, meets=0.18, interest="viagens"),
+    "cinema": dict(label="Cinema", cost=60, hours=4, social=+1, wellbeing=+2, meets=0.10, interest="cultura"),
+    "museum": dict(label="Museu e exposições", cost=30, hours=5, social=+1, wellbeing=+1, quality=+1, meets=0.18, interest="cultura"),
+    "concert": dict(label="Show ao vivo", cost=200, hours=6, social=+2, wellbeing=+3, meets=0.28, interest="música"),
+    "team_sport": dict(label="Esporte em grupo (futebol, vôlei)", cost=20, hours=8, social=+2, health=+2, wellbeing=+1, meets=0.30, interest="esporte"),
+    "language_class": dict(label="Aula de idiomas", cost=180, hours=12, social=+1, quality=+1, meets=0.22, interest="estudos"),
+    "book_club": dict(label="Clube do livro", cost=0, hours=6, social=+2, wellbeing=+1, meets=0.26, interest="cultura"),
+    "board_games": dict(label="Noite de jogos de tabuleiro", cost=25, hours=5, social=+2, wellbeing=+2, meets=0.24, interest="jogos"),
+    "cooking_class": dict(label="Oficina de culinária", cost=140, hours=7, social=+2, wellbeing=+1, meets=0.26, interest="gastronomia"),
+    "hiking": dict(label="Trilha na natureza", cost=15, hours=10, social=+1, health=+2, wellbeing=+3, meets=0.20, interest="natureza"),
+    "fair": dict(label="Feira de bairro", cost=40, hours=3, social=+1, wellbeing=+1, meets=0.16, interest="gastronomia"),
+    "networking": dict(label="Encontro de profissionais (networking)", cost=50, hours=5, social=+2, quality=+1, meets=0.30, interest="tecnologia"),
+    "coworking": dict(label="Dia no coworking", cost=60, hours=8, social=+1, meets=0.18, interest="tecnologia"),
+    "dance_class": dict(label="Aula de dança", cost=120, hours=8, social=+3, health=+1, wellbeing=+2, meets=0.32, interest="música"),
+    "community_garden": dict(label="Horta comunitária", cost=0, hours=7, social=+2, wellbeing=+2, meets=0.22, interest="natureza"),
+    "games_night": dict(label="Campeonato de videogame", cost=35, hours=6, social=+2, wellbeing=+1, meets=0.24, interest="jogos"),
+    "charity_event": dict(label="Mutirão solidário", cost=0, hours=9, social=+2, wellbeing=+3, satisfaction=+1, meets=0.30, interest="causas"),
+    "picnic": dict(label="Piquenique no parque", cost=45, hours=5, social=+2, wellbeing=+2, meets=0.18, interest="natureza"),
 }
 # interações com uma pessoa já conhecida
 INTERACTIONS = {
     "chat": dict(label="Conversar", cost=0, hours=4, gain=3),
-    "walk": dict(label="Passeio gratuito", cost=0, hours=8, gain=4),
-    "cook": dict(label="Cozinhar juntos", cost=40, hours=6, gain=5),
+    "walk": dict(label="Passeio gratuito", cost=0, hours=8, gain=4, interest="natureza"),
+    "cook": dict(label="Cozinhar juntos", cost=40, hours=6, gain=5, interest="gastronomia"),
     "outing": dict(label="Programa a dois", cost=160, hours=8, gain=5),
-    "trip": dict(label="Viagem a dois", cost=1500, hours=30, gain=8),
+    "trip": dict(label="Viagem a dois", cost=1500, hours=30, gain=8, interest="viagens"),
+    "movie": dict(label="Cinema ou série juntos", cost=50, hours=4, gain=4, interest="cultura"),
+    "game": dict(label="Jogar juntos", cost=10, hours=5, gain=4, interest="jogos"),
+    "sport": dict(label="Fazer esporte juntos", cost=15, hours=7, gain=5, interest="esporte"),
+    "study": dict(label="Estudar juntos", cost=0, hours=6, gain=4, interest="estudos"),
+    "music": dict(label="Ouvir música ou ir a um show", cost=90, hours=6, gain=5, interest="música"),
+    "help": dict(label="Ajudar em uma causa juntos", cost=0, hours=7, gain=5, interest="causas"),
+    "tech": dict(label="Projeto ou curso de tecnologia juntos", cost=30, hours=6, gain=4, interest="tecnologia"),
 }
+COMPAT_BONUS_BASE, COMPAT_BONUS_MATCH, COMPAT_BONUS_CAP = 1, 2, 30      # convivência aproxima: cada atividade soma; tema em comum soma mais
 
 STAGES = ("ACQUAINTANCE", "FRIEND", "DATING", "COHABITING", "MARRIED", "ENDED")
 PARTNER_STAGES = ("DATING", "COHABITING", "MARRIED")
 HOUSEHOLD_STAGES = ("COHABITING", "MARRIED")
 
 # ---------------------------------------------------------------- personagens
-FIRST_NAMES = ["Ana", "Bruno", "Carla", "Diego", "Elisa", "Fábio", "Gabriela", "Hugo", "Isabela", "João", "Karina", "Lucas",
-               "Mariana", "Nelson", "Olívia", "Paulo", "Rafaela", "Sérgio", "Tatiana", "Vitor", "Yara", "Caio", "Débora", "Enzo"]
-CHILD_NAMES = ["Alice", "Miguel", "Helena", "Arthur", "Laura", "Theo", "Valentina", "Davi", "Sofia", "Lorenzo", "Cecília", "Gael"]
+NAMES = {
+    "M": ["Bruno", "Diego", "Fábio", "Hugo", "João", "Lucas", "Nelson", "Paulo", "Sérgio", "Vitor", "Caio", "Enzo", "Rafael", "Thiago", "Gustavo",
+          "Matheus", "André", "Felipe", "Rodrigo", "Marcelo", "Leonardo", "Pedro", "Daniel", "Henrique", "Gabriel", "Eduardo", "Renato", "Otávio",
+          "Murilo", "Leandro", "Davi", "Arthur", "Samuel", "Igor", "Ícaro", "Jonas", "Davi", "Wagner", "Cauã", "Benício", "Emanuel", "Ramon", "Tiago",
+          "Alexandre", "Fernando", "Ricardo", "Marcos", "Roberto", "Joaquim", "Teodoro", "Lauro", "Ismael", "Cláudio", "Breno", "Yuri", "Dante"],
+    "F": ["Ana", "Carla", "Elisa", "Gabriela", "Isabela", "Karina", "Mariana", "Olívia", "Rafaela", "Tatiana", "Yara", "Débora", "Beatriz", "Camila",
+          "Fernanda", "Juliana", "Larissa", "Letícia", "Natália", "Patrícia", "Renata", "Sabrina", "Vanessa", "Amanda", "Bianca", "Cecília", "Daniela",
+          "Eduarda", "Flávia", "Helena", "Ingrid", "Jéssica", "Lívia", "Manuela", "Nicole", "Priscila", "Raquel", "Sofia", "Thaís", "Valentina",
+          "Aline", "Bruna", "Clara", "Diana", "Estela", "Fabiana", "Giovana", "Heloísa", "Irene", "Joana", "Luana", "Marta", "Noemi", "Paloma", "Rita", "Sandra"],
+}
+FIRST_NAMES = NAMES["M"] + NAMES["F"]
+LAST_NAMES = ["Silva", "Santos", "Oliveira", "Souza", "Pereira", "Costa", "Rodrigues", "Almeida", "Nascimento", "Lima", "Araújo", "Fernandes", "Carvalho",
+              "Gomes", "Martins", "Rocha", "Ribeiro", "Alves", "Monteiro", "Mendes", "Barros", "Freitas", "Barbosa", "Pinto", "Moreira", "Cavalcanti",
+              "Dias", "Castro", "Campos", "Cardoso", "Teixeira", "Correia", "Machado", "Nunes", "Vieira", "Moura", "Duarte", "Azevedo", "Lopes", "Ramos",
+              "Reis", "Farias", "Batista", "Xavier", "Tavares", "Siqueira", "Prado", "Medeiros", "Brandão", "Guimarães", "Peixoto", "Coelho", "Bittencourt",
+              "Nogueira", "Andrade", "Pacheco", "Sampaio", "Bezerra", "Borges", "Toledo", "Fonseca", "Lacerda", "Amaral", "Viana", "Matos", "Cunha"]
+CHILD_NAMES = ["Alice", "Miguel", "Helena", "Arthur", "Laura", "Theo", "Valentina", "Davi", "Sofia", "Lorenzo", "Cecília", "Gael", "Heitor", "Maria", "Bernardo",
+               "Manuela", "Samuel", "Isis", "Benício", "Lívia", "Ravi", "Aurora", "Nicolas", "Luna", "Henrique", "Maitê", "Enzo", "Antônia", "Joaquim", "Clara"]
 PERSONALITIES = ["extrovertido", "reservado", "aventureiro", "caseiro", "ambicioso", "tranquilo", "criativo", "metódico"]
 # afinidade entre personalidades (0..1), simétrica; omitido = 0.5
 PERSONALITY_AFFINITY = {
@@ -94,9 +134,19 @@ PERSONALITY_AFFINITY = {
     ("tranquilo", "tranquilo"): 0.75, ("metódico", "metódico"): 0.7, ("aventureiro", "metódico"): 0.4,
 }
 INTERESTS = ["esporte", "música", "viagens", "gastronomia", "estudos", "cultura", "causas", "tecnologia", "natureza", "jogos"]
-OCCUPATIONS = [("Professor(a)", 4200), ("Enfermeiro(a)", 5200), ("Designer", 5800), ("Analista", 7200), ("Autônomo(a)", 3500),
-               ("Engenheiro(a)", 11000), ("Cozinheiro(a)", 3200), ("Médico(a)", 18000), ("Estudante e estagiário(a)", 1600),
-               ("Comerciante", 6500), ("Motorista de aplicativo", 3800), ("Contador(a)", 8200)]
+# (masculino, feminino, salário-base mensal de referência)
+OCCUPATIONS = [("Professor", "Professora", 4200), ("Enfermeiro", "Enfermeira", 5200), ("Designer", "Designer", 5800), ("Analista de sistemas", "Analista de sistemas", 7200),
+               ("Autônomo", "Autônoma", 3500), ("Engenheiro civil", "Engenheira civil", 11000), ("Cozinheiro", "Cozinheira", 3200), ("Médico", "Médica", 18000),
+               ("Estagiário", "Estagiária", 1600), ("Comerciante", "Comerciante", 6500), ("Motorista de aplicativo", "Motorista de aplicativo", 3800),
+               ("Contador", "Contadora", 8200), ("Advogado", "Advogada", 9500), ("Dentista", "Dentista", 10500), ("Arquiteto", "Arquiteta", 8800),
+               ("Programador", "Programadora", 9000), ("Jornalista", "Jornalista", 5200), ("Fotógrafo", "Fotógrafa", 4300), ("Músico", "Música", 3600),
+               ("Eletricista", "Eletricista", 4200), ("Padeiro", "Padeira", 3000), ("Policial", "Policial", 5600), ("Bombeiro", "Bombeira", 6200),
+               ("Veterinário", "Veterinária", 6800), ("Fisioterapeuta", "Fisioterapeuta", 5600), ("Psicólogo", "Psicóloga", 5400), ("Personal trainer", "Personal trainer", 4400),
+               ("Gerente de loja", "Gerente de loja", 6700), ("Vendedor", "Vendedora", 3300), ("Mecânico", "Mecânica", 4100), ("Agricultor", "Agricultora", 4000),
+               ("Piloto", "Piloto", 16000), ("Cientista de dados", "Cientista de dados", 12500), ("Bibliotecário", "Bibliotecária", 4300), ("Farmacêutico", "Farmacêutica", 6900),
+               ("Chef de cozinha", "Chef de cozinha", 7400), ("Influenciador digital", "Influenciadora digital", 5000), ("Marceneiro", "Marceneira", 3900),
+               ("Tradutor", "Tradutora", 5100), ("Pesquisador", "Pesquisadora", 7800), ("Empresário", "Empresária", 13000), ("Entregador", "Entregadora", 2900),
+               ("Barista", "Barista", 2800), ("Professor de idiomas", "Professora de idiomas", 4600), ("Artista plástico", "Artista plástica", 3700)]
 
 
 def person_affinity(a: str, b: str) -> float:

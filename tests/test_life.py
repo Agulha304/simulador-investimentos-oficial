@@ -60,7 +60,7 @@ def test_create_character_and_default_attributes(client, auth_headers):
     r = client.put(f"{L}/character", headers=auth_headers, json={"name": "Giulia", "age_years": 31})
     assert r.status_code == 200, r.text
     j = r.json()
-    assert j["character"] == {"name": "Giulia", "age_years": 31}
+    assert j["character"]["name"] == "Giulia" and j["character"]["age_years"] == 31 and j["character"]["gender"] == "N"
     a = j["attributes"]
     assert all(0 <= a[k] <= 100 for k in ("health", "wellbeing", "quality", "satisfaction", "social", "financial_stability"))
     assert client.put(f"{L}/character", headers=auth_headers, json={"name": "X", "age_years": 12}).status_code == 422

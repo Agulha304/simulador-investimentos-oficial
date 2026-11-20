@@ -34,6 +34,16 @@ class LifeProfile(Base):
     satisfaction: Mapped[int] = mapped_column(Integer, default=60)
     social: Mapped[int] = mapped_column(Integer, default=40)
     # decisões de estilo de vida (ver life_rules.LEVELS)
+    gender: Mapped[str] = mapped_column(String(1), default="N")                 # M | F | N (prefiro não dizer)
+    interested_in: Mapped[str] = mapped_column(String(3), default="ANY")        # ANY | M | F — quem você quer conhecer
+    career_field: Mapped[str | None] = mapped_column(String(20))
+    career_since: Mapped[date | None] = mapped_column(Date)
+    last_raise_month: Mapped[date | None] = mapped_column(Date)
+    degree_field: Mapped[str | None] = mapped_column(String(20))               # faculdade em andamento
+    degree_progress: Mapped[int] = mapped_column(Integer, default=0)
+    degree_total: Mapped[int] = mapped_column(Integer, default=0)
+    degrees: Mapped[list] = mapped_column(JSON, default=list)                  # áreas em que já se formou
+    pending_career: Mapped[dict | None] = mapped_column(JSON)                 # mudança de área combinada para o mês seguinte
     work_level: Mapped[str] = mapped_column(String(16), default="NORMAL")
     food_level: Mapped[str] = mapped_column(String(16), default="NORMAL")
     health_level: Mapped[str] = mapped_column(String(16), default="BASIC")
@@ -61,6 +71,7 @@ class Person(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
     name: Mapped[str] = mapped_column(String(60))
     age: Mapped[int] = mapped_column(Integer)
+    gender: Mapped[str] = mapped_column(String(1), default="F")
     personality: Mapped[str] = mapped_column(String(24))
     interests: Mapped[list] = mapped_column(JSON, default=list)
     occupation: Mapped[str] = mapped_column(String(60))
@@ -93,6 +104,7 @@ class Relationship(Base):
     finance_mode: Mapped[str] = mapped_column(String(12), default="SEPARATE")   # SEPARATE | SHARED
     contribution_pct: Mapped[Decimal] = mapped_column(Money(), default=Decimal("50"))   # % dos custos compartilhados
     interactions_month: Mapped[int] = mapped_column(Integer, default=0)
+    compat_bonus: Mapped[int] = mapped_column(Integer, default=0)            # cresce com as atividades feitas juntos
     last_interaction_month: Mapped[date | None] = mapped_column(Date)       # base do esfriamento por falta de convivência
 
 

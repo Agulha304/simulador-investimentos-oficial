@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { CartesianGrid, Legend, Line, LineChart, ReferenceArea, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { StatCard } from "../components/StatCard";
 import { fmtMonth } from "../lib/format";
-import { sim, type Crisis, type EcoEvent, type Economy, type SimParams } from "../services/sim";
+import { sim, type Crisis, type EcoEvent, type Economy } from "../services/sim";
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : "Erro inesperado");
 const SCOPE: Record<string, string> = { WORLD: "todo o mundo", SECTOR: "um setor", USER: "você", COMPANY: "uma empresa sua" };
@@ -19,7 +19,7 @@ const CRISIS_HELP: Record<string, string> = {
   CURRENCY: "O real perde valor e o que vem de fora fica caro.", RECESSION: "A economia encolhe: menos vendas e mais desemprego.", GLOBAL: "Uma crise mundial que atinge todo mundo.",
 };
 const COLORS = ["#ffd23f", "#3ee59a", "#ff6482", "#4cc9f0", "#c13cff", "#ff9f1c"];
-type Tab = "now" | "charts" | "crises" | "prices" | "config";
+type Tab = "now" | "charts" | "crises" | "prices";
 
 export function EconomyPage() {
   const [eco, setEco] = useState<Economy | null>(null);
@@ -40,14 +40,13 @@ export function EconomyPage() {
       {error && <div className="alert">{error}</div>}
       {note && <div className="card small">Resultado: {note}</div>}
       <div className="seg compact tabs">
-        {([["now", "Hoje"], ["charts", "Gráficos"], ["crises", `Crises e eventos (${eco.crises.length})`], ["prices", "Preços"], ["config", "Ajustes"]] as [Tab, string][]).map(([k, l]) => <button key={k} className={tab === k ? "on" : ""} onClick={() => setTab(k)}>{l}</button>)}
+        {([["now", "Hoje"], ["charts", "Gráficos"], ["crises", `Crises e eventos (${eco.crises.length})`], ["prices", "Preços"]] as [Tab, string][]).map(([k, l]) => <button key={k} className={tab === k ? "on" : ""} onClick={() => setTab(k)}>{l}</button>)}
       </div>
       {tab === "now" && st && <Now eco={eco} decide={decide} />}
       {tab === "now" && !st && <div className="card muted">Sem dados ainda.</div>}
       {tab === "charts" && <Charts eco={eco} />}
       {tab === "crises" && <Crises eco={eco} />}
       {tab === "prices" && st && <Prices eco={eco} />}
-      {tab === "config" && <Config eco={eco} reload={load} />}
     </div>
   );
 }
@@ -146,22 +145,6 @@ function Prices({ eco }: { eco: Economy }) {
       <div className="table-wrap"><table><thead><tr><th>Categoria</th><th className="r">Índice acumulado</th><th className="r">Variação no mês</th></tr></thead>
         <tbody>{[{ key: "geral", label: "Geral (custo de vida)" }, ...eco.categories].map((c) => { const ch = st.monthly_changes[c.key] ?? 0; return (
           <tr key={c.key}><td>{c.label}</td><td className="r num">{(st.indices[c.key] ?? 1).toFixed(4)}</td><td className={`r num ${ch > 0.6 ? "tone-down" : ch < 0 ? "tone-up" : ""}`}>{ch.toFixed(2)}%</td></tr>); })}</tbody></table></div></section>
-  );
-}
-
-function Config({ eco, reload }: { eco: Economy; reload: () => void }) {
-  const [p, setP] = useState<SimParams>(eco.params);
-  const [msg, setMsg] = useState<string | null>(null);
-  const save = async () => { try { await sim.ecoParams(p); setMsg("Salvo! Vale a partir do próximo mês."); reload(); } catch (e) { setMsg(errMsg(e)); } };
-  const F = (k: keyof SimParams, label: string, hint: string) => (
-    <label className="stack"><span>{label}: <b>{p[k].toFixed(1)}×</b></span><input type="range" min={0} max={3} step={0.1} value={p[k]} onChange={(e) => setP({ ...p, [k]: Number(e.target.value) })} /><span className="muted small">{hint}</span></label>);
-  return (
-    <section className="card stack"><h2>⚙️ Ajustes da simulação</h2>
-      <p className="muted small">Controles de dificuldade. 1,0× é o normal. Valem do próximo mês em diante.</p>
-      {F("volatility", "Oscilação dos preços", "Quanto os ativos sobem e descem")}{F("event_frequency", "Frequência de acontecimentos", "Eventos aleatórios")}
-      {F("crisis_frequency", "Frequência de crises", "0 = sem crises")}{F("crisis_severity", "Gravidade das crises", "Quão fortes elas são")}{F("shock_scale", "Imprevistos da economia", "Ruído dos indicadores")}
-      <div className="row"><button className="btn primary" onClick={() => void save()}>Salvar</button>{msg && <span className="small">{msg}</span>}</div>
-      <p className="muted small">⚠️ Os preços e as crises daqui são resultado de uma economia simulada, calibrada com ordens de grandeza históricas — não são previsões reais.</p></section>
   );
 }
 

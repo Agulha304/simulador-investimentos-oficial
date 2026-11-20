@@ -3,18 +3,24 @@ import { request } from "./api";
 
 export interface Attrs { health: number; wellbeing: number; quality: number; satisfaction: number; social: number; financial_stability: number; free_hours_left: number; free_hours_total: number }
 export interface Rel {
-  person_id: number; name: string; age: number; personality: string; interests: string[]; occupation: string; income: string;
+  gender: "M" | "F"; compat_bonus: number; person_id: number; name: string; age: number; personality: string; interests: string[]; occupation: string; income: string;
   assets: string; debts: string; wants_children: number; stage: string; affinity: number; trust: number; compatibility: number;
   since_month: string; stage_since: string; finance_mode: "SEPARATE" | "SHARED"; contribution_pct: string;
 }
 export interface Kid { id: number; name: string; age_years: number; health: number; development: number; school_kind: "PUBLIC" | "PRIVATE"; daycare: boolean; activities: boolean; active: boolean; monthly_reference_cost: number; needs: string[] }
 export interface FamExpense { key: string; name: string; kind: "EXPENSE" | "INCOME"; category: string; origin: string; amount: string; child_id: number | null }
+export interface CareerField { key: string; label: string; emoji: string; outlook: string; growth_pct: number; start: number; degree: string; months: number; cost: number; premium_pct: number; hours: number }
+export interface Career {
+  field: string | null; label: string | null; outlook: string | null; growth_pct: number | null; since: string | null; next_raise: string | null;
+  salary: string; degrees: string[]; pending: { field: string; factor: number; degree: boolean } | null;
+  studying: { field: string; name: string; progress: number; total: number; cost: number } | null; fields: CareerField[];
+}
 export interface Life {
-  month: string; character: { name: string; age_years: number }; attributes: Attrs; choices: Record<string, string>;
+  month: string; character: { name: string; age_years: number; gender: string; interested_in: string }; career: Career; attributes: Attrs; choices: Record<string, string>;
   options: Record<string, string[]>; housing: { kind: string; monthly_cost: string; pending: { kind: string; monthly_cost: string; effective_month: string } | null };
   pregnancy_due_month: string | null; relationships: Rel[]; children: Kid[]; expenses: FamExpense[]; family_expense_total: string;
   activities: { key: string; label: string; cost: number; hours: number }[]; interactions: { key: string; label: string; cost: number; hours: number }[];
-  pending_decisions: { key: string; text: string }[]; history: { month: string; kind: string; text: string }[];
+  history: { month: string; kind: string; text: string }[];
   result?: { cost: string; met: string | null };
 }
 export interface EcoState {
@@ -88,7 +94,13 @@ export const sim = {
   trainDate: (id: number, date: string) => request<GameSummary>(`/games/${id}/training/date`, post({ date })),
   trainMoney: (id: number, amount: string) => request<GameSummary>(`/games/${id}/training/money`, post({ amount })),
   life: () => request<Life>("/life"),
-  lifeCharacter: (name: string, age_years: number) => request<Life>("/life/character", put({ name, age_years })),
+  lifeCharacter: (name: string, age_years: number, gender?: string, interested_in?: string) => request<Life>("/life/character", put({ name, age_years, gender, interested_in })),
+  lifeCareerChange: (field: string) => request<Life>("/life/career/change", post({ field })),
+  lifeDegree: (field: string) => request<Life>("/life/degree", post({ field })),
+  lifeDegreeDrop: () => request<Life>("/life/degree", { method: "DELETE" }),
+  decisions: () => request<{ month: string; pending: EcoEvent[] }>("/economy/decisions"),
+  gameSimParams: (id: number) => request<{ game: string; params: SimParams }>(`/games/${id}/sim-params`),
+  putGameSimParams: (id: number, p: Partial<SimParams>) => request<{ game: string; params: SimParams }>(`/games/${id}/sim-params`, put(p)),
   lifeChoices: (c: Record<string, string>) => request<Life>("/life/choices", put(c)),
   lifeActivity: (key: string) => request<Life>("/life/activities", post({ key })),
   lifeInteract: (id: number, key: string) => request<Life>(`/life/people/${id}/interact`, post({ key })),

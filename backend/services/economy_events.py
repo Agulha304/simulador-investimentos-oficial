@@ -206,3 +206,102 @@ BETA = {"alimentacao": (1.3, 1.2), "moradia": (0.9, 0.5), "transporte": (1.0, 0.
         "lazer": (0.8, 0.6), "vestuario": (0.7, 0.6)}
 FOOD_SEGMENTS = ("RESTAURANT", "CAFE", "SUPERMARKET")
 INITIAL = {"inflation": 4.5, "interest": 10.5, "unemployment": 8.0, "growth": 2.0, "demand": 100.0, "confidence": 55.0}
+
+
+# ----------------------------------------------------------------------------------------------------------
+# Decisões do mês: uma por mês, ANTES do resumo financeiro do fechamento. Financeiras ou pessoais, com resultado incerto.
+# cond(macro, ctx) -> 0 impede; > 0 é o peso do sorteio.
+def _o(key, label, hint, *outcomes, cost=0, default=False):
+    return Option(key, label, hint, tuple(outcomes), cost=cost, default=default)
+
+
+def _oc(prob, text, effects=None, duration=1):
+    return Outcome(prob, text, effects or {}, duration)
+
+
+def _in(amount, label, price_cat="lazer"):
+    return {"kind": "INCOME", "amount": amount, "price_cat": price_cat, "label": label}
+
+
+def _out(amount, label, price_cat="lazer"):
+    return {"kind": "EXPENSE", "amount": amount, "price_cat": price_cat, "label": label}
+
+
+_has_rel = lambda m, c: 1.0 if c.get("relationships") else 0.0               # noqa: E731
+_has_salary = lambda m, c: 1.0 if c["salary"] > 0 else 0.0                    # noqa: E731
+_always = lambda m, c: 1.0                                                    # noqa: E731
+
+MONTHLY: tuple[EventDef, ...] = (
+    # ------------------------------------------------------------ financeiras
+    EventDef("d_bonus", "Você recebeu um bônus!", "A empresa pagou um bônus de R$ 1.200. O que fazer com o dinheiro?", "FINANCIAL", "USER", True, 1, (1, 1), 1.0, _has_salary,
+             options=(_o("guardar", "Guardar tudo", "Segurança para o futuro.", _oc(1.0, "Você guardou o bônus e ficou mais tranquilo.", {"oneoff": [_in(1200, "Bônus recebido")], "life": {"satisfaction": 1}}), default=True),
+                      _o("presente", "Comprar algo especial", "Gasta uma parte, mas traz alegria.", _oc(1.0, "Você se presenteou: valeu a pena!", {"oneoff": [_in(1200, "Bônus recebido"), _out(700, "Presente para você")], "life": {"wellbeing": 4, "satisfaction": 3}})))),
+    EventDef("d_aumento", "Pedir um aumento?", "Você sente que está na hora de conversar com o chefe sobre o salário.", "FINANCIAL", "USER", True, 1, (1, 1), 0.8,
+             lambda m, c: _has_salary(m, c) * (1.0 if c["months"] >= 6 else 0.0),
+             options=(_o("pedir", "Pedir o aumento", "Pode dar certo... ou não.", _oc(0.4, "Seu chefe aprovou: salário maior por um ano!", {"income_pct": 8, "life": {"satisfaction": 3}}, 12),
+                         _oc(0.6, "Dessa vez não deu, mas você mostrou iniciativa.", {"life": {"wellbeing": -2}})),
+                      _o("esperar", "Esperar mais um pouco", "Sem risco.", _oc(1.0, "Você decidiu esperar.", {}), default=True))),
+    EventDef("d_bico", "Bico de fim de semana", "Um conhecido ofereceu um trabalho extra por R$ 900.", "FINANCIAL", "USER", True, 1, (1, 1), 1.0, _always,
+             options=(_o("aceitar", "Aceitar o bico", "Dinheiro a mais, mas cansa.", _oc(0.8, "Deu tudo certo e o dinheiro entrou.", {"oneoff": [_in(900, "Bico de fim de semana")], "life": {"wellbeing": -2}}),
+                         _oc(0.2, "O cliente atrasou o pagamento e deu dor de cabeça.", {"oneoff": [_in(450, "Bico (pago pela metade)")], "life": {"wellbeing": -4}})),
+                      _o("recusar", "Recusar", "Descanso garantido.", _oc(1.0, "Você descansou no fim de semana.", {"life": {"wellbeing": 2}}), default=True))),
+    EventDef("d_eletro", "A geladeira quebrou", "Os alimentos estragaram. Consertar ou trocar?", "FINANCIAL", "USER", False, 1, (1, 1), 0.8, _always,
+             options=(_o("consertar", "Consertar", "Mais barato agora, pode quebrar de novo.", _oc(0.7, "O conserto resolveu.", {"oneoff": [_out(450, "Conserto da geladeira", "moradia")]}),
+                         _oc(0.3, "Quebrou de novo depois de um tempo.", {"oneoff": [_out(450, "Conserto da geladeira", "moradia"), _out(450, "Novo conserto", "moradia")]})),
+                      _o("trocar", "Comprar uma nova", "Mais caro, mas é para durar.", _oc(1.0, "Geladeira nova funcionando.", {"oneoff": [_out(2300, "Geladeira nova", "moradia")], "life": {"satisfaction": 2}}), default=False),
+                      _o("reaproveitar", "Esperar e ver", "Pode piorar.", _oc(1.0, "Você ficou sem geladeira por uns dias.", {"oneoff": [_out(900, "Comida perdida e delivery", "alimentacao")], "life": {"wellbeing": -3}}), default=True))),
+    EventDef("d_restituicao", "Restituição do imposto de renda", "Chegou uma restituição de R$ 800.", "FINANCIAL", "USER", True, 1, (1, 1), 0.6, _always,
+             options=(_o("reserva", "Colocar na reserva", "Boa decisão de longo prazo.", _oc(1.0, "Você reforçou a reserva de emergência.", {"oneoff": [_in(800, "Restituição do IR")], "life": {"satisfaction": 2}}), default=True),
+                      _o("passeio", "Fazer um passeio", "Dinheiro curtido hoje.", _oc(1.0, "Passeio ótimo!", {"oneoff": [_in(800, "Restituição do IR"), _out(650, "Passeio")], "life": {"wellbeing": 4}})))),
+    EventDef("d_curso_fin", "Curso de finanças pessoais", "Um curso online promete ensinar a controlar melhor o dinheiro (R$ 300).", "FINANCIAL", "USER", True, 1, (1, 1), 0.8, _has_salary,
+             options=(_o("fazer", "Fazer o curso", "Investir em conhecimento.", _oc(0.65, "Você aprendeu a negociar e o salário subiu um pouco.", {"income_pct": 3, "life": {"quality": 2}}, 12),
+                         _oc(0.35, "O curso foi fraco, mas ensinou algumas coisas.", {"life": {"quality": 1}}), cost=300),
+                      _o("pular", "Pular", "Sem custo.", _oc(1.0, "Você deixou o curso passar.", {}), default=True))),
+    EventDef("d_amigo_emprestimo", "Amigo pede dinheiro emprestado", "Um amigo pede R$ 500 emprestados para uma emergência.", "FINANCIAL", "USER", False, 1, (1, 1), 0.7, _always,
+             options=(_o("emprestar", "Emprestar", "Pode voltar, pode não voltar.", _oc(0.55, "Ele devolveu direitinho!", {"life": {"satisfaction": 2}}),
+                         _oc(0.45, "Ele não devolveu o dinheiro.", {"oneoff": [_out(500, "Empréstimo não devolvido")], "life": {"satisfaction": -2}})),
+                      _o("negar", "Dizer que não pode", "Preserva o caixa.", _oc(1.0, "O amigo entendeu, mas ficou chateado.", {"life": {"satisfaction": -1}}), default=True))),
+    EventDef("d_promocao_mercado", "Liquidação de tecnologia", "Um notebook novo está com 30% de desconto (R$ 3.200).", "FINANCIAL", "USER", True, 1, (1, 1), 0.7, _always,
+             options=(_o("comprar", "Comprar", "Ferramenta de trabalho e diversão.", _oc(0.7, "O notebook ajudou muito nos estudos e no trabalho.", {"oneoff": [_out(3200, "Notebook novo")], "life": {"quality": 3, "satisfaction": 2}}),
+                         _oc(0.3, "Você mal usou o notebook novo.", {"oneoff": [_out(3200, "Notebook novo")], "life": {"satisfaction": 1}})),
+                      _o("passar", "Deixar passar", "Sem gasto.", _oc(1.0, "Você resistiu à promoção.", {}), default=True))),
+    EventDef("d_plano_saude", "Plano de saúde mais barato", "Há uma oferta de plano de saúde mais barato, mas com menos cobertura.", "FINANCIAL", "USER", True, 1, (1, 1), 0.6, _always,
+             options=(_o("trocar", "Trocar de plano", "Economiza, mas é mais arriscado.", _oc(0.6, "Economia boa e nenhum problema.", {"oneoff": [_in(250, "Economia no plano de saúde", "saude")]}),
+                         _oc(0.4, "Precisou de um atendimento fora da cobertura.", {"oneoff": [_out(700, "Atendimento fora da cobertura", "saude")]})),
+                      _o("manter", "Manter o plano", "Segurança.", _oc(1.0, "Você manteve o plano.", {}), default=True))),
+    EventDef("d_investir_dica", "Dica quente de investimento", "Um colega jura que uma aplicação vai dobrar o dinheiro (R$ 1.000).", "FINANCIAL", "USER", False, 1, (1, 1), 0.7, _always,
+             options=(_o("entrar", "Entrar com R$ 1.000", "Alto risco: pode perder tudo.", _oc(0.2, "Deu certo! O dinheiro dobrou.", {"oneoff": [_in(1000, "Lucro da aplicação")]}),
+                         _oc(0.8, "A promessa era exagerada e você perdeu o dinheiro.", {"oneoff": [_out(1000, "Prejuízo na aplicação")], "life": {"wellbeing": -3}})),
+                      _o("ignorar", "Ignorar a dica", "Promessa fácil costuma ser perigosa.", _oc(1.0, "Você ignorou e dormiu tranquilo.", {"life": {"quality": 1}}), default=True))),
+    # ------------------------------------------------------------ pessoais
+    EventDef("d_checkup", "Hora do check-up", "Já faz tempo que você não vai ao médico (R$ 250).", "PERSONAL", "USER", True, 1, (1, 1), 1.0, _always,
+             options=(_o("fazer", "Fazer os exames", "Cuidar da saúde.", _oc(1.0, "Está tudo bem e você descobriu pontos para melhorar.", {"life": {"health": 4}}), cost=250),
+                      _o("adiar", "Adiar", "Sem custo, mas arriscado.", _oc(1.0, "Você adiou o check-up.", {"life": {"health": -1}}), default=True))),
+    EventDef("d_viagem", "Convite para uma viagem", "Amigos convidam você para um fim de semana na praia (R$ 900).", "PERSONAL", "USER", True, 1, (1, 1), 0.9, _always,
+             options=(_o("ir", "Viajar", "Diversão e novas amizades.", _oc(0.8, "Foi incrível!", {"life": {"wellbeing": 5, "satisfaction": 3, "social": 4}}), _oc(0.2, "Choveu o tempo todo, mas foi divertido mesmo assim.", {"life": {"wellbeing": 2, "social": 3}}), cost=900),
+                      _o("ficar", "Ficar em casa", "Economiza.", _oc(1.0, "Você ficou em casa.", {"life": {"social": -1}}), default=True))),
+    EventDef("d_pet", "Adotar um pet?", "Um cachorrinho precisa de um lar (R$ 600 para começar).", "PERSONAL", "USER", True, 1, (1, 1), 0.6, _always,
+             options=(_o("adotar", "Adotar", "Companhia e responsabilidade.", _oc(1.0, "O pet trouxe alegria para a casa!", {"life": {"wellbeing": 5, "health": 1}}, 1), cost=600),
+                      _o("nao", "Agora não", "Talvez mais tarde.", _oc(1.0, "Você decidiu esperar.", {}), default=True))),
+    EventDef("d_academia", "Matrícula na academia", "Uma academia perto de casa está com matrícula grátis (R$ 120/mês no começo).", "PERSONAL", "USER", True, 1, (1, 1), 0.8, _always,
+             options=(_o("matricular", "Matricular-se", "Mais saúde, se você for mesmo.", _oc(0.6, "Você foi com frequência e se sente ótimo.", {"life": {"health": 4, "wellbeing": 2}}), _oc(0.4, "Foi só nas primeiras semanas.", {"life": {"health": 1}}), cost=120),
+                      _o("nao", "Deixar para lá", "Sem custo.", _oc(1.0, "Você ficou sem academia.", {}), default=True))),
+    EventDef("d_turma", "Reunir a turma", "Que tal chamar as pessoas que você conhece para um encontro (R$ 150)?", "PERSONAL", "USER", True, 1, (1, 1), 1.0, _has_rel,
+             options=(_o("chamar", "Organizar o encontro", "Fortalece os laços.", _oc(0.85, "Todos vieram e foi ótimo!", {"relationship_affinity": 4, "life": {"social": 4, "wellbeing": 2}}), _oc(0.15, "Poucos puderam ir.", {"relationship_affinity": 1, "life": {"social": 1}}), cost=150),
+                      _o("nao", "Deixar quieto", "As relações esfriam sem contato.", _oc(1.0, "Passou o mês sem encontro.", {"relationship_affinity": -1}), default=True))),
+    EventDef("d_casamento_amigo", "Casamento de um amigo", "Você foi convidado para o casamento de um amigo querido (R$ 400 entre roupa e presente).", "PERSONAL", "USER", True, 1, (1, 1), 0.7, _always,
+             options=(_o("ir", "Ir à festa", "Um dia especial.", _oc(1.0, "Festa linda, você reviu muita gente.", {"life": {"social": 4, "wellbeing": 3}}), cost=400),
+                      _o("nao", "Mandar um abraço", "Economiza.", _oc(1.0, "Seu amigo entendeu.", {"life": {"social": -1}}), default=True))),
+    EventDef("d_descanso", "Um mês puxado", "O trabalho tem estado pesado. Tirar uns dias de descanso?", "PERSONAL", "USER", True, 1, (1, 1), 0.8,
+             lambda m, c: 1.0 if c.get("work_level") != "REDUCED" else 0.2,
+             options=(_o("descansar", "Descansar", "Recarregar as energias.", _oc(1.0, "Você voltou renovado.", {"life": {"wellbeing": 5, "health": 2}}), cost=200),
+                      _o("seguir", "Seguir trabalhando", "Mais produtivo hoje, mais cansado depois.", _oc(0.5, "Aguentou firme.", {}), _oc(0.5, "O cansaço pesou.", {"life": {"wellbeing": -4, "health": -2}}), default=True))),
+    EventDef("d_festa_surpresa", "Festa surpresa", "Amigos querem fazer uma festa de aniversário para você. Aceitar a ajuda ou preferir algo simples?", "PERSONAL", "USER", True, 1, (1, 1), 0.7, _always,
+             options=(_o("festa", "Fazer a festa", "Mais alegria e mais gasto.", _oc(1.0, "A festa foi inesquecível!", {"life": {"social": 5, "wellbeing": 4, "satisfaction": 3}}), cost=350),
+                      _o("simples", "Algo simples em casa", "Barato e acolhedor.", _oc(1.0, "Um jantar tranquilo foi suficiente.", {"life": {"wellbeing": 2}}), default=True))),
+    EventDef("d_voluntariado", "Convite para ser voluntário", "Uma ONG da sua cidade precisa de ajuda no próximo mês.", "PERSONAL", "USER", True, 1, (1, 1), 0.7, _always,
+             options=(_o("aceitar", "Ajudar", "Faz bem para você e para os outros.", _oc(1.0, "Você se sentiu muito realizado e conheceu gente nova.", {"life": {"satisfaction": 4, "social": 3, "wellbeing": 3}})),
+                      _o("recusar", "Dessa vez não", "Falta de tempo.", _oc(1.0, "Você não pôde ajudar agora.", {}), default=True))),
+)
+MONTHLY_BY_KEY = {e.key: e for e in MONTHLY}
+CATALOG_BY_KEY.update(MONTHLY_BY_KEY)

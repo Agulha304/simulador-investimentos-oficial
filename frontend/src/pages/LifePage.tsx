@@ -2,10 +2,10 @@ import { useCallback, useEffect, useState } from "react";
 import { Meter } from "../components/Meter";
 import { StatCard } from "../components/StatCard";
 import { fmtBRL, fmtMonth } from "../lib/format";
-import { sim, type Kid, type Life, type Rel } from "../services/sim";
+import { sim, type Career, type Kid, type Life, type Rel } from "../services/sim";
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : "Erro inesperado");
-type Tab = "status" | "people" | "family" | "decisions";
+type Tab = "status" | "people" | "family" | "career";
 const STAGE: Record<string, string> = { ACQUAINTANCE: "Conhecido(a)", FRIEND: "Amigo(a)", DATING: "Namoro", COHABITING: "União estável", MARRIED: "Casamento", ENDED: "Encerrado" };
 const CHOICE_LABEL: Record<string, [string, Record<string, string>]> = {
   work_level: ["Jornada de trabalho", { REDUCED: "Reduzida (menos renda, mais tempo)", NORMAL: "Normal", INTENSE: "Intensa (mais renda, menos tempo)" }],
@@ -43,7 +43,7 @@ export function LifePage() {
         <button className={tab === "status" ? "on" : ""} onClick={() => setTab("status")}>Situação</button>
         <button className={tab === "people" ? "on" : ""} onClick={() => setTab("people")}>Relacionamentos ({life.relationships.filter((r) => r.stage !== "ENDED").length})</button>
         <button className={tab === "family" ? "on" : ""} onClick={() => setTab("family")}>Família e filhos</button>
-        <button className={tab === "decisions" ? "on" : ""} onClick={() => setTab("decisions")}>Decisões ({life.pending_decisions.length})</button>
+        <button className={tab === "career" ? "on" : ""} onClick={() => setTab("career")}>Carreira e estudos</button>
       </div>
 
       {tab === "status" && (
@@ -116,14 +116,7 @@ export function LifePage() {
         </>
       )}
 
-      {tab === "decisions" && (
-        <section className="card stack">
-          <h2>Decisões e oportunidades</h2>
-          {life.pending_decisions.length === 0 ? <p className="muted">Nada pendente agora.</p> :
-            <ul className="list-plain">{life.pending_decisions.map((d) => <li key={d.key}><span>{d.text}</span></li>)}</ul>}
-          <p className="muted small">Acontecimentos econômicos e profissionais que pedem escolha aparecem em “Economia”.</p>
-        </section>
-      )}
+      {tab === "career" && <CareerTab life={life} busy={busy} act={act} />}
     </div>
   );
 }
@@ -136,9 +129,9 @@ function PersonCard({ r, life, busy, act }: { r: Rel; life: Life; busy: boolean;
   const nx = next[r.stage];
   return (
     <div className="card stack" style={ended ? { opacity: 0.6 } : undefined}>
-      <div className="row between"><h3 style={{ margin: 0 }}>{r.name}, {r.age}</h3><span className="chip">{STAGE[r.stage]}</span></div>
+      <div className="row between"><h3 style={{ margin: 0 }}>{r.gender === "F" ? "👩" : "👨"} {r.name}, {r.age}</h3><span className="chip">{STAGE[r.stage]}</span></div>
       <p className="muted small">{r.personality} · {r.occupation} · interesses: {r.interests.join(", ")}</p>
-      <div className="cols-2"><Meter label="Afinidade" value={r.affinity} /><Meter label="Confiança" value={r.trust} /><Meter label="Compatibilidade" value={r.compatibility} /></div>
+      <div className="cols-2"><Meter label="Afinidade" value={r.affinity} /><Meter label="Confiança" value={r.trust} /><Meter label={`Compatibilidade${r.compat_bonus ? ` (+${r.compat_bonus} por convivência)` : ""}`} value={r.compatibility} /></div>
       {!ended && (
         <div className="row">
           {life.interactions.map((i) => <button key={i.key} className="btn ghost small" disabled={busy} onClick={() => void act(() => sim.lifeInteract(r.person_id, i.key))}>{i.label} · {i.cost ? fmtBRL(String(i.cost)) : "grátis"} · {i.hours}h</button>)}
@@ -181,5 +174,46 @@ function MoveForm({ busy, act }: { busy: boolean; act: Act }) {
       <input type="number" min={0} value={cost} onChange={(e) => setCost(e.target.value)} aria-label="Custo mensal" />
       <button className="btn primary small" disabled={busy} onClick={() => void act(() => sim.lifeMove(kind, cost), () => "Mudança agendada para o próximo mês: os custos antigos terminam e os novos começam lá.")}>Agendar mudança</button>
     </div>
+  );
+}
+
+
+function CareerTab({ life, busy, act }: { life: Life; busy: boolean; act: Act }) {
+  const c: Career = life.career;
+  const cur = c.fields.find((f) => f.key === c.field);
+  return (
+    <>
+      <section className="card stack">
+        <h2>💼 Sua área</h2>
+        {cur ? (<>
+          <p><b>{cur.emoji} {cur.label}</b> — {cur.outlook}. Reajuste anual de cerca de <b>{cur.growth_pct}%</b>{c.next_raise && <> (próximo em {fmtMonth(c.next_raise)})</>}.</p>
+          <p className="muted small">Salário atual no orçamento: <b>{fmtBRL(c.salary)}</b>. Todas as áreas começam parecidas; o que muda é a perspectiva de crescimento.</p>
+          {c.pending && <div className="notice">Mudança agendada para o mês que vem: <b>{c.fields.find((f) => f.key === c.pending!.field)?.label}</b> ({c.pending.degree ? "com diploma" : "sem diploma: recomeço por baixo"}, salário {c.pending.factor >= 1 ? "+" : ""}{Math.round((c.pending.factor - 1) * 100)}%).</div>}
+        </>) : <p className="muted">Você ainda não escolheu uma área.</p>}
+        {c.degrees.length > 0 && <p className="small">🎓 Formações: {c.degrees.map((d) => c.fields.find((f) => f.key === d)?.degree).join(", ")}</p>}
+      </section>
+      {c.studying && (
+        <section className="card stack"><h2>🎓 Cursando {c.studying.name}</h2>
+          <Meter label={`${c.studying.progress} de ${c.studying.total} meses`} value={(c.studying.progress / c.studying.total) * 100} />
+          <p className="muted small">Custa mensalidade (~{fmtBRL(String(c.studying.cost))}/mês corrigida pela inflação da educação) e toma horas livres do seu mês.</p>
+          <div><button className="btn danger small" disabled={busy} onClick={() => window.confirm("Trancar a faculdade? O que já estudou fica perdido.") && void act(sim.lifeDegreeDrop)}>Trancar a faculdade</button></div></section>)}
+      <section className="card stack">
+        <h2>🔀 Escolher outra área ou estudar</h2>
+        <p className="muted small">Quem se forma em uma área ganha um bônus no salário ao mudar para ela. Mudar sem diploma é recomeçar por baixo (−15%).</p>
+        <div className="cols-2">{c.fields.map((f) => {
+          const has = c.degrees.includes(f.key);
+          return (
+            <div key={f.key} className="card stack" style={f.key === c.field ? { borderColor: "var(--accent)" } : undefined}>
+              <b>{f.emoji} {f.label} {f.key === c.field && <span className="chip up">sua área</span>}</b>
+              <span className="muted small">{f.outlook} · reajuste {f.growth_pct}%/ano</span>
+              <span className="small">Faculdade de {f.degree}: {f.months} meses · ~{fmtBRL(String(f.cost))}/mês · {f.hours}h/mês · salário +{f.premium_pct}% ao se formar</span>
+              <div className="row">
+                {f.key !== c.field && <button className="btn primary small" disabled={busy || !!c.pending} onClick={() => void act(() => sim.lifeCareerChange(f.key))}>{has ? "Mudar (tenho diploma)" : "Mudar sem diploma"}</button>}
+                {!has && !c.studying && <button className="btn ghost small" disabled={busy} onClick={() => void act(() => sim.lifeDegree(f.key), () => "Você começou a faculdade!")}>🎓 Fazer faculdade</button>}
+                {has && <span className="chip up">🎓 formado</span>}
+              </div></div>);
+        })}</div>
+      </section>
+    </>
   );
 }

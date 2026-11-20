@@ -10,6 +10,7 @@ from backend.core.dates import today_br
 from backend.dependencies import AccountUser, DbSession
 from backend.models import Achievement, Game, GameProfile, LessonProgress, PortfolioSnapshot, Portfolio, SimMonth
 from backend.routers.budget import _run
+from backend.services.finance_ledger import ConflictError, FinanceError
 from backend.services import game_service as gs
 from backend.services import progression_rules as P
 from backend.content.course import TOTAL_LESSONS
@@ -114,4 +115,42 @@ def add_money(game_id: int, body: MoneyIn, user: AccountUser, db: DbSession):
         g = gs.get_game(db, user.id, game_id)
         gs.add_fake_money(db, g, body.amount)
         return _out(db, g)
+    return _run(db, go)
+
+
+class SimParamsIn(BaseModel):
+    volatility: float | None = None
+    event_frequency: float | None = None
+    crisis_frequency: float | None = None
+    crisis_severity: float | None = None
+    shock_scale: float | None = None
+
+
+@router.get("/{game_id}/sim-params")
+def get_sim_params(game_id: int, user: AccountUser, db: DbSession):
+    """Ajustes da simulação de uma partida (Configurações da conta)."""
+    def go():
+        from backend.services import economy_service
+        g = gs.get_game(db, user.id, game_id)
+        if g.kind != "LIFE":
+            raise ConflictError("só partidas de vida completa têm economia simulada")
+        return {"game": g.name, "params": economy_service.sim_params(db, g.world_user_id).__dict__}
+    return _run(db, go)
+
+
+@router.put("/{game_id}/sim-params")
+def put_sim_params(game_id: int, body: SimParamsIn, user: AccountUser, db: DbSession):
+    def go():
+        from backend.services import economy_service
+        from backend.services.engine.params import SimParams
+        g = gs.get_game(db, user.id, game_id)
+        if g.kind != "LIFE":
+            raise ConflictError("só partidas de vida completa têm economia simulada")
+        prof = economy_service.get_game(db, g.world_user_id)
+        cur = {**economy_service.sim_params(db, g.world_user_id).__dict__, **{k: v for k, v in body.model_dump().items() if v is not None}}
+        try:
+            prof.config = {**(prof.config or {}), "sim": SimParams.from_dict(cur).__dict__}
+        except ValueError as e:
+            raise FinanceError(str(e))
+        return {"game": g.name, "params": prof.config["sim"]}
     return _run(db, go)

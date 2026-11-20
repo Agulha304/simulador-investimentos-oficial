@@ -297,7 +297,7 @@ def test_events_have_full_definition_and_expire(client, auth_headers):
         keys = {(e.key, e.start_month) for e in evs}
         assert len(keys) == len(evs)                                       # nunca o mesmo evento duas vezes no mês
         for e in evs:
-            assert e.name and e.description and e.category in ("ECONOMIC", "PERSONAL", "BUSINESS")
+            assert e.name and e.description and e.category in ("ECONOMIC", "PERSONAL", "BUSINESS", "FINANCIAL")
             assert e.scope in ("WORLD", "SECTOR", "USER", "COMPANY") and e.start_month <= e.end_month and e.intensity in (1, 2, 3)
         ref = s.scalar(select(SimMonth.ref_month).where(SimMonth.user_id == u, SimMonth.status == "OPEN"))
         assert all(e.status == "ENDED" for e in evs if e.end_month < ref and e.status != "PENDING")

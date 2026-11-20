@@ -5,6 +5,16 @@ import { gameStore } from "../services/gameStore";
 import { sim, type GameInfo, type Scenario } from "../services/sim";
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : "Erro inesperado");
+const FIELDS = [
+  { key: "tecnologia", label: "Tecnologia", emoji: "💻", text: "Reajustes altos e muita procura." },
+  { key: "saude", label: "Saúde", emoji: "🩺", text: "Estável; paga muito bem a quem se forma." },
+  { key: "engenharia", label: "Engenharia", emoji: "🏗️", text: "Bons reajustes e grandes projetos." },
+  { key: "financas", label: "Finanças e negócios", emoji: "📊", text: "Cresce com promoções e gestão." },
+  { key: "direito", label: "Direito", emoji: "⚖️", text: "Começo igual, ótimo depois de formado." },
+  { key: "educacao", label: "Educação", emoji: "📚", text: "Reajustes menores, muito significado." },
+  { key: "comercio", label: "Comércio e vendas", emoji: "🛍️", text: "Comissões e crescimento moderado." },
+  { key: "artes", label: "Artes e comunicação", emoji: "🎨", text: "Criativo, com ganho irregular." },
+];
 const EMOJI: Record<string, string> = { independent: "🌱", young_pro: "💼", entrepreneur: "🚀", investor: "💎", family: "👨‍👩‍👧" };
 
 /** Assistente em passos: nome → modo → cenário/valores → começar. Cria a partida e já a configura. */
@@ -13,6 +23,10 @@ export function NewGamePage() {
   const [info, setInfo] = useState<GameInfo | null>(null);
   const [step, setStep] = useState(1);
   const [name, setName] = useState("Minha vida financeira");
+  const [charName, setCharName] = useState("");
+  const [gender, setGender] = useState<"M" | "F" | "N">("N");
+  const [interestedIn, setInterestedIn] = useState<"ANY" | "M" | "F">("ANY");
+  const [field, setField] = useState("comercio");
   const [mode, setMode] = useState<"CAREER" | "FREE">("CAREER");
   const [scenario, setScenario] = useState("young_pro");
   const [cfg, setCfg] = useState({ cash: "20000", monthly_income: "4000", monthly_expenses: "2000", rent: "1000", age: "28" });
@@ -28,7 +42,7 @@ export function NewGamePage() {
       const g = await sim.createGame("LIFE", name.trim() || "Minha partida");
       created = g;
       gameStore.set({ id: g.id, kind: "LIFE", name: g.name });
-      const body: Record<string, unknown> = { mode, name: "Você", seed: seed ? Number(seed) : undefined };
+      const body: Record<string, unknown> = { mode, name: charName.trim() || "Você", seed: seed ? Number(seed) : undefined, gender, interested_in: interestedIn, career_field: field };
       if (mode === "CAREER") body.scenario = scenario;
       else body.free = { cash: cfg.cash, monthly_income: cfg.monthly_income, monthly_expenses: cfg.monthly_expenses, rent: cfg.rent, age: Number(cfg.age) };
       await sim.gameStart(body);
@@ -44,8 +58,8 @@ export function NewGamePage() {
   return (
     <div className="hub">
       <Link to="/" className="back">⬅ Voltar</Link>
-      <section className="hero"><div><h1>🎮 Nova partida</h1><p>Passo {step} de 3</p></div></section>
-      <div className="steps"><i className={step >= 1 ? "on" : ""} /><i className={step >= 2 ? "on" : ""} /><i className={step >= 3 ? "on" : ""} /></div>
+      <section className="hero"><div><h1>🎮 Nova partida</h1><p>Passo {step} de 4</p></div></section>
+      <div className="steps"><i className={step >= 1 ? "on" : ""} /><i className={step >= 2 ? "on" : ""} /><i className={step >= 3 ? "on" : ""} /><i className={step >= 4 ? "on" : ""} /></div>
       {err && <div className="alert">{err}</div>}
 
       {step === 1 && (
@@ -53,6 +67,14 @@ export function NewGamePage() {
           <h2>Como vai se chamar a sua partida?</h2>
           <input className="xl" value={name} onChange={(e) => setName(e.target.value)} maxLength={60} />
           <p className="muted">Você pode ter várias partidas salvas e voltar nelas quando quiser.</p>
+          <h2>Quem é o seu personagem?</h2>
+          <label className="stack"><span>Nome do personagem</span><input className="xl" value={charName} onChange={(e) => setCharName(e.target.value)} maxLength={60} placeholder="Como você quer ser chamado" /></label>
+          <div><span className="muted small">Sexo</span>
+            <div className="seg compact" style={{ marginTop: 6 }}>
+              {([["M", "👨 Masculino"], ["F", "👩 Feminino"], ["N", "🙂 Prefiro não dizer"]] as const).map(([k, l]) => <button key={k} className={gender === k ? "on" : ""} onClick={() => setGender(k)}>{l}</button>)}</div></div>
+          <div><span className="muted small">Quem você quer conhecer?</span>
+            <div className="seg compact" style={{ marginTop: 6 }}>
+              {([["ANY", "👥 Todos"], ["M", "👨 Homens"], ["F", "👩 Mulheres"]] as const).map(([k, l]) => <button key={k} className={interestedIn === k ? "on" : ""} onClick={() => setInterestedIn(k)}>{l}</button>)}</div></div>
           <div><button className="btn primary big" onClick={() => setStep(2)}>Próximo →</button></div>
         </section>)}
 
@@ -92,7 +114,17 @@ export function NewGamePage() {
               <p className="muted small">Se os números não fecharem (gastos que o dinheiro não aguenta), o jogo avisa para você ajustar.</p></div>)}
           <details className="panel"><summary>Opções avançadas</summary>
             <label className="stack" style={{ marginTop: 10 }}><span className="muted small">Semente do mundo (repete o mesmo cenário econômico)</span><input value={seed} onChange={(e) => setSeed(e.target.value)} inputMode="numeric" style={{ maxWidth: 200 }} /></label></details>
-          <div className="row"><button className="btn ghost" onClick={() => setStep(2)}>← Voltar</button><button className="btn primary big" disabled={busy} onClick={() => void start()}>{busy ? "Criando…" : "🚀 Começar a partida!"}</button></div>
+          <div className="row"><button className="btn ghost" onClick={() => setStep(2)}>← Voltar</button><button className="btn primary big" onClick={() => setStep(4)}>Próximo →</button></div>
+        </section>)}
+
+      {step === 4 && (
+        <section className="stack">
+          <h2>Em que área você quer atuar?</h2>
+          <p className="muted">Todas começam pagando mais ou menos o mesmo. O que muda é a <b>perspectiva de crescimento</b>. Mais tarde você pode fazer faculdade e mudar para uma área que paga mais.</p>
+          <div className="big-cards five">{FIELDS.map((f) => (
+            <button key={f.key} className={`big-card pick small${field === f.key ? " on" : ""}`} onClick={() => setField(f.key)}>
+              <span className="big-emoji">{f.emoji}</span><h3>{f.label}</h3><p>{f.text}</p></button>))}</div>
+          <div className="row"><button className="btn ghost" onClick={() => setStep(3)}>← Voltar</button><button className="btn primary big" disabled={busy} onClick={() => void start()}>{busy ? "Criando…" : "🚀 Começar a partida!"}</button></div>
         </section>)}
     </div>
   );

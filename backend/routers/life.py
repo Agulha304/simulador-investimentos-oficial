@@ -11,6 +11,7 @@ from backend.models import BudgetCategory, BudgetItem, Child, LifeLog, Person, R
 from backend.routers.budget import _run
 from backend.services import budget_service as bs
 from backend.services import life_rules as R
+from backend.services import career_rules, item_sync
 from backend.services import life_service as ls
 
 router = APIRouter(prefix="/life", tags=["life"])
@@ -19,6 +20,12 @@ router = APIRouter(prefix="/life", tags=["life"])
 class CharacterIn(BaseModel):
     name: str = Field(min_length=1, max_length=60)
     age_years: int = Field(default=28, ge=18, le=80)
+    gender: str | None = None
+    interested_in: str | None = None
+
+
+class FieldIn(BaseModel):
+    field: str
 
 
 class ChoicesIn(BaseModel):
@@ -57,7 +64,7 @@ def _person_out(db: Session, p, r: Relationship, person: Person) -> dict:
     return {"person_id": person.id, "name": person.name, "age": person.age, "personality": person.personality,
             "interests": person.interests, "occupation": person.occupation, "income": str(person.income),
             "assets": str(person.assets), "debts": str(person.debts), "wants_children": person.wants_children,
-            "stage": r.stage, "affinity": r.affinity, "trust": r.trust, "compatibility": ls.compatibility(p, person),
+            "stage": r.stage, "affinity": r.affinity, "trust": r.trust, "compatibility": ls.compatibility(p, person, r.compat_bonus), "compat_bonus": r.compat_bonus, "gender": person.gender,
             "since_month": r.since_month.isoformat(), "stage_since": r.stage_since.isoformat(),
             "finance_mode": r.finance_mode, "contribution_pct": str(r.contribution_pct)}
 
@@ -79,6 +86,25 @@ def _expenses(db: Session, user_id: int, month) -> list[dict]:
     return out
 
 
+def _career_out(db: Session, user_id: int, p, month) -> dict:
+    cur = career_rules.FIELDS.get(p.career_field or "")
+    next_raise = None
+    if p.career_field and p.career_since:
+        k = bs.months_between(p.career_since, month.ref_month) // 12 + 1
+        next_raise = bs.shift_month(p.career_since, 12 * k).isoformat()
+    return {
+        "field": p.career_field, "label": cur["label"] if cur else None, "outlook": cur["outlook"] if cur else None,
+        "growth_pct": cur["growth"] if cur else None, "since": p.career_since.isoformat() if p.career_since else None,
+        "next_raise": next_raise, "salary": str(item_sync.salary_total(db, user_id, month.ref_month)),
+        "degrees": list(p.degrees or []), "pending": p.pending_career,
+        "studying": ({"field": p.degree_field, "name": career_rules.FIELDS[p.degree_field]["degree"], "progress": p.degree_progress,
+                      "total": p.degree_total, "cost": career_rules.FIELDS[p.degree_field]["cost"]} if p.degree_field else None),
+        "fields": [{"key": k, "label": f["label"], "emoji": f["emoji"], "outlook": f["outlook"], "growth_pct": f["growth"], "start": f["start"],
+                    "degree": f["degree"], "months": f["months"], "cost": f["cost"], "premium_pct": f["premium"], "hours": f["hours"]}
+                   for k, f in career_rules.FIELDS.items()],
+    }
+
+
 def _overview(db: Session, user_id: int) -> dict:
     month = bs.ensure_setup(db, user_id)
     p = ls.get_profile(db, user_id)
@@ -96,7 +122,8 @@ def _overview(db: Session, user_id: int) -> dict:
     stability = ls.financial_stability(db, user_id, month)
     return {
         "month": month.ref_month.isoformat(),
-        "character": {"name": p.name, "age_years": p.age_years},
+        "character": {"name": p.name, "age_years": p.age_years, "gender": p.gender, "interested_in": p.interested_in},
+        "career": _career_out(db, user_id, p, month),
         "attributes": {"health": p.health, "wellbeing": p.wellbeing, "quality": p.quality, "satisfaction": p.satisfaction,
                        "social": p.social, "financial_stability": stability, "free_hours_left": ls.free_hours(p) - p.hours_used,
                        "free_hours_total": ls.free_hours(p)},
@@ -110,7 +137,6 @@ def _overview(db: Session, user_id: int) -> dict:
         "family_expense_total": str(sum((Decimal(e["amount"]) for e in expenses if e["kind"] == "EXPENSE"), Decimal("0.00"))),
         "activities": [{"key": k, "label": a["label"], "cost": a["cost"], "hours": a["hours"]} for k, a in R.ACTIVITIES.items()],
         "interactions": [{"key": k, "label": a["label"], "cost": a["cost"], "hours": a["hours"]} for k, a in R.INTERACTIONS.items()],
-        "pending_decisions": ls.pending_decisions(db, user_id, month),
         "history": [{"month": l.ref_month.isoformat(), "kind": l.kind, "text": l.text} for l in db.scalars(
             select(LifeLog).where(LifeLog.user_id == user_id).order_by(LifeLog.id.desc()).limit(30))],
     }
@@ -125,7 +151,7 @@ def overview(user: CurrentUser, db: DbSession):
 def character(body: CharacterIn, user: CurrentUser, db: DbSession):
     def go():
         bs.ensure_setup(db, user.id)
-        ls.create_character(db, user.id, name=body.name, age_years=body.age_years)
+        ls.create_character(db, user.id, name=body.name, age_years=body.age_years, gender=body.gender, interested_in=body.interested_in)
         return _overview(db, user.id)
     return _run(db, go)
 
@@ -197,5 +223,29 @@ def patch_child(child_id: int, body: ChildIn, user: CurrentUser, db: DbSession):
 def move(body: MoveIn, user: CurrentUser, db: DbSession):
     def go():
         ls.move(db, user.id, bs.ensure_setup(db, user.id), kind=body.kind, monthly_cost=body.monthly_cost)
+        return _overview(db, user.id)
+    return _run(db, go)
+
+
+@router.post("/career/change")
+def career_change(body: FieldIn, user: CurrentUser, db: DbSession):
+    def go():
+        ls.change_career(db, user.id, bs.ensure_setup(db, user.id), body.field)
+        return _overview(db, user.id)
+    return _run(db, go)
+
+
+@router.post("/degree")
+def degree_enroll(body: FieldIn, user: CurrentUser, db: DbSession):
+    def go():
+        ls.enroll_degree(db, user.id, bs.ensure_setup(db, user.id), body.field)
+        return _overview(db, user.id)
+    return _run(db, go)
+
+
+@router.delete("/degree")
+def degree_drop(user: CurrentUser, db: DbSession):
+    def go():
+        ls.drop_degree(db, user.id, bs.ensure_setup(db, user.id))
         return _overview(db, user.id)
     return _run(db, go)

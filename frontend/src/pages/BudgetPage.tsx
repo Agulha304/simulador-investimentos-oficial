@@ -1,6 +1,8 @@
 import { Link } from "react-router-dom";
 import { Suspense, lazy, useCallback, useEffect, useState } from "react";
 import { CloseModal, EntryModal, ItemModal } from "../components/BudgetModals";
+import { DecisionModal } from "../components/DecisionModal";
+import { sim, type EcoEvent } from "../services/sim";
 import { StatCard } from "../components/StatCard";
 import {
   api, type BudgetCategory, type BudgetItem, type BudgetOverview, type FlowKind, type LedgerEntryOut, type MonthRow, type MonthSummary,
@@ -25,6 +27,7 @@ export function BudgetPage() {
   const [itemModal, setItemModal] = useState<{ item: BudgetItem | null } | null>(null);
   const [entryModal, setEntryModal] = useState<{ preset: BudgetItem | null } | null>(null);
   const [closing, setClosing] = useState(false);
+  const [decisions, setDecisions] = useState<EcoEvent[] | null>(null);
 
   const reload = useCallback(async () => {
     try {
@@ -33,6 +36,14 @@ export function BudgetPage() {
     } catch (err) { setError(errMsg(err)); }
   }, []);
   useEffect(() => { void reload(); }, [reload]);
+
+  /** Passar o mês: primeiro a decisão do mês (se houver), depois o resumo financeiro do fechamento. */
+  const startClose = async () => {
+    try {
+      const d = await sim.decisions();
+      if (d.pending.length > 0) setDecisions(d.pending); else setClosing(true);
+    } catch { setClosing(true); }              // sem economia dinâmica não há decisões: vai direto ao resumo
+  };
 
   if (error && !ov) return <div className="alert">Não foi possível carregar o orçamento: {error}</div>;
   if (!ov) return <div className="muted">Carregando orçamento…</div>;
@@ -50,7 +61,7 @@ export function BudgetPage() {
           <h1>Orçamento</h1>
           <p className="muted">{ov.account.name} · mês do simulador: <b>{fmtMonth(m.ref_month)}</b></p>
         </div>
-        <button className="btn primary" onClick={() => setClosing(true)}>Fechar mês e avançar ▸</button>
+        <button className="btn primary" onClick={() => void startClose()}>Fechar mês e avançar ▸</button>
       </header>
 
       {error && <div className="alert">{error}</div>}
@@ -107,6 +118,7 @@ export function BudgetPage() {
         onSaved={() => { setItemModal(null); setNotice("Orçamento atualizado."); void reload(); }} />}
       {entryModal && <EntryModal month={m} categories={cats} preset={entryModal.preset} onClose={() => setEntryModal(null)}
         onSaved={() => { setEntryModal(null); setNotice("Movimentação registrada."); void reload(); }} />}
+      {decisions && decisions.length > 0 && <DecisionModal events={decisions} onDone={() => { setDecisions(null); void reload().then(() => setClosing(true)); }} />}
       {closing && <CloseModal preview={ov.close} onClose={() => setClosing(false)}
         onClosed={() => { setClosing(false); setNotice(`${fmtMonth(m.ref_month)} fechado. Bem-vindo a ${fmtMonth(ov.close.next_month)}!`); void reload(); }} />}
     </div>

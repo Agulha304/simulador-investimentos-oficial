@@ -89,6 +89,19 @@ def get_economy(user: CurrentUser, db: DbSession):
     return _run(db, lambda: overview(db, user.id))
 
 
+@router.get("/decisions")
+def decisions(user: CurrentUser, db: DbSession):
+    """Decisões pendentes (a do mês primeiro). O app mostra isto ANTES do resumo financeiro do fechamento."""
+    def go():
+        month = bs.ensure_setup(db, user.id)
+        es.ensure_monthly_decision(db, user.id, month)
+        pend = list(db.scalars(select(WorldEvent).where(WorldEvent.user_id == user.id, WorldEvent.status == "PENDING")
+                               .order_by(WorldEvent.id)))
+        pend.sort(key=lambda e: e.key not in E.MONTHLY_BY_KEY)           # a decisão do mês vem primeiro
+        return {"month": month.ref_month.isoformat(), "pending": [event_out(e) for e in pend]}
+    return _run(db, go)
+
+
 @router.post("/events/{event_id}/decide")
 def decide(event_id: int, body: DecisionIn, user: CurrentUser, db: DbSession):
     def go():

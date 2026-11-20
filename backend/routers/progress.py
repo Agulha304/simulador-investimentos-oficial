@@ -35,6 +35,9 @@ class StartIn(BaseModel):
     free: FreeConfig | None = None
     economy: dict[str, float] | None = None
     sim: dict[str, float] | None = None
+    gender: str | None = None
+    interested_in: str | None = None
+    career_field: str | None = None
 
 
 class GoalIn(BaseModel):
@@ -65,7 +68,8 @@ def game_info(user: CurrentUser, db: DbSession):
 def start(body: StartIn, user: CurrentUser, db: DbSession):
     return _run(db, lambda: ps.start_game(
         db, user.id, mode=body.mode, scenario_key=body.scenario, seed=body.seed, name=body.name,
-        free=body.free.model_dump() if body.free else None, economy=body.economy, sim=body.sim))
+        free=body.free.model_dump() if body.free else None, economy=body.economy, sim=body.sim,
+        gender=body.gender, interested_in=body.interested_in, career_field=body.career_field))
 
 
 @router.get("/overview")

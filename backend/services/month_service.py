@@ -124,6 +124,7 @@ def close_month(db: Session, user_id: int, ref_month: date) -> SimMonth:
     db.add(nxt)
     db.flush()
     economy_service.advance_to_month(db, user_id, nxt)        # condições, eventos, índices e reajustes (antes dos itens do mês)
+    life_service.apply_career_changes(db, user_id, nxt)       # reajuste anual / mudança de área (antes de gerar os itens do mês)
     budget_service.generate_items(db, user_id, nxt)
     goods_service.advance_to_month(db, user_id, nxt)          # valorização, ocupação e itens dos bens
     life_service.advance_to_month(db, user_id, nxt)           # nascimentos, mudanças, escola e itens da família

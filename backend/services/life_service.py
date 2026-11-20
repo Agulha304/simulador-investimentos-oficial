@@ -21,7 +21,7 @@ from backend.models import (
     BudgetCategory, BudgetItem, Child, EntryOrigin, FlowKind, LedgerEntry, LifeLog, LifeProfile, Person, Portfolio,
     Relationship, SimMonth, TransactionSource,
 )
-from backend.services import budget_service, finance_ledger, item_sync, pricing
+from backend.services import budget_service, career_rules, finance_ledger, item_sync, pricing
 from backend.services import life_rules as R
 from backend.services.finance_ledger import ConflictError, FinanceError, NotFoundError
 
@@ -65,14 +65,23 @@ def get_profile(db: Session, user_id: int, *, create: bool = True, lock: bool = 
     return p
 
 
-def create_character(db: Session, user_id: int, *, name: str, age_years: int = 28) -> LifeProfile:
+def create_character(db: Session, user_id: int, *, name: str, age_years: int = 28, gender: str | None = None,
+                     interested_in: str | None = None) -> LifeProfile:
     if not 18 <= age_years <= 80:
         raise FinanceError("a idade deve estar entre 18 e 80 anos")
+    if gender is not None and gender not in ("M", "F", "N"):
+        raise FinanceError("sexo inválido (M, F ou N)")
+    if interested_in is not None and interested_in not in ("ANY", "M", "F"):
+        raise FinanceError("preferência inválida (ANY, M ou F)")
     name = name.strip()
     if not name:
         raise FinanceError("informe o nome")
     p = get_profile(db, user_id)
     p.name, p.age_years = name[:60], age_years
+    if gender is not None:
+        p.gender = gender
+    if interested_in is not None:
+        p.interested_in = interested_in
     db.flush()
     return p
 
@@ -89,7 +98,8 @@ def financial_stability(db: Session, user_id: int, month: SimMonth) -> int:
 
 
 def free_hours(p: LifeProfile) -> int:
-    return max(0, R.FREE_HOURS[p.work_level] - R.FAMILY_TIME_HOURS[p.family_time])
+    studying = career_rules.FIELDS[p.degree_field]["hours"] if p.degree_field else 0          # a faculdade consome horas do mês
+    return max(0, R.FREE_HOURS[p.work_level] - R.FAMILY_TIME_HOURS[p.family_time] - studying)
 
 
 def set_choices(db: Session, user_id: int, month: SimMonth, **choices: str) -> LifeProfile:
@@ -108,7 +118,7 @@ def set_choices(db: Session, user_id: int, month: SimMonth, **choices: str) -> L
 
 
 # ------------------------------------------------------------------ pessoas e compatibilidade
-def compatibility(p: LifeProfile, person: Person) -> int:
+def compatibility(p: LifeProfile, person: Person, bonus: int = 0) -> int:
     """0..100 — interesses (40%), personalidade (25%), estilo de vida/filhos (20%), idade (15%). Não usa dinheiro."""
     mine = set(p_interests(p))
     theirs = set(person.interests or [])
@@ -117,7 +127,7 @@ def compatibility(p: LifeProfile, person: Person) -> int:
     fam_pref = {"LOW": 20, "NORMAL": 50, "HIGH": 80}[p.family_time]
     life = 1 - abs(fam_pref - person.wants_children) / 100
     age = 1 - min(abs(p.age_years - person.age), 15) / 15
-    return _clamp(100 * (0.40 * jacc + 0.25 * pers + 0.20 * life + 0.15 * age))
+    return _clamp(100 * (0.40 * jacc + 0.25 * pers + 0.20 * life + 0.15 * age) + bonus)
 
 
 def p_interests(p: LifeProfile) -> list[str]:
@@ -130,7 +140,10 @@ def own_personality(p: LifeProfile) -> str:
 
 def _generate_person(db: Session, p: LifeProfile, month: date, seq: int, interest_hint: str | None) -> Person:
     u = p.user_id
-    name = R.pick(R.FIRST_NAMES, "name", u, seq)
+    gender = p.interested_in if p.interested_in in ("M", "F") else R.pick(["M", "F"], "gender", u, seq)
+    first = R.pick(R.NAMES[gender], "name", u, seq)
+    last = R.pick(R.LAST_NAMES, "last", u, seq)
+    name = f"{first} {last}"
     interests = []
     if interest_hint:
         interests.append(interest_hint)
@@ -138,10 +151,11 @@ def _generate_person(db: Session, p: LifeProfile, month: date, seq: int, interes
         it = R.pick(R.INTERESTS, "int", u, seq, i)
         if it not in interests:
             interests.append(it)
-    occ, base = R.pick(R.OCCUPATIONS, "occ", u, seq)
+    occ_m, occ_f, base = R.pick(R.OCCUPATIONS, "occ", u, seq)
+    occ = occ_m if gender == "M" else occ_f
     income = quantize_money(Decimal(base) * Decimal(str(round(0.8 + R.hash01("inc", u, seq) * 0.5, 2))))
     person = Person(
-        user_id=u, name=name, age=_clamp(p.age_years + (R.hash01("age", u, seq) - 0.5) * 14, 18, 80),
+        user_id=u, name=name, gender=gender, age=_clamp(p.age_years + (R.hash01("age", u, seq) - 0.5) * 14, 18, 80),
         personality=R.pick(R.PERSONALITIES, "pers2", u, seq), interests=interests, occupation=occ, income=income,
         assets=quantize_money(income * Decimal(str(round(R.hash01("as", u, seq) * 18, 1)))),
         debts=quantize_money(income * Decimal(str(round(R.hash01("db", u, seq) * 6, 1)))),
@@ -235,7 +249,10 @@ def interact(db: Session, user_id: int, month: SimMonth, person_id: int, key: st
     _use_hours(p, it["hours"])
     _spend(db, user_id, month, p, amount=pricing.scale(db, user_id, month.ref_month, "lazer", it["cost"]),
            description=f"{it['label']} com {person.name}", category="Lazer", key_part=f"int:{person_id}:{key}")
-    comp = compatibility(p, person)
+    # conviver aproxima: cada atividade soma à compatibilidade; fazer algo do interesse dela(e) soma mais
+    bonus = R.COMPAT_BONUS_MATCH if it.get("interest") in (person.interests or []) else R.COMPAT_BONUS_BASE
+    r.compat_bonus = min(R.COMPAT_BONUS_CAP, r.compat_bonus + bonus)
+    comp = compatibility(p, person, r.compat_bonus)
     # afinidade cresce mais com compatibilidade alta; programas gratuitos funcionam (só rendem um pouco menos)
     gain = it["gain"] * (0.5 + comp / 100)
     _bump(r, round(gain), trust=1 + (1 if r.interactions_month == 0 else 0))
@@ -287,7 +304,7 @@ def advance_relationship(db: Session, user_id: int, month: SimMonth, person_id: 
             p.wellbeing = _clamp(p.wellbeing - 2)
         sync_month(db, user_id, month)
         return r
-    comp = compatibility(p, person)
+    comp = compatibility(p, person, r.compat_bonus)
     if action == "befriend":
         if r.stage != "ACQUAINTANCE":
             raise ConflictError("vocês já são mais do que conhecidos")
@@ -406,6 +423,115 @@ def child_lines(c: Child, ref: date) -> dict[str, int]:
     return lines
 
 
+# ------------------------------------------------------------------ carreira e faculdade
+def _field(key: str) -> dict:
+    f = career_rules.FIELDS.get(key)
+    if f is None:
+        raise FinanceError("área de atuação desconhecida")
+    return f
+
+
+def set_initial_field(db: Session, user_id: int, month: SimMonth, field: str) -> LifeProfile:
+    _field(field)
+    p = get_profile(db, user_id)
+    p.career_field, p.career_since = field, month.ref_month
+    db.flush()
+    return p
+
+
+def change_career(db: Session, user_id: int, month: SimMonth, field: str) -> LifeProfile:
+    """Muda de área a partir do mês seguinte. Com diploma na área nova o salário sobe (prêmio da formação); sem diploma, recomeça por baixo."""
+    budget_service.require_open(month)
+    new = _field(field)
+    p = get_profile(db, user_id, lock=True)
+    if p.career_field == field:
+        raise ConflictError("você já atua nessa área")
+    if p.pending_career:
+        raise ConflictError("já existe uma mudança de área agendada")
+    old = career_rules.FIELDS.get(p.career_field or career_rules.DEFAULT_FIELD)
+    ratio = new["start"] / old["start"]
+    degree = field in (p.degrees or [])
+    factor = ratio * ((1 + new["premium"] / 100) if degree else career_rules.NO_DEGREE_SWITCH)
+    p.pending_career = {"field": field, "factor": round(factor, 4), "degree": degree}
+    log(db, user_id, month.ref_month, "CAREER_PLANNED",
+        f"Você vai mudar para {new['label']} no mês que vem ({'com diploma' if degree else 'sem diploma: recomeço por baixo'}, salário {'+' if factor >= 1 else ''}{(factor - 1) * 100:.0f}%)")
+    db.flush()
+    return p
+
+
+def enroll_degree(db: Session, user_id: int, month: SimMonth, field: str) -> LifeProfile:
+    budget_service.require_open(month)
+    f = _field(field)
+    p = get_profile(db, user_id, lock=True)
+    if p.degree_field:
+        raise ConflictError("você já está cursando uma faculdade")
+    if field in (p.degrees or []):
+        raise ConflictError("você já se formou nessa área")
+    if len(p.degrees or []) >= career_rules.MAX_DEGREES:
+        raise ConflictError("limite de formações atingido")
+    p.degree_field, p.degree_progress, p.degree_total = field, 0, f["months"]
+    log(db, user_id, month.ref_month, "DEGREE_START", f"Você começou a faculdade de {f['degree']} ({f['months']} meses)")
+    db.flush()
+    sync_month(db, user_id, month)
+    return p
+
+
+def drop_degree(db: Session, user_id: int, month: SimMonth) -> LifeProfile:
+    budget_service.require_open(month)
+    p = get_profile(db, user_id, lock=True)
+    if not p.degree_field:
+        raise ConflictError("você não está cursando faculdade")
+    log(db, user_id, month.ref_month, "DEGREE_DROP", f"Você trancou a faculdade de {career_rules.FIELDS[p.degree_field]['degree']}")
+    p.degree_field, p.degree_progress, p.degree_total = None, 0, 0
+    db.flush()
+    sync_month(db, user_id, month)
+    return p
+
+
+def _apply_salary_factor(db: Session, user_id: int, effective: date, factor: float) -> int:
+    """Cria (ou compõe) a nova versão do salário a partir de `effective`: o contrato muda de verdade, o histórico fica."""
+    from backend.models import RecurringItem, RecurringItemVersion
+    cat = db.scalar(select(BudgetCategory.id).where(BudgetCategory.user_id == user_id, BudgetCategory.kind == FlowKind.INCOME,
+                                                    BudgetCategory.name == "Salário"))
+    n = 0
+    if cat is None:
+        return n
+    for r in db.scalars(select(RecurringItem).where(RecurringItem.user_id == user_id, RecurringItem.category_id == cat, RecurringItem.active.is_(True))):
+        existing = db.scalar(select(RecurringItemVersion).where(RecurringItemVersion.item_id == r.id, RecurringItemVersion.effective_from == effective))
+        if existing is not None:
+            existing.amount = quantize_money(existing.amount * Decimal(str(factor)))
+            n += 1
+            continue
+        cur = budget_service.version_amount(db, r.id, effective)
+        if cur:
+            db.add(RecurringItemVersion(item_id=r.id, amount=quantize_money(cur * Decimal(str(factor))), effective_from=effective))
+            n += 1
+    db.flush()
+    return n
+
+
+def apply_career_changes(db: Session, user_id: int, new_month: SimMonth) -> None:
+    """Abertura do mês (ANTES de gerar os itens): mudança de área agendada e reajuste anual da área. Idempotente."""
+    p = get_profile(db, user_id, create=False, lock=True)
+    if p is None:
+        return
+    ref = new_month.ref_month
+    factor = 1.0
+    if p.pending_career:
+        pc = p.pending_career
+        factor *= pc["factor"]
+        p.career_field, p.career_since, p.pending_career = pc["field"], ref, None
+        log(db, user_id, ref, "CAREER_CHANGED", f"Você agora atua em {career_rules.FIELDS[p.career_field]['label']}")
+    elif p.career_field and p.career_since and p.last_raise_month != ref and budget_service.months_between(p.career_since, ref) > 0 \
+            and budget_service.months_between(p.career_since, ref) % 12 == 0:
+        pct = career_rules.FIELDS[p.career_field]["growth"] + (1.0 if p.wellbeing >= 70 else -1.0 if p.wellbeing < 35 else 0.0)
+        factor *= 1 + pct / 100
+        p.last_raise_month = ref
+        log(db, user_id, ref, "RAISE", f"Reajuste anual de {pct:.1f}% em {career_rules.FIELDS[p.career_field]['label']}")
+    if factor != 1.0:
+        _apply_salary_factor(db, user_id, ref, factor)
+
+
 # ------------------------------------------------------------------ moradia
 def move(db: Session, user_id: int, month: SimMonth, *, kind: str, monthly_cost: Decimal) -> LifeProfile:
     """Agenda a mudança para o PRÓXIMO mês: os custos antigos terminam e os novos começam lá."""
@@ -481,6 +607,9 @@ def sync_month(db: Session, user_id: int, month: SimMonth) -> None:
             shared_total += amt
         if c.birth_month == ref:
             want(f"life:birth:{c.id}", f"Parto e enxoval — {c.name}", FlowKind.EXPENSE, "Saúde", scale("saude", R.BIRTH_COST))
+    if p.degree_field:
+        want("life:tuition", f"Mensalidade — {career_rules.FIELDS[p.degree_field]['degree']}", FlowKind.EXPENSE, "Educação",
+             scale("educacao", career_rules.FIELDS[p.degree_field]["cost"]))
     if p.health < 30:
         want(f"life:medical:{ref:%Y-%m}", "Despesa médica (saúde debilitada)", FlowKind.EXPENSE, "Saúde", scale("saude", R.MEDICAL_CRISIS_COST))
 
@@ -527,7 +656,7 @@ def process_month(db: Session, user_id: int, month: SimMonth) -> None:
 
     for r in db.scalars(select(Relationship).where(Relationship.user_id == user_id, Relationship.stage != "ENDED")):
         person = db.get(Person, r.person_id)
-        comp = compatibility(p, person)
+        comp = compatibility(p, person, r.compat_bonus)
         drift = 0
         if r.interactions_month == 0:
             idle = budget_service.months_between(r.last_interaction_month or r.since_month, ref)       # meses sem fazer nada juntos
@@ -547,6 +676,14 @@ def process_month(db: Session, user_id: int, month: SimMonth) -> None:
         c.development = _clamp(c.development + (1 if c.school_kind == "PRIVATE" else 0) + (1 if c.activities else 0)
                                + {"LOW": -1, "NORMAL": 0, "HIGH": 1}[p.family_time])
         c.health = _clamp(c.health + (1 if p.health_level == "PLUS" else 0) - (1 if p.health_level == "NONE" else 0))
+    if p.degree_field:                                  # faculdade: um mês cursado; ao final, formatura
+        p.degree_progress += 1
+        if p.degree_progress >= p.degree_total:
+            f = career_rules.FIELDS[p.degree_field]
+            p.degrees = list(p.degrees or []) + [p.degree_field]
+            p.satisfaction = _clamp(p.satisfaction + 8)
+            log(db, user_id, ref, "GRADUATED", f"Você se formou em {f['degree']}! Agora pode mudar de área e ganhar mais.")
+            p.degree_field, p.degree_progress, p.degree_total = None, 0, 0
     p.hours_used = 0
     p.last_processed_month = ref
     db.flush()

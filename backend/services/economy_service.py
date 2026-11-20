@@ -15,12 +15,12 @@ mês não repete nada. Reprodutibilidade: toda aleatoriedade usa `hash01(seed, .
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from backend.core.money import quantize_money
 from backend.models import (
-    Company, CompanySegment, CompanyStatus, EconomicCrisis, EconomyState, EntryOrigin, FlowKind, GameProfile, REAL_ESTATE, RecurringItem,
+    Company, CompanySegment, CompanyStatus, EconomicCrisis, EconomyState, Relationship, EntryOrigin, FlowKind, GameProfile, REAL_ESTATE, RecurringItem,
     RecurringItemVersion, SimMonth, TransactionSource, WorldEvent,
 )
 from backend.services import budget_service, finance_ledger, item_sync
@@ -253,6 +253,8 @@ def _context(db: Session, user_id: int, ref: date) -> dict:
         "health": prof.health if prof else 70, "work_level": prof.work_level if prof else "NORMAL",
         "housing_kind": prof.housing_kind if prof else "EXISTING", "partner": partner is not None,
         "children": bool(prof and life_service.children(db, user_id)),
+        "relationships": bool(prof and db.scalar(select(func.count(Relationship.id)).where(
+            Relationship.user_id == user_id, Relationship.stage != "ENDED"))),
         "salary": item_sync.salary_total(db, user_id, ref),
         "months": budget_service.months_between(g.started_month, ref) if g.started_month else 12,
     }
@@ -296,6 +298,11 @@ def _activate(db: Session, ev: WorldEvent, ref: date) -> None:
             for attr, delta in life_fx.items():
                 setattr(prof, attr, life_service._clamp(getattr(prof, attr) + delta))
             life_service.log(db, ev.user_id, ref, "EVENT", f"{ev.name}: {ev.description}", event_id=ev.id)
+    aff = fx.get("relationship_affinity")
+    if aff:
+        for r in db.scalars(select(Relationship).where(Relationship.user_id == ev.user_id, Relationship.stage != "ENDED")):
+            r.affinity = life_service._clamp(r.affinity + aff)
+            r.last_interaction_month = ref if aff > 0 else r.last_interaction_month
     oneoff = []
     for i, o in enumerate(fx.get("oneoff", [])):
         amt = quantize_money(D(str(o["amount"])) * index_value(db, ev.user_id, ref, o.get("price_cat", "insumos")))
@@ -354,13 +361,14 @@ def _resolve(db: Session, ev: WorldEvent, option_key: str, month_ref: date, seed
             chosen = oc
             break
     fx = dict(chosen.effects)
+    oneoff = list(fx.get("oneoff", []))
     if opt.cost:
-        item = {"kind": "EXPENSE", "amount": opt.cost, "price_cat": "insumos" if ev.category == "BUSINESS" else "lazer",
-                "label": f"{opt.label} — {ev.name}"}
         if ev.category == "BUSINESS":
             fx["company_oneoff"] = {"amount": opt.cost, "price_cat": "insumos", "label": opt.label}
         else:
-            fx["oneoff"] = [item]
+            oneoff.append({"kind": "EXPENSE", "amount": opt.cost, "price_cat": "lazer", "label": f"{opt.label} — {ev.name}"})
+    if oneoff:
+        fx["oneoff"] = oneoff
     ev.effects, ev.choice, ev.outcome = fx, opt.key, chosen.text
     ev.start_month = min(ev.start_month, month_ref)
     ev.end_month = budget_service.shift_month(month_ref, max(chosen.duration, 1) - 1)
@@ -450,6 +458,37 @@ def _apply_indexation(db: Session, user_id: int, ref: date) -> None:
     db.flush()
 
 
+def ensure_monthly_decision(db: Session, user_id: int, month: SimMonth) -> WorldEvent | None:
+    """Garante UMA decisão (financeira ou pessoal) para o mês. Alterna o tipo mês a mês e não repete nos últimos 6 meses. Idempotente."""
+    g = get_game(db, user_id, create=False)
+    if g is None or g.economy_mode != "DYNAMIC" or month.status.value != "OPEN":
+        return None
+    ref = month.ref_month
+    existing = db.scalar(select(WorldEvent).where(WorldEvent.user_id == user_id, WorldEvent.start_month == ref,
+                                                  WorldEvent.key.in_(list(E.MONTHLY_BY_KEY))))
+    if existing is not None:
+        return existing
+    recent = set(db.scalars(select(WorldEvent.key).where(WorldEvent.user_id == user_id,
+                                                         WorldEvent.start_month >= budget_service.shift_month(ref, -6))))
+    st = get_state(db, user_id, ref)
+    macro = _macro_view(ws_of(st)) if st else {"inflation": 4.5, "interest": 10.5, "unemployment": 8, "growth": 2, "demand": 100, "confidence": 55}
+    ctx = _context(db, user_id, ref)
+    want = "FINANCIAL" if (ref.year * 12 + ref.month) % 2 == 0 else "PERSONAL"
+    for cat in (want, "PERSONAL" if want == "FINANCIAL" else "FINANCIAL"):
+        pool = [(d, d.cond(macro, ctx)) for d in E.MONTHLY if d.category == cat and d.key not in recent]
+        pool = [(d, w) for d, w in pool if w > 0]
+        if not pool:
+            continue
+        total = sum(w for _, w in pool)
+        r, acc = hash01(g.seed, "monthly", ref.isoformat(), user_id) * total, 0.0
+        for d, w in pool:
+            acc += w
+            if r <= acc:
+                return _make_event(db, user_id, d, ref, g.seed, ctx)
+        return _make_event(db, user_id, pool[-1][0], ref, g.seed, ctx)
+    return None
+
+
 # ------------------------------------------------------------------ avanço mensal
 def _event_shocks(events: list[WorldEvent]) -> dict:
     """Efeitos dos eventos de MUNDO viram choques nas equações do motor (não deslocamentos da tela): persistem pela dinâmica."""
@@ -497,6 +536,7 @@ def advance_to_month(db: Session, user_id: int, new_month: SimMonth) -> None:
     ws = ws_of(prev) if prev else engine_world.initial_world()
     # 2) novos eventos aleatórios (probabilidade condicionada ao estado econômico atual)
     _spawn(db, user_id, ref, seed, _macro_view(ws), params.event_frequency)
+    ensure_monthly_decision(db, user_id, new_month)                      # a decisão do mês (aparece antes do resumo do fechamento)
     shocks = _event_shocks(active_events(db, user_id, ref))
     # 3) motor: crises, regimes, macro, inflação por categoria, câmbio, crédito e fatores de mercado
     ws2, info = engine_world.step(ws, seed, f"{ref.year:04d}-{ref.month:02d}", params, shocks)
