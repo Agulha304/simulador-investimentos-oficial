@@ -203,7 +203,7 @@ def apply(db: Session, user_id: int, month: SimMonth, field: str, offer_key: str
         raise ConflictError("você já se candidatou a essa vaga")
     if len(_apps(db, user_id, month.ref_month)) >= H.MAX_APPLICATIONS:
         raise ConflictError(f"você já fez {H.MAX_APPLICATIONS} candidaturas neste mês: espere o próximo")
-    ls.spend_hours(p, H.APPLY_HOURS)
+    ls.spend_hours(p, H.APPLY_HOURS, "Candidaturas a vagas")
     ok = hash01("apply", user_id, offer_key) * 100 < offer["chance"]
     app = JobApplication(user_id=user_id, ref_month=month.ref_month, offer_key=offer_key, offer=offer, chance=offer["chance"], status="APPROVED" if ok else "REJECTED")
     db.add(app)
@@ -289,7 +289,7 @@ def accept_gig(db: Session, user_id: int, month: SimMonth, field: str, key: str)
     if g["taken"]:
         raise ConflictError("você já pegou esse freela")
     p = _profile(db, user_id)
-    ls.spend_hours(p, g["hours"])
+    ls.spend_hours(p, g["hours"], f"Freela: {g['title']}")
     row = Gig(user_id=user_id, ref_month=month.ref_month, key=key, field=field, title=g["title"], hours=g["hours"], pay=D(g["pay"]))
     db.add(row)
     ls.log(db, user_id, month.ref_month, "GIG", f"Você pegou um freela: {g['title']} ({g['hours']}h, R$ {g['pay']})")

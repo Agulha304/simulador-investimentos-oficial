@@ -246,3 +246,29 @@ EXCESS_RULES = {   # categorias que, em excesso, apertam a vida: (limite % da re
     "Dívidas": (0.20, 0.35, "parcelas de dívidas pesam no orçamento"),
 }
 LEVEL_TEXT = {"low": "abaixo do que seria adequado", "good": "num nível adequado", "great": "bem acima do mínimo (ótimo)"}
+
+
+# ---------------------------------------------------------------- sobrecarga, doenças e burnout
+# kind: MENTAL | FISICA; months: duração (None = crônica); fx: efeito mensal (saúde, bem-estar, satisfação); cost: tratamento mensal (R$ de referência)
+CONDITIONS = {
+    "BURNOUT": dict(label="Burnout", kind="MENTAL", months=(2, 4), fx=dict(health=-1, wellbeing=-4, satisfaction=-3), cost=600,
+                    text="Esgotamento total: você precisou se afastar do trabalho e perde parte da renda enquanto se recupera."),
+    "ANSIEDADE": dict(label="Transtorno de ansiedade", kind="MENTAL", months=None, fx=dict(wellbeing=-2, satisfaction=-1), cost=380, text="Preocupação constante, aperto no peito e dificuldade de relaxar."),
+    "DEPRESSAO": dict(label="Depressão", kind="MENTAL", months=None, fx=dict(wellbeing=-3, satisfaction=-3), cost=420, text="Tristeza profunda e falta de energia para o dia a dia."),
+    "INSONIA": dict(label="Insônia crônica", kind="MENTAL", months=(3, 6), fx=dict(health=-1, wellbeing=-1), cost=250, text="Você dorme mal há semanas e vive cansado(a)."),
+    "HIPERTENSAO": dict(label="Hipertensão", kind="FISICA", months=None, fx=dict(health=-1), cost=220, text="Pressão alta causada por estresse e pouco descanso."),
+    "GASTRITE": dict(label="Gastrite", kind="FISICA", months=(3, 6), fx=dict(health=-1, wellbeing=-1), cost=180, text="Dor de estômago frequente por estresse e correria."),
+    "DOR_LOMBAR": dict(label="Dor lombar", kind="FISICA", months=(3, 8), fx=dict(health=-1), cost=200, text="Muitas horas de trabalho e pouco movimento cobraram o preço nas costas."),
+}
+BURNOUT_INCOME_LOSS_PCT = 40
+STRESS_FREE_THRESHOLD = 10        # sobra de horas livres abaixo disso = mês sobrecarregado
+MONTH_HOURS, SLEEP_HOURS = 720, 240
+WORK_HOURS = {"REDUCED": 120, "NORMAL": 160, "INTENSE": 220}
+
+# reação da pessoa à atividade: (limite mínimo da nota, chave, multiplicador do ganho, frase)
+REACTIONS = (
+    (0.85, "LOVED", 2.2, "{n} adorou! Vocês se divertiram muito."),
+    (0.60, "LIKED", 1.3, "{n} gostou bastante da atividade."),
+    (0.38, "NEUTRAL", 0.6, "{n} achou ok, mas sem muita empolgação."),
+    (-9.0, "DISLIKED", -1.0, "{n} não curtiu muito essa atividade."),
+)

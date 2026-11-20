@@ -132,6 +132,7 @@ def _overview(db: Session, user_id: int) -> dict:
         "housing": {"kind": p.housing_kind, "monthly_cost": str(p.housing_cost), "quality": ls.housing_quality(db, p)[0], "description": ls.housing_quality(db, p)[1],
                     "pending": ({"kind": p.pending_housing_kind, "monthly_cost": str(p.pending_housing_cost),
                                  "effective_month": p.pending_housing_month.isoformat()} if p.pending_housing_month else None)},
+        "stress": p.stress or 0, "conditions": ls.condition_out(p, month.ref_month),
         "pregnancy_due_month": p.pregnancy_due_month.isoformat() if p.pregnancy_due_month else None,
         "relationships": rels, "children": kids, "expenses": expenses,
         "family_expense_total": str(sum((Decimal(e["amount"]) for e in expenses if e["kind"] == "EXPENSE"), Decimal("0.00"))),
@@ -179,7 +180,8 @@ def interact(person_id: int, body: ActivityIn, user: CurrentUser, db: DbSession)
     def go():
         r = ls.interact(db, user.id, bs.ensure_setup(db, user.id), person_id, body.key)
         out = _overview(db, user.id)
-        out["result"] = {"story": r.last_story, "person_id": person_id}
+        react = getattr(r, "reaction", None) or {}
+        out["result"] = {"story": r.last_story, "person_id": person_id, "reaction": react.get("key"), "reaction_text": react.get("text"), "delta": react.get("delta")}
         return out
     return _run(db, go)
 
@@ -235,6 +237,23 @@ def housing_search(body: HousingSearchIn, user: CurrentUser, db: DbSession):
 def budget_impact(user: CurrentUser, db: DbSession):
     """Prévia ao vivo: como o orçamento do mês afeta saúde, bem-estar, satisfação e qualidade de vida."""
     return _run(db, lambda: ls.budget_impact(db, user.id, bs.ensure_setup(db, user.id)))
+
+
+class TreatIn(BaseModel):
+    treated: bool
+
+
+@router.put("/conditions/{key}/treatment")
+def treatment(key: str, body: TreatIn, user: CurrentUser, db: DbSession):
+    def go():
+        ls.set_treatment(db, user.id, bs.ensure_setup(db, user.id), key, body.treated)
+        return _overview(db, user.id)
+    return _run(db, go)
+
+
+@router.get("/calendar")
+def calendar(user: CurrentUser, db: DbSession):
+    return _run(db, lambda: ls.calendar(db, user.id, bs.ensure_setup(db, user.id)))
 
 
 @router.post("/move")

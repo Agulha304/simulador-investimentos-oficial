@@ -241,14 +241,17 @@ def _spend(db: Session, user_id: int, month: SimMonth, p: LifeProfile, *, amount
         idempotency_key=f"life:{key_part}:{month.ref_month:%Y-%m}:{p.activity_seq}", source=TransactionSource.USER)
 
 
-def spend_hours(p: LifeProfile, hours: int) -> None:
-    _use_hours(p, hours)
+def spend_hours(p: LifeProfile, hours: int, label: str = "Outras atividades") -> None:
+    _use_hours(p, hours, label)
 
 
-def _use_hours(p: LifeProfile, hours: int) -> None:
+def _use_hours(p: LifeProfile, hours: int, label: str = "Outras atividades") -> None:
     if p.hours_used + hours > free_hours(p):
         raise ConflictError(f"tempo livre insuficiente neste mês ({free_hours(p) - p.hours_used}h restantes, precisa de {hours}h)")
     p.hours_used += hours
+    log_ = dict(p.hours_log or {})
+    log_[label] = log_.get(label, 0) + hours
+    p.hours_log = log_
 
 
 @dataclass
@@ -266,7 +269,7 @@ def do_activity(db: Session, user_id: int, month: SimMonth, key: str) -> Activit
     if a is None:
         raise FinanceError("atividade desconhecida")
     p = get_profile(db, user_id, lock=True)
-    _use_hours(p, a["hours"])
+    _use_hours(p, a["hours"], a["label"])
     cost = pricing.scale(db, user_id, month.ref_month, "lazer", a["cost"])
     _spend(db, user_id, month, p, amount=cost, description=a["label"], category="Lazer", key_part=f"act:{key}")
     for attr in ("social", "health", "wellbeing", "quality", "satisfaction"):
@@ -317,7 +320,7 @@ def interact(db: Session, user_id: int, month: SimMonth, person_id: int, key: st
     person = db.get(Person, person_id)
     if not person.alive:
         raise ConflictError(f"{person.name.split()[0]} já faleceu")
-    _use_hours(p, it["hours"])
+    _use_hours(p, it["hours"], f"{it['label']} com {person.name.split()[0]}")
     _spend(db, user_id, month, p, amount=pricing.scale(db, user_id, month.ref_month, "lazer", it["cost"]),
            description=f"{it['label']} com {person.name}", category="Lazer", key_part=f"int:{person_id}:{key}")
     # conviver aproxima: cada atividade soma à compatibilidade; fazer algo do interesse dela(e) soma mais
@@ -325,12 +328,18 @@ def interact(db: Session, user_id: int, month: SimMonth, person_id: int, key: st
     r.compat_bonus = min(R.COMPAT_BONUS_CAP, r.compat_bonus + bonus)
     comp = compatibility(p, person, r.compat_bonus)
     # afinidade cresce mais com compatibilidade alta; programas gratuitos funcionam (só rendem um pouco menos)
-    gain = it["gain"] * (0.5 + comp / 100)
-    _bump(r, round(gain), trust=1 + (1 if r.interactions_month == 0 else 0))
+    match = it.get("interest") in (person.interests or [])
+    score = 0.40 + (0.28 if match else 0.0) + 0.25 * (comp / 100) + (R.hash01("react", user_id, person_id, p.activity_seq, month.ref_month.isoformat()) - 0.5) * 0.4
+    react = next(x for x in R.REACTIONS if score >= x[0])
+    base_gain = it["gain"] * (0.5 + comp / 100)
+    delta = -max(1, round(it["gain"] * 0.5)) if react[1] == "DISLIKED" else max(1, round(base_gain * react[2]))
+    _bump(r, delta, trust=(1 + (1 if r.interactions_month == 0 else 0)) if delta > 0 else 0)
+    r.reaction = {"key": react[1], "text": react[3].format(n=person.name.split()[0]), "delta": delta}
     r.interactions_month += 1
     r.last_interaction_month = month.ref_month
-    p.social = _clamp(p.social + 1)
-    p.wellbeing = _clamp(p.wellbeing + 1)
+    if delta > 0:
+        p.social = _clamp(p.social + 1)
+        p.wellbeing = _clamp(p.wellbeing + 1)
     r.last_story = story_for(key, person.name, user_id, p.activity_seq, month.ref_month)
     log(db, user_id, month.ref_month, "TOGETHER", f"{person.name}: {r.last_story}", person_id=person_id)
     db.flush()
@@ -604,6 +613,116 @@ def _world_mood(db: Session, p: LifeProfile, ref: date) -> None:
     _hit_mood(p, int(round(max(-3, min(3, w)))), int(round(max(-2, min(2, sat)))))
 
 
+# ------------------------------------------------------------------ sobrecarga, doenças e burnout
+def active_conditions(p: LifeProfile, ref: date | None = None) -> list[dict]:
+    return [c for c in (p.conditions or []) if c.get("until") is None or ref is None or c["until"] >= ref.isoformat()]
+
+
+def condition_out(p: LifeProfile, ref: date) -> list[dict]:
+    out = []
+    for c in active_conditions(p, ref):
+        d = R.CONDITIONS[c["key"]]
+        out.append({"key": c["key"], "label": d["label"], "kind": d["kind"], "text": d["text"], "since": c["since"], "until": c.get("until"),
+                    "treated": bool(c.get("treated")), "treatment_cost": d["cost"], "chronic": d["months"] is None})
+    return out
+
+
+def set_treatment(db: Session, user_id: int, month: SimMonth, key: str, treated: bool) -> LifeProfile:
+    budget_service.require_open(month)
+    p = get_profile(db, user_id, lock=True)
+    cs = [dict(c) for c in (p.conditions or [])]
+    hit = next((c for c in cs if c["key"] == key), None)
+    if hit is None:
+        raise NotFoundError("condição não encontrada")
+    hit["treated"] = bool(treated)
+    p.conditions = cs
+    log(db, user_id, month.ref_month, "TREATMENT", f"Você {'começou o tratamento de' if treated else 'parou o tratamento de'} {R.CONDITIONS[key]['label'].lower()}")
+    db.flush()
+    sync_month(db, user_id, month)
+    return p
+
+
+def _stress_and_conditions(db: Session, p: LifeProfile, ref: date) -> None:
+    """Fim do mês: sobrecarga (pouco tempo livre, jornada intensa, saúde ruim) acumula estresse; estresse alto adoece e pode levar ao burnout."""
+    left = raw_free_hours(p) - p.hours_used
+    st = p.stress or 0
+    if left <= R.STRESS_FREE_THRESHOLD:
+        st += 10
+    elif p.work_level == "INTENSE":
+        st += 4
+    elif left >= 40 and p.work_level != "INTENSE":
+        st -= 5
+    st += (3 if p.health < 40 else 0) + (3 if p.wellbeing < 35 else 0)
+    cs = [dict(c) for c in (p.conditions or [])]
+    # efeitos mensais, recuperação e término
+    keep = []
+    for c in cs:
+        d = R.CONDITIONS[c["key"]]
+        k = 0.5 if c.get("treated") else 1.0
+        p.health = _clamp(p.health + round(d["fx"].get("health", 0) * k))
+        _hit_mood(p, round(d["fx"].get("wellbeing", 0) * k), round(d["fx"].get("satisfaction", 0) * k))
+        if c.get("treated"):
+            st -= 4
+        if c.get("until") is not None and c["until"] < ref.isoformat():
+            log(db, p.user_id, ref, "RECOVERED", f"Você se recuperou: {d['label'].lower()}.")
+            if c["key"] == "BURNOUT":
+                st = min(st, 55)
+            continue
+        if d["months"] is None and R.hash01("recover", p.user_id, c["key"], ref.isoformat()) < (0.20 if c.get("treated") else 0.04):
+            log(db, p.user_id, ref, "RECOVERED", f"Você superou: {d['label'].lower()}.")
+            continue
+        keep.append(c)
+    st = max(0, min(100, st))
+    have = {c["key"] for c in keep}
+    if st >= 50:
+        chance = min(0.30, (st - 40) / 100 * 0.5)
+        if R.hash01("fall-ill", p.user_id, ref.isoformat()) < chance:
+            pool = ["BURNOUT"] if (st >= 85 and "BURNOUT" not in have and R.hash01("burn", p.user_id, ref.isoformat()) < 0.6) else \
+                [k for k, d in R.CONDITIONS.items() if k != "BURNOUT" and k not in have and (d["kind"] == "MENTAL") == (p.wellbeing < 50 or R.hash01("kind", p.user_id, ref.isoformat()) < 0.5)]
+            if pool:
+                key = pool[int(R.hash01("which", p.user_id, ref.isoformat()) * len(pool))]
+                d = R.CONDITIONS[key]
+                until = None
+                if d["months"]:
+                    lo, hi = d["months"]
+                    until = budget_service.shift_month(ref, lo + int(R.hash01("dur", p.user_id, ref.isoformat()) * (hi - lo + 1))).isoformat()
+                keep.append({"key": key, "since": ref.isoformat(), "until": until, "treated": False})
+                _hit_mood(p, -4, -3)
+                log(db, p.user_id, ref, "ILLNESS", f"Sobrecarga cobrou o preço: {d['label'].lower()}. {d['text']}")
+    p.conditions = keep
+    p.stress = st
+
+
+# ------------------------------------------------------------------ calendário do mês
+def calendar(db: Session, user_id: int, month: SimMonth) -> dict:
+    from backend.services import career_hub
+    p = get_profile(db, user_id)
+    ref = month.ref_month
+    work = R.WORK_HOURS[p.work_level]
+    rows = [("sleep", "😴 Sono", R.SLEEP_HOURS), ("work", f"💼 Trabalho (jornada {p.work_level.lower()})", work),
+            ("routine", "🏠 Casa, refeições e deslocamento", R.MONTH_HOURS - R.SLEEP_HOURS - work - R.FREE_HOURS[p.work_level])]
+    fam = R.FAMILY_TIME_HOURS[p.family_time]
+    if fam:
+        rows.append(("family", "👨‍👩‍👧 Tempo com a família", fam))
+    if p.degree_field:
+        rows.append(("degree", f"🎓 Faculdade de {career_rules.FIELDS[p.degree_field]['degree']}", career_rules.FIELDS[p.degree_field]["hours"]))
+    from backend.models import Education
+    for e in db.scalars(select(Education).where(Education.user_id == user_id, Education.kind == "COURSE", Education.status == "ACTIVE")):
+        rows.append((f"course{e.id}", f"📚 Curso: {e.name}", e.hours))
+    for j in career_hub.jobs(db, user_id):
+        if j.end_month is None and j.hours:
+            rows.append((f"job{j.id}", f"🧾 Trabalho PJ extra: {j.title}", j.hours))
+    if p.hours_committed:
+        rows.append(("assets", "🏢 Gestão de empresas e bens", p.hours_committed))
+    for i, (label, h) in enumerate((p.hours_log or {}).items()):
+        rows.append((f"log{i}", f"🎯 {label}", h))
+    used = sum(h for _, _, h in rows)
+    free = max(0, R.MONTH_HOURS - used)
+    rows.append(("free", "🟢 Tempo livre restante", free))
+    return {"month": ref.isoformat(), "total": R.MONTH_HOURS, "free_left": free, "overloaded": free <= R.STRESS_FREE_THRESHOLD, "stress": p.stress or 0,
+            "rows": [{"key": k, "label": l, "hours": h} for k, l, h in rows if h > 0]}
+
+
 # ------------------------------------------------------------------ o orçamento do mês muda os atributos
 def budget_impact(db: Session, user_id: int, month: SimMonth) -> dict:
     """Como as escolhas do orçamento (quanto vai para saúde, lazer, comida, estudo, dívidas, poupança...) afetam quem você é.
@@ -859,6 +978,12 @@ def sync_month(db: Session, user_id: int, month: SimMonth) -> None:
         elif salary > 0:
             want("life:work_adjust", "Renda a menos (jornada reduzida)", FlowKind.EXPENSE, "Outros", salary * abs(pct) / 100)
 
+    if any(c["key"] == "BURNOUT" for c in active_conditions(p, ref)):
+        sal = item_sync.salary_total(db, user_id, ref)
+        want("life:burnout", "Renda a menos (afastamento por burnout)", FlowKind.EXPENSE, "Outros", sal * R.BURNOUT_INCOME_LOSS_PCT / 100)
+    for c in active_conditions(p, ref):
+        if c.get("treated"):
+            want(f"life:treat:{c['key']}", f"Tratamento: {R.CONDITIONS[c['key']]['label'].lower()}", FlowKind.EXPENSE, "Saúde", scale("saude", R.CONDITIONS[c['key']]['cost']))
     from backend.services import career_hub
     career_hub.ensure_jobs(db, user_id, month)
     career_hub.desired_items(db, user_id, ref, want)
@@ -988,7 +1113,8 @@ def process_month(db: Session, user_id: int, month: SimMonth) -> None:
         meet_person(db, p, ref, where=f"na faculdade de {career_rules.FIELDS[p.degree_field]['degree']}", interest="estudos")
     _parents_pass_away(db, p, ref)
     check_death(db, p, ref)
-    p.hours_used = 0
+    _stress_and_conditions(db, p, ref)
+    p.hours_used, p.hours_log = 0, {}
     p.last_processed_month = ref
     db.flush()
 

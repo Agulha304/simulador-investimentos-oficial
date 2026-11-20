@@ -3,10 +3,10 @@ import { Meter } from "../components/Meter";
 import { Toast } from "../components/Toast";
 import { StatCard } from "../components/StatCard";
 import { fmtBRL, fmtMonth } from "../lib/format";
-import { sim, type HousingOffer, type Kid, type Life, type Rel } from "../services/sim";
+import { sim, type Calendar, type HousingOffer, type Kid, type Life, type Rel } from "../services/sim";
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : "Erro inesperado");
-type Tab = "status" | "people" | "family";
+type Tab = "status" | "people" | "family" | "calendar";
 const FAMILY_LABEL: Record<string, string> = { MOTHER: "👩 Mãe", FATHER: "👨 Pai", BROTHER: "👦 Irmão", SISTER: "👧 Irmã" };
 const STAGE: Record<string, string> = { FAMILY: "Família", ACQUAINTANCE: "Conhecido(a)", FRIEND: "Amigo(a)", DATING: "Namoro", COHABITING: "União estável", MARRIED: "Casamento", ENDED: "Encerrado" };
 const CHOICE_LABEL: Record<string, [string, Record<string, string>]> = {
@@ -27,7 +27,7 @@ export function LifePage() {
   useEffect(() => { sim.life().then(setLife).catch((e) => setError(errMsg(e))); }, []);
   const act = useCallback(async (fn: () => Promise<Life>, ok?: (l: Life) => string | null) => {
     setBusy(true); setError(null); setNote(null);
-    try { const l = await fn(); setLife(l); setNote(ok ? ok(l) : null); } catch (e) { setError(errMsg(e)); sim.life().then(setLife).catch(() => undefined); } finally { setBusy(false); }   // recusas mudam a afinidade: recarrega
+    try { const l = await fn(); setLife(l); setNote(ok ? ok(l) : null); } catch (e) { const m = errMsg(e); if (/tempo livre insuficiente/i.test(m)) setNote("⏳ " + m); else setError(m); sim.life().then(setLife).catch(() => undefined); } finally { setBusy(false); }   // recusas mudam a afinidade: recarrega
   }, []);
 
   if (!life) return error ? <div className="alert">{error}</div> : <div className="muted">Carregando vida pessoal…</div>;
@@ -43,11 +43,20 @@ export function LifePage() {
       <div className="seg compact tabs">
         <button className={tab === "status" ? "on" : ""} onClick={() => setTab("status")}>Situação</button>
         <button className={tab === "people" ? "on" : ""} onClick={() => setTab("people")}>Pessoas ({life.relationships.filter((r) => r.stage !== "ENDED").length})</button>
+        <button className={tab === "calendar" ? "on" : ""} onClick={() => setTab("calendar")}>Calendário</button>
         <button className={tab === "family" ? "on" : ""} onClick={() => setTab("family")}>Família e filhos</button>
       </div>
 
+      {tab === "calendar" && <CalendarTab version={life.attributes.free_hours_left} />}
       {tab === "status" && (
         <>
+          {(life.conditions ?? []).length > 0 && (
+            <section className="card stack"><h2>🩺 Saúde física e mental</h2>
+              {life.conditions!.map((c) => (
+                <div key={c.key} className="card stack"><div className="row between"><b>{c.kind === "MENTAL" ? "🧠" : "🫀"} {c.label}</b><span className="chip down">{c.chronic ? "crônica" : `até ${fmtMonth(c.until!)}`}</span></div>
+                  <span className="muted small">{c.text}</span>
+                  <label className="check"><input type="checkbox" checked={c.treated} disabled={busy} onChange={(e) => void act(() => sim.lifeTreatment(c.key, e.target.checked), () => e.target.checked ? "Tratamento iniciado: custa todo mês, mas ameniza e acelera a recuperação." : "Tratamento interrompido.")} />Fazer tratamento ({fmtBRL(String(c.treatment_cost))}/mês)</label></div>))}
+              <p className="muted small" style={{ margin: 0 }}>Sobrecarga constante (pouco tempo livre, jornada intensa, saúde ruim) causa doenças e pode levar ao burnout, que afasta você do trabalho e reduz a renda.</p></section>)}
           <section className="card stack">
             <h2>Indicadores</h2>
             <div className="cols-2">
@@ -137,7 +146,7 @@ function PersonCard({ r, life, busy, act }: { r: Rel; life: Life; busy: boolean;
       <div className="cols-2"><Meter label="Afinidade" value={r.affinity} /><Meter label="Confiança" value={r.trust} /><Meter label={`Compatibilidade${r.compat_bonus ? ` (+${r.compat_bonus} por convivência)` : ""}`} value={r.compatibility} /></div>
       {!ended && (
         <div className="row">
-          {life.interactions.map((i) => <button key={i.key} className="btn ghost small" disabled={busy} onClick={() => void act(() => sim.lifeInteract(r.person_id, i.key), (l) => l.result?.story ?? null)}>{i.label} · {i.cost ? fmtBRL(String(i.cost)) : "grátis"} · {i.hours}h</button>)}
+          {life.interactions.map((i) => <button key={i.key} className="btn ghost small" disabled={busy} onClick={() => void act(() => sim.lifeInteract(r.person_id, i.key), (l) => l.result?.reaction_text ? `${l.result.delta! > 0 ? "💖" : "💔"} ${l.result.reaction_text} (${l.result.delta! > 0 ? "+" : ""}${l.result.delta} de afinidade)` : (l.result?.story ?? null))}>{i.label} · {i.cost ? fmtBRL(String(i.cost)) : "grátis"} · {i.hours}h</button>)}
           {nx && !r.role && <button className="btn primary small" disabled={busy} onClick={() => void act(() => sim.lifeRelationship(r.person_id, nx[0]))}>{nx[1]}</button>}
           {r.stage === "DATING" && !r.role && <button className="btn primary small" disabled={busy} onClick={() => void act(() => sim.lifeRelationship(r.person_id, "marry"))}>Casar</button>}
           {!r.role && <button className="btn danger small" disabled={busy} onClick={() => window.confirm(`Encerrar o relacionamento com ${r.name}?`) && void act(() => sim.lifeRelationship(r.person_id, "end"))}>Encerrar</button>}
@@ -206,3 +215,23 @@ function MoveForm({ busy, act }: { busy: boolean; act: Act }) {
   );
 }
 
+
+
+function CalendarTab({ version }: { version: number }) {
+  const [c, setC] = useState<Calendar | null>(null);
+  useEffect(() => { sim.lifeCalendar().then(setC).catch(() => setC(null)); }, [version]);
+  if (!c) return <div className="muted">Carregando calendário…</div>;
+  const COL = ["#7c6cff", "#4cc9f0", "#3ee59a", "#ffd23f", "#ff9f43", "#c13cff", "#ff6482", "#8bd3dd", "#f4a261"];
+  return (
+    <section className="card stack">
+      <h2>🗓️ Seu calendário do mês</h2>
+      <p className="muted small" style={{ margin: 0 }}>Um mês tem {c.total} horas. Veja onde o seu tempo está indo: trabalho, estudos, atividades e o que sobra de tempo livre.</p>
+      {c.overloaded && <div className="alert">⚠️ Você está sobrecarregado(a): quase não sobra tempo livre. Isso aumenta o estresse e pode causar doenças e burnout.</div>}
+      <div style={{ display: "flex", height: 28, borderRadius: 14, overflow: "hidden", border: "2px solid #4d40a8" }}>
+        {c.rows.map((r, i) => <div key={r.key} title={`${r.label}: ${r.hours}h`} style={{ width: `${(r.hours / c.total) * 100}%`, background: r.key === "free" ? "#3ee59a" : COL[i % COL.length] }} />)}</div>
+      <ul className="list-plain">{c.rows.map((r, i) => (
+        <li key={r.key}><span><i style={{ display: "inline-block", width: 10, height: 10, borderRadius: 99, marginRight: 6, background: r.key === "free" ? "#3ee59a" : COL[i % COL.length] }} />{r.label}</span><b className="num">{r.hours}h <span className="muted small">({Math.round((r.hours / c.total) * 100)}%)</span></b></li>))}</ul>
+      <Meter label={`Estresse acumulado: ${c.stress}/100`} value={c.stress} />
+    </section>
+  );
+}

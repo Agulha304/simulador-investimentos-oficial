@@ -3,6 +3,7 @@ from decimal import Decimal
 
 import pytest
 
+from tests.conftest import credit
 from tests.test_budget import B
 from tests.test_engine import _mk_world
 from tests.test_life_v3 import _advance, _free_world, cat_id
@@ -203,3 +204,58 @@ def test_decisions_with_more_than_two_options_exist():
         for o in d.options:
             assert abs(sum(x.prob for x in o.outcomes) - 1.0) < 1e-9, (d.key, o.key)
         assert sum(1 for o in d.options if o.default) <= 1
+
+
+# ------------------------------------------------------------------ sobrecarga, doenças, reação das atividades e calendário
+L = "/api/life"
+
+
+def test_calendar_adds_up_to_the_whole_month_and_lists_each_use_of_time(client, auth_headers):
+    g, h = _free_world(client, auth_headers, cash=20000, income=3000, expenses=1500, rent=0, name="Agenda", seed=31)
+    client.post(f"{C}/education/courses", headers=h, json={"key": "excel"})
+    client.post(f"{L}/activities", headers=h, json={"key": client.get(L, headers=h).json()["activities"][0]["key"]})
+    cal = client.get(f"{L}/calendar", headers=h).json()
+    assert cal["total"] == 720 and sum(r["hours"] for r in cal["rows"]) == 720
+    labels = " | ".join(r["label"] for r in cal["rows"])
+    assert "Sono" in labels and "Trabalho" in labels and "Curso: Excel" in labels and "Tempo livre restante" in labels and "🎯" in labels
+
+
+def test_overload_causes_stress_illness_and_burnout_and_treatment_costs_money(client, auth_headers):
+    g, h = _free_world(client, auth_headers, cash=900000, income=9000, expenses=1500, rent=0, name="Sobrecarga", seed=33)
+    client.put(f"{C}/work", headers=h, json={"work_level": "INTENSE"})
+    for k in ("ingles", "python", "web"):
+        client.post(f"{C}/education/courses", headers=h, json={"key": k})
+    seen = set()
+    for _ in range(40):
+        _advance(client, h, 1)
+        cs = client.get(L, headers=h).json()["conditions"]
+        seen |= {c["key"] for c in cs}
+        if cs:
+            break
+    j = client.get(L, headers=h).json()
+    assert j["stress"] > 0 and j["conditions"], "sobrecarga contínua deveria causar alguma doença"
+    key = j["conditions"][0]["key"]
+    r = client.put(f"{L}/conditions/{key}/treatment", headers=h, json={"treated": True})
+    assert r.status_code == 200 and r.json()["conditions"][0]["treated"] is True
+    names = [i["name"] for i in client.get(f"{B}/overview", headers=h).json()["month"]["items"]]
+    assert any(n.startswith("Tratamento:") for n in names)
+    assert client.put(f"{L}/conditions/NAO_EXISTE/treatment", headers=h, json={"treated": True}).status_code == 404
+
+
+def test_relationship_reacts_to_activities_with_small_or_big_gains(client, auth_headers):
+    credit(client, auth_headers, "900000")
+    g, h = _mk_world(client, auth_headers, seed=7, scenario="family")
+    j = client.get(L, headers=h).json()
+    friend = next(r for r in j["relationships"] if r["stage"] != "ENDED")
+    seen = set()
+    for it in j["interactions"]:
+        before = next(r for r in client.get(L, headers=h).json()["relationships"] if r["person_id"] == friend["person_id"])["affinity"]
+        r = client.post(f"{L}/people/{friend['person_id']}/interact", headers=h, json={"key": it["key"]})
+        if r.status_code != 200:
+            continue
+        res = r.json()["result"]
+        after = next(x for x in r.json()["relationships"] if x["person_id"] == friend["person_id"])["affinity"]
+        assert res["reaction"] in ("LOVED", "LIKED", "NEUTRAL", "DISLIKED") and res["reaction_text"]
+        assert (res["delta"] < 0) == (res["reaction"] == "DISLIKED") and (after - before == res["delta"] or after in (0, 100))
+        seen.add(res["reaction"])
+    assert len(seen) >= 2                                                                              # reações variam conforme a atividade e a pessoa

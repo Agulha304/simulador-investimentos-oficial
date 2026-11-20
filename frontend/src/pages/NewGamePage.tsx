@@ -121,7 +121,7 @@ export function NewGamePage() {
               <p className="muted small">Se os números não fecharem (gastos que o dinheiro não aguenta), o jogo avisa para você ajustar.</p></div>)}
           <details className="panel"><summary>Opções avançadas</summary>
             <label className="stack" style={{ marginTop: 10 }}><span className="muted small">Semente do mundo (repete o mesmo cenário econômico)</span><input value={seed} onChange={(e) => setSeed(e.target.value)} inputMode="numeric" style={{ maxWidth: 200 }} /></label></details>
-          <div className="row"><button className="btn ghost" onClick={() => setStep(2)}>← Voltar</button><button className="btn primary big" onClick={() => setStep(4)}>Próximo →</button></div>
+          <div className="row"><button className="btn ghost" onClick={() => setStep(2)}>← Voltar</button><button className="btn primary big" disabled={busy} onClick={() => (mode === "RANKED" ? void start() : setStep(4))}>{mode === "RANKED" ? (busy ? "Criando…" : "Começar a partida 🏆") : "Próximo →"}</button></div>
         </section>)}
 
       {step === 4 && (

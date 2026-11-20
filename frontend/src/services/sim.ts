@@ -16,13 +16,16 @@ export interface Career {
   salary: string; degrees: string[]; pending: { field: string; factor: number; degree: boolean } | null;
   studying: { field: string; name: string; progress: number; total: number; cost: number } | null; fields: CareerField[];
 }
+export interface Condition { key: string; label: string; kind: "MENTAL" | "FISICA"; text: string; since: string; until: string | null; treated: boolean; treatment_cost: number; chronic: boolean }
+export interface Calendar { month: string; total: number; free_left: number; overloaded: boolean; stress: number; rows: { key: string; label: string; hours: number }[] }
 export interface Life {
   month: string; character: { name: string; age_years: number; gender: string; interested_in: string }; career: Career; attributes: Attrs; choices: Record<string, string>;
   options: Record<string, string[]>; housing: { quality: number; description: string; kind: string; monthly_cost: string; pending: { kind: string; monthly_cost: string; effective_month: string } | null };
   pregnancy_due_month: string | null; relationships: Rel[]; children: Kid[]; expenses: FamExpense[]; family_expense_total: string;
   activities: { key: string; label: string; cost: number; hours: number }[]; interactions: { key: string; label: string; cost: number; hours: number }[];
   history: { month: string; kind: string; text: string }[];
-  result?: { cost?: string; met?: string | null; story?: string; person_id?: number };
+  stress?: number; conditions?: Condition[];
+  result?: { cost?: string; met?: string | null; story?: string; person_id?: number; reaction?: string; reaction_text?: string; delta?: number };
 }
 export interface EcoState {
   month: string; inflation: string; interest: string; unemployment: string; growth: string; demand: string; confidence: string;
@@ -130,6 +133,8 @@ export interface Education {
 }
 
 export const sim = {
+  lifeCalendar: () => request<Calendar>("/life/calendar"),
+  lifeTreatment: (key: string, treated: boolean) => request<Life>(`/life/conditions/${key}/treatment`, put({ treated })),
   career: () => request<CareerHub>("/career"),
   careerOffers: (field: string) => request<{ field: string; score: number; offers: JobOffer[] }>(`/career/offers?field=${field}`),
   careerApply: (field: string, offer_key: string) => request<CareerHub>("/career/apply", post({ field, offer_key })),
