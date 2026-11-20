@@ -39,6 +39,8 @@ def finance_label(person: Person) -> str:
 
 
 def _decide(p, person: Person, r: Relationship, share: Decimal, contribution: Decimal, seed_parts: tuple) -> tuple[bool, str]:
+    if r.stage == "FAMILY":
+        return False, f"{person.name.split()[0]} prefere não misturar família e negócios"
     if r.stage not in CLOSE_STAGES:
         return False, f"{person.name.split()[0]} ainda não tem intimidade para virar sócio(a)"
     if person.assets < contribution:
@@ -73,6 +75,7 @@ def invite(db: Session, user_id: int, month: SimMonth, person_id: int, share_pct
     if not ok:                                                             # ser recusado esfria a relação (e fica gravado)
         r.affinity = life_service._clamp(r.affinity - 6)
         r.trust = life_service._clamp(r.trust - 3)
+        life_service._hit_mood(p, -2, -2)                                  # a recusa também pesa no humor
     inv = PartnerInvite(user_id=user_id, person_id=person_id, ref_month=month.ref_month, share_pct=share_pct, capital=capital,
                         accepted=ok, message=msg)
     db.add(inv)

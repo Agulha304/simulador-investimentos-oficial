@@ -31,9 +31,10 @@ def reconcile(db: Session, user_id: int, month: SimMonth, desired: dict[str, dic
         bi = existing.get(key)
         if bi is None:
             db.add(BudgetItem(user_id=user_id, month_id=month.id, category_id=cat.id, name=d["name"][:80], kind=d["kind"],
-                              planned_amount=d["amount"], source_key=key))
+                              planned_amount=d["amount"], source_key=key, capital=bool(d.get("capital", False))))
         elif bi.id not in with_entries:
             bi.name, bi.kind, bi.category_id, bi.planned_amount = d["name"][:80], d["kind"], cat.id, d["amount"]
+            bi.capital = bool(d.get("capital", False))
     for key, bi in existing.items():
         if key not in desired and bi.id not in with_entries:
             db.delete(bi)

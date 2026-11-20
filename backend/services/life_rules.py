@@ -133,7 +133,8 @@ PERSONALITY_AFFINITY = {
     ("ambicioso", "ambicioso"): 0.45, ("criativo", "metódico"): 0.7, ("reservado", "reservado"): 0.6,
     ("tranquilo", "tranquilo"): 0.75, ("metódico", "metódico"): 0.7, ("aventureiro", "metódico"): 0.4,
 }
-INTERESTS = ["esporte", "música", "viagens", "gastronomia", "estudos", "cultura", "causas", "tecnologia", "natureza", "jogos"]
+INTERESTS = ["esporte", "música", "viagens", "gastronomia", "estudos", "cultura", "causas", "tecnologia", "natureza", "jogos", "leitura", "fotografia",
+             "animais", "ciência", "história", "arte", "moda", "carros", "finanças", "dança", "culinária", "jardinagem", "cinema", "teatro"]
 # (masculino, feminino, salário-base mensal de referência)
 OCCUPATIONS = [("Professor", "Professora", 4200), ("Enfermeiro", "Enfermeira", 5200), ("Designer", "Designer", 5800), ("Analista de sistemas", "Analista de sistemas", 7200),
                ("Autônomo", "Autônoma", 3500), ("Engenheiro civil", "Engenheira civil", 11000), ("Cozinheiro", "Cozinheira", 3200), ("Médico", "Médica", 18000),
@@ -146,7 +147,18 @@ OCCUPATIONS = [("Professor", "Professora", 4200), ("Enfermeiro", "Enfermeira", 5
                ("Piloto", "Piloto", 16000), ("Cientista de dados", "Cientista de dados", 12500), ("Bibliotecário", "Bibliotecária", 4300), ("Farmacêutico", "Farmacêutica", 6900),
                ("Chef de cozinha", "Chef de cozinha", 7400), ("Influenciador digital", "Influenciadora digital", 5000), ("Marceneiro", "Marceneira", 3900),
                ("Tradutor", "Tradutora", 5100), ("Pesquisador", "Pesquisadora", 7800), ("Empresário", "Empresária", 13000), ("Entregador", "Entregadora", 2900),
-               ("Barista", "Barista", 2800), ("Professor de idiomas", "Professora de idiomas", 4600), ("Artista plástico", "Artista plástica", 3700)]
+               ("Barista", "Barista", 2800), ("Professor de idiomas", "Professora de idiomas", 4600), ("Artista plástico", "Artista plástica", 3700),
+               ("Nutricionista", "Nutricionista", 5200), ("Técnico em enfermagem", "Técnica em enfermagem", 3300), ("Motoboy", "Motogirl", 2700),
+               ("Jardineiro", "Jardineira", 2600), ("Guia de turismo", "Guia de turismo", 3400), ("Cabeleireiro", "Cabeleireira", 3100),
+               ("Eletricista industrial", "Eletricista industrial", 5600), ("Analista de marketing", "Analista de marketing", 6300), ("Pedreiro", "Pedreira", 3200),
+               ("Gerente de banco", "Gerente de banco", 9800), ("Professor universitário", "Professora universitária", 9200), ("Ator", "Atriz", 3900),
+               ("Social media", "Social media", 4100), ("Caminhoneiro", "Caminhoneira", 5000), ("Fazendeiro", "Fazendeira", 8800), ("Juiz", "Juíza", 24000)]
+STUDENT = ("Estudante universitário", "Estudante universitária", 900)
+RETIRED = ("Aposentado", "Aposentada", 3600)
+JOBSEEKER = ("Em busca de emprego", "Em busca de emprego", 1200)
+# situação financeira: (nome, peso, meses de renda guardados (min,max), meses de renda em dívidas (min,max))
+FINANCE_ARCHETYPES = [("apertada", 20, (0.3, 3), (1, 5)), ("modesta", 25, (3, 9), (0, 2)), ("estável", 25, (9, 20), (0, 2.5)),
+                      ("confortável", 15, (20, 45), (0, 1.5)), ("rica", 5, (70, 160), (0, 1)), ("endividada", 10, (0, 2), (9, 20))]
 
 
 def person_affinity(a: str, b: str) -> float:
@@ -207,3 +219,7 @@ STORIES = {
     "tech": ["Vocês montaram um pequeno projeto de programação e viram o primeiro resultado funcionar.", "Vocês fizeram um curso online de tecnologia juntos.",
              "Vocês consertaram um computador antigo e deram a ele nova vida."],
 }
+
+
+FAMILY_LABEL = {"MOTHER": "Mãe", "FATHER": "Pai", "BROTHER": "Irmão", "SISTER": "Irmã"}
+SIBLING_COUNT_WEIGHTS = ((0, 20), (1, 40), (2, 28), (3, 12))        # ter irmãos ou não é sorteado

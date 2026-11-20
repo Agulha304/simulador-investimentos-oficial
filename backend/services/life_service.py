@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 
+import math
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -143,32 +144,85 @@ def own_personality(p: LifeProfile) -> str:
     return R.pick(R.PERSONALITIES, "pers", p.user_id)
 
 
-def _generate_person(db: Session, p: LifeProfile, month: date, seq: int, interest_hint: str | None) -> Person:
+def _used_first_names(db: Session, user_id: int) -> set[str]:
+    names = {n.split()[0].lower() for n in db.scalars(select(Person.name).where(Person.user_id == user_id))}
+    names |= {n.split()[0].lower() for n in db.scalars(select(Child.name).where(Child.user_id == user_id))}
+    return names
+
+
+def _pick_age(p: LifeProfile, u: int, seq: int) -> int:
+    r = R.hash01("agekind", u, seq)
+    if r < 0.50:
+        base = p.age_years + (R.hash01("age1", u, seq) - 0.5) * 16             # perto da sua idade
+    elif r < 0.80:
+        base = p.age_years + (R.hash01("age2", u, seq) - 0.5) * 32
+    else:
+        base = 18 + R.hash01("age3", u, seq) * 55                              # qualquer adulto
+    return _clamp(base, 18, 80)
+
+
+def _financial_profile(income: Decimal, u: int, seq: int) -> tuple[Decimal, Decimal, str]:
+    total = sum(w for _, w, _, _ in R.FINANCE_ARCHETYPES)
+    r, acc = R.hash01("fin", u, seq) * total, 0
+    for name, w, (a_lo, a_hi), (d_lo, d_hi) in R.FINANCE_ARCHETYPES:
+        acc += w
+        if r <= acc:
+            break
+    ma = a_lo + R.hash01("fa", u, seq) * (a_hi - a_lo)
+    md = d_lo + R.hash01("fd", u, seq) * (d_hi - d_lo)
+    base = max(income, Decimal(1500))
+    return quantize_money(base * Decimal(str(round(ma, 2)))), quantize_money(base * Decimal(str(round(md, 2)))), name
+
+
+def _generate_person(db: Session, p: LifeProfile, month: date, seq: int, interest_hint: str | None, *, where: str | None = None) -> Person:
+    """Pessoa nova com nome (sem repetir primeiro nome já conhecido), sexo, idade, profissão, interesses e situação financeira variados."""
     u = p.user_id
-    gender = p.interested_in if p.interested_in in ("M", "F") else R.pick(["M", "F"], "gender", u, seq)
-    first = R.pick(R.NAMES[gender], "name", u, seq)
-    last = R.pick(R.LAST_NAMES, "last", u, seq)
+    used = _used_first_names(db, u)
+    attempt = first = gender = None
+    for k in range(60):
+        attempt = seq * 61 + k
+        gender = p.interested_in if p.interested_in in ("M", "F") else R.pick(["M", "F"], "gender", u, attempt)
+        first = R.pick(R.NAMES[gender], "name", u, attempt)
+        if first.lower() not in used:
+            break
+    last = R.pick(R.LAST_NAMES, "last", u, attempt)
     name = f"{first} {last}"
-    interests = []
-    if interest_hint:
-        interests.append(interest_hint)
-    for i in range(2):
-        it = R.pick(R.INTERESTS, "int", u, seq, i)
+    age = _pick_age(p, u, attempt)
+    interests = [interest_hint] if interest_hint else []
+    for i in range(2 + int(R.hash01("nint", u, attempt) * 3)):                  # 2 a 4 interesses
+        it = R.pick(R.INTERESTS, "int", u, attempt, i)
         if it not in interests:
             interests.append(it)
-    occ_m, occ_f, base = R.pick(R.OCCUPATIONS, "occ", u, seq)
-    occ = occ_m if gender == "M" else occ_f
-    income = quantize_money(Decimal(base) * Decimal(str(round(0.8 + R.hash01("inc", u, seq) * 0.5, 2))))
+    r = R.hash01("job", u, attempt)
+    if age >= 62 and r < 0.55:
+        occ_m, occ_f, base = R.RETIRED
+    elif age <= 24 and r < 0.45:
+        occ_m, occ_f, base = R.STUDENT
+    elif r > 0.965:
+        occ_m, occ_f, base = R.JOBSEEKER
+    else:
+        occ_m, occ_f, base = R.pick(R.OCCUPATIONS, "occ", u, attempt)
+    income = quantize_money(Decimal(base) * Decimal(str(round(0.8 + R.hash01("inc", u, attempt) * 0.5, 2))))
+    assets, debts, _label = _financial_profile(income, u, attempt)
     person = Person(
-        user_id=u, name=name, gender=gender, age=_clamp(p.age_years + (R.hash01("age", u, seq) - 0.5) * 14, 18, 80),
-        personality=R.pick(R.PERSONALITIES, "pers2", u, seq), interests=interests, occupation=occ, income=income,
-        assets=quantize_money(income * Decimal(str(round(R.hash01("as", u, seq) * 18, 1)))),
-        debts=quantize_money(income * Decimal(str(round(R.hash01("db", u, seq) * 6, 1)))),
-        sociability=_clamp(20 + R.hash01("soc", u, seq) * 75), wants_children=_clamp(R.hash01("kids", u, seq) * 100),
-        preferences={"likes": interests}, met_month=month)
+        user_id=u, name=name, gender=gender, age=age, personality=R.pick(R.PERSONALITIES, "pers2", u, attempt), interests=interests,
+        occupation=occ_m if gender == "M" else occ_f, income=income, assets=assets, debts=debts,
+        sociability=_clamp(20 + R.hash01("soc", u, attempt) * 75), wants_children=_clamp(R.hash01("kids", u, attempt) * 100),
+        preferences={"likes": interests, "met_at": where or ""}, met_month=month)
     db.add(person)
     db.flush()
     return person
+
+
+def meet_person(db: Session, p: LifeProfile, month: date, *, where: str, interest: str | None = None) -> Person:
+    """Conhece alguém novo (atividade, faculdade ou uma decisão do mês): vira conhecido(a) e fica registrado."""
+    p.activity_seq += 1
+    met = _generate_person(db, p, month, p.activity_seq, interest, where=where)
+    db.add(Relationship(user_id=p.user_id, person_id=met.id, stage="ACQUAINTANCE", affinity=20 + min(10, compatibility(p, met) // 10), trust=20,
+                        since_month=month, stage_since=month))
+    log(db, p.user_id, month, "MET", f"Você conheceu {met.name} ({met.occupation.lower()}, {met.age} anos) {where}", person_id=met.id)
+    db.flush()
+    return met
 
 
 # ------------------------------------------------------------------ atividades sociais
@@ -215,10 +269,7 @@ def do_activity(db: Session, user_id: int, month: SimMonth, key: str) -> Activit
     met = None
     chance = a["meets"] * (0.6 + p.social / 100)
     if R.hash01("meet", user_id, month.ref_month.isoformat(), p.activity_seq, key) < chance:
-        met = _generate_person(db, p, month.ref_month, p.activity_seq, a.get("interest"))
-        db.add(Relationship(user_id=user_id, person_id=met.id, stage="ACQUAINTANCE", affinity=20 + min(10, compatibility(p, met) // 10),
-                            trust=20, since_month=month.ref_month, stage_since=month.ref_month))
-        log(db, user_id, month.ref_month, "MET", f"Você conheceu {met.name} ({met.occupation}) em: {a['label']}", person_id=met.id)
+        met = meet_person(db, p, month.ref_month, where=f"em: {a['label']}", interest=a.get("interest"))
     db.flush()
     story = f"Você foi a: {a['label']}." + (f" E acabou conhecendo {met.name}, {met.occupation.lower()}!" if met else " Foi um bom momento, mas ninguém novo apareceu.")
     return ActivityResult(key, cost, met, p, story)
@@ -258,6 +309,8 @@ def interact(db: Session, user_id: int, month: SimMonth, person_id: int, key: st
         raise ConflictError("este relacionamento já foi encerrado")
     p = get_profile(db, user_id, lock=True)
     person = db.get(Person, person_id)
+    if not person.alive:
+        raise ConflictError(f"{person.name.split()[0]} já faleceu")
     _use_hours(p, it["hours"])
     _spend(db, user_id, month, p, amount=pricing.scale(db, user_id, month.ref_month, "lazer", it["cost"]),
            description=f"{it['label']} com {person.name}", category="Lazer", key_part=f"int:{person_id}:{key}")
@@ -291,6 +344,8 @@ def advance_relationship(db: Session, user_id: int, month: SimMonth, person_id: 
     ref = month.ref_month
     if r.stage == "ENDED":
         raise ConflictError("este relacionamento já foi encerrado")
+    if r.stage == "FAMILY":
+        raise ConflictError("é da sua família: esse tipo de convite não se aplica")
 
     def go(stage: str, text: str) -> Relationship:
         r.stage, r.stage_since = stage, ref
@@ -303,6 +358,7 @@ def advance_relationship(db: Session, user_id: int, month: SimMonth, person_id: 
     def refuse(why: str):
         """Ser recusado machuca a relação: a afinidade (e um pouco da confiança) cai e isso fica gravado."""
         _bump(r, -PENALTY.get(action, 3), trust=-2)
+        _hit_mood(p, -3, -2)                                       # ser recusado machuca: bem-estar e satisfação caem
         db.flush()
         raise RelationshipRefused(f"{why}. A afinidade com {person.name} diminuiu.")
 
@@ -435,6 +491,111 @@ def child_lines(c: Child, ref: date) -> dict[str, int]:
     if c.activities and age >= R.ACTIVITIES_COST["min_age"]:
         lines["leisure"] = lines.get("leisure", 0) + R.ACTIVITIES_COST["cost"]
     return lines
+
+
+# ------------------------------------------------------------------ família de origem, envelhecimento e morte
+def _family_member(db: Session, user_id: int, month: date, seed: int, role: str, age: int, last: str, idx: int) -> Person:
+    gender = "F" if role in ("MOTHER", "SISTER") else "M"
+    used = _used_first_names(db, user_id)
+    first = next((n for n in (R.pick(R.NAMES[gender], "fam", seed, role, idx, k) for k in range(40)) if n.lower() not in used), R.pick(R.NAMES[gender], "fam", seed, role, idx))
+    retired = age >= 62
+    occ_m, occ_f, base = R.RETIRED if retired else R.pick(R.OCCUPATIONS, "famocc", seed, role, idx)
+    income = quantize_money(Decimal(base) * Decimal(str(round(0.8 + R.hash01("faminc", seed, role, idx) * 0.5, 2))))
+    assets, debts, _ = _financial_profile(income, seed, hash(role) % 997 + idx)
+    interests = [R.pick(R.INTERESTS, "famint", seed, role, idx, i) for i in range(3)]
+    person = Person(user_id=user_id, name=f"{first} {last}", gender=gender, age=age, role=role, alive=True, personality=R.pick(R.PERSONALITIES, "fampers", seed, role, idx),
+                    interests=list(dict.fromkeys(interests)), occupation=occ_m if gender == "M" else occ_f, income=income, assets=assets, debts=debts,
+                    sociability=50, wants_children=50, preferences={}, met_month=month,
+                    death_age=(66 + int(R.hash01("deathage", seed, role) * 28)) if role in ("MOTHER", "FATHER") else None)
+    db.add(person)
+    db.flush()
+    db.add(Relationship(user_id=user_id, person_id=person.id, stage="FAMILY", affinity=55 + int(R.hash01("faff", seed, role, idx) * 30),
+                        trust=60 + int(R.hash01("ftr", seed, role, idx) * 25), since_month=month, stage_since=month))
+    return person
+
+
+def create_family(db: Session, user_id: int, month: date, seed: int) -> list[Person]:
+    """Já começa com pai e mãe vivos e, por sorteio, 0 a 3 irmãos. O sobrenome é o da família."""
+    p = get_profile(db, user_id)
+    if db.scalar(select(Person.id).where(Person.user_id == user_id, Person.role.is_not(None)).limit(1)):
+        return []
+    last = R.pick(R.LAST_NAMES, "famlast", seed, user_id)
+    people = [_family_member(db, user_id, month, seed, "MOTHER", p.age_years + 22 + int(R.hash01("ma", seed) * 11), last, 0),
+              _family_member(db, user_id, month, seed, "FATHER", p.age_years + 24 + int(R.hash01("pa", seed) * 13), last, 0)]
+    total = sum(w for _, w in R.SIBLING_COUNT_WEIGHTS)
+    r, acc, n_sib = R.hash01("siblings", seed, user_id) * total, 0, 0
+    for n, w in R.SIBLING_COUNT_WEIGHTS:
+        acc += w
+        if r <= acc:
+            n_sib = n
+            break
+    for i in range(n_sib):
+        role = "BROTHER" if R.hash01("sibg", seed, user_id, i) < 0.5 else "SISTER"
+        age = _clamp(p.age_years + (R.hash01("siba", seed, user_id, i) - 0.5) * 16, 18, 80)
+        people.append(_family_member(db, user_id, month, seed, role, age, last, i + 1))
+    log(db, user_id, month, "FAMILY", "Sua família: " + ", ".join(f"{R.FAMILY_LABEL[x.role].lower()} {x.name.split()[0]}" for x in people))
+    return people
+
+
+def family(db: Session, user_id: int) -> list[Person]:
+    return list(db.scalars(select(Person).where(Person.user_id == user_id, Person.role.is_not(None)).order_by(Person.id)))
+
+
+def _hit_mood(p: LifeProfile, wellbeing: int = 0, satisfaction: int = 0, social: int = 0) -> None:
+    p.wellbeing, p.satisfaction, p.social = _clamp(p.wellbeing + wellbeing), _clamp(p.satisfaction + satisfaction), _clamp(p.social + social)
+
+
+def _death_hazard_monthly(age: int, health: int) -> float:
+    base = 0.0004 * math.exp(0.095 * (age - 30)) / 12.0                         # risco anual que cresce com a idade (tipo Gompertz)
+    factor = 0.7 if health >= 80 else 1.0 if health >= 60 else 1.8 if health >= 40 else 3.5 if health >= 25 else 7.0     # cuidar da saúde adia
+    return min(1.0, base * factor)
+
+
+def check_death(db: Session, p: LifeProfile, ref: date) -> bool:
+    from backend.services import debt_service
+    g = economy_service_game(db, p.user_id)
+    if g is None or g.ended_reason:
+        return False
+    hazard = 1.0 if p.age_years >= 105 else _death_hazard_monthly(p.age_years, p.health)
+    if R.hash01("death", g.seed, p.user_id, ref.isoformat()) < hazard:
+        debt_service.end_game(db, p.user_id, ref, "DEAD", f"{p.name} faleceu aos {p.age_years} anos. Fim de jogo.")
+        return True
+    return False
+
+
+def economy_service_game(db: Session, user_id: int):
+    from backend.models import GameProfile
+    return db.scalar(select(GameProfile).where(GameProfile.user_id == user_id))
+
+
+def _parents_pass_away(db: Session, p: LifeProfile, ref: date) -> None:
+    nxt = budget_service.shift_month(ref, 1)
+    for per in family(db, p.user_id):
+        if per.alive and per.role in ("MOTHER", "FATHER") and per.death_age is not None and per.age >= per.death_age:
+            per.alive, per.death_month = False, nxt
+            _hit_mood(p, wellbeing=-14, satisfaction=-10, social=-2)
+            log(db, p.user_id, ref, "DEATH", f"{R.FAMILY_LABEL[per.role]} {per.name.split()[0]} faleceu aos {per.age} anos", person_id=per.id)
+
+
+def _anniversary(db: Session, p: LifeProfile, ref: date) -> None:
+    """A cada aniversário da partida: todos envelhecem um ano e a saúde cobra o passar do tempo."""
+    p.age_years += 1
+    for per in db.scalars(select(Person).where(Person.user_id == p.user_id, Person.alive.is_(True))):
+        per.age += 1
+    p.health = _clamp(p.health - (2 if p.age_years >= 60 else 1 if p.age_years >= 40 else 0))
+    log(db, p.user_id, ref, "BIRTHDAY", f"Você fez {p.age_years} anos")
+
+
+def _world_mood(db: Session, p: LifeProfile, ref: date) -> None:
+    """Acontecimentos do mundo (crises, boom, choques de preço) mexem com o humor de todo mundo."""
+    from backend.models import WorldEvent
+    w = sat = 0.0
+    for ev in db.scalars(select(WorldEvent).where(WorldEvent.user_id == p.user_id, WorldEvent.status == "ACTIVE", WorldEvent.scope.in_(("WORLD", "SECTOR")),
+                                                  WorldEvent.start_month <= ref, WorldEvent.end_month >= ref)):
+        k = ev.intensity * (0.5 if not ev.positive else 0.3)
+        w += -k if not ev.positive else k
+        sat += (-k if not ev.positive else k) * 0.6
+    _hit_mood(p, int(round(max(-3, min(3, w)))), int(round(max(-2, min(2, sat)))))
 
 
 # ------------------------------------------------------------------ carreira e faculdade
@@ -621,6 +782,14 @@ def sync_month(db: Session, user_id: int, month: SimMonth) -> None:
             shared_total += amt
         if c.birth_month == ref:
             want(f"life:birth:{c.id}", f"Parto e enxoval — {c.name}", FlowKind.EXPENSE, "Saúde", scale("saude", R.BIRTH_COST))
+    for per in family(db, user_id):
+        if per.death_month == ref and not per.alive:
+            heirs = 1 + sum(1 for x in family(db, user_id) if x.alive and x.role in ("BROTHER", "SISTER"))
+            share = quantize_money(per.assets / heirs) if per.assets > 0 else ZERO
+            want(f"life:funeral:{per.id}", f"Funeral — {per.name.split()[0]}", FlowKind.EXPENSE, "Outros", scale("saude", 4500))
+            if share > 0:
+                want(f"life:inherit:{per.id}", f"Herança de {per.name.split()[0]}", FlowKind.INCOME, "Renda extra", share)
+                want(f"life:itcmd:{per.id}", f"ITCMD (imposto sobre herança, 4%) — {per.name.split()[0]}", FlowKind.EXPENSE, "Impostos", share * Decimal("0.04"))
     if p.degree_field:
         want("life:tuition", f"Mensalidade — {career_rules.FIELDS[p.degree_field]['degree']}", FlowKind.EXPENSE, "Educação",
              scale("educacao", career_rules.FIELDS[p.degree_field]["cost"]))
@@ -670,6 +839,13 @@ def process_month(db: Session, user_id: int, month: SimMonth) -> None:
 
     for r in db.scalars(select(Relationship).where(Relationship.user_id == user_id, Relationship.stage != "ENDED")):
         person = db.get(Person, r.person_id)
+        if not person.alive:
+            continue
+        if r.stage == "FAMILY":                                    # família esfria devagar e nunca "termina"
+            if r.interactions_month == 0:
+                r.affinity = max(25, r.affinity - 1)
+            r.interactions_month = 0
+            continue
         comp = compatibility(p, person, r.compat_bonus)
         drift = 0
         if r.interactions_month == 0:
@@ -685,6 +861,7 @@ def process_month(db: Session, user_id: int, month: SimMonth) -> None:
         r.interactions_month = 0
         if r.affinity <= 10 and r.stage != "ACQUAINTANCE":
             r.stage, r.stage_since, r.ended_month, r.finance_mode = "ENDED", ref, ref, "SEPARATE"
+            _hit_mood(p, -2, -1)
             log(db, user_id, ref, "DRIFT_APART", f"O relacionamento com {person.name} esfriou e acabou")
     for c in children(db, user_id):
         c.development = _clamp(c.development + (1 if c.school_kind == "PRIVATE" else 0) + (1 if c.activities else 0)
@@ -698,6 +875,11 @@ def process_month(db: Session, user_id: int, month: SimMonth) -> None:
             p.satisfaction = _clamp(p.satisfaction + 8)
             log(db, user_id, ref, "GRADUATED", f"Você se formou em {f['degree']}! Agora pode mudar de área e ganhar mais.")
             p.degree_field, p.degree_progress, p.degree_total = None, 0, 0
+    _world_mood(db, p, ref)
+    if p.degree_field and R.hash01("classmate", p.user_id, ref.isoformat()) < 0.30:           # na faculdade você conhece gente nova
+        meet_person(db, p, ref, where=f"na faculdade de {career_rules.FIELDS[p.degree_field]['degree']}", interest="estudos")
+    _parents_pass_away(db, p, ref)
+    check_death(db, p, ref)
     p.hours_used = 0
     p.last_processed_month = ref
     db.flush()
@@ -735,8 +917,9 @@ def advance_to_month(db: Session, user_id: int, new_month: SimMonth) -> None:
             elif age >= 18:
                 c.active = False
                 log(db, user_id, ref, "EMANCIPATED", f"{c.name} completou 18 anos: despesas dependentes encerradas", child_id=c.id)
-    if ref.month == 1 and p.last_processed_month and p.last_processed_month < ref:
-        p.age_years += 1
+    started = economy_service_game(db, user_id)
+    if started is not None and started.started_month and ref > started.started_month and budget_service.months_between(started.started_month, ref) % 12 == 0:
+        _anniversary(db, p, ref)
     sync_month(db, user_id, new_month)
     if p.pending_housing_month is not None and p.pending_housing_month <= ref:
         p.pending_housing_kind = p.pending_housing_cost = p.pending_housing_month = None

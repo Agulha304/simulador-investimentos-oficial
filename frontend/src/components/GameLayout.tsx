@@ -3,6 +3,7 @@ import { Link, NavLink, Navigate, Outlet, useLocation, useNavigate } from "react
 import { fmtMonth } from "../lib/format";
 import { gameStore, useActiveGame } from "../services/gameStore";
 import { sim, type GameSummary } from "../services/sim";
+import { EndScreen } from "./EndScreen";
 import { SearchBar } from "./SearchBar";
 
 const INVEST = ["/mercado", "/renda-fixa", "/carteira", "/historico", "/ativo"];
@@ -61,10 +62,12 @@ export function GameLayout() {
         <div className="game-date">
           {training && g?.market_date && <><span className="chip">📅 {fmtMonth(g.market_date)} · dados reais</span>
             <button className="btn primary small" disabled={busy || g.at_present} onClick={() => void advance()}>⏭ Avançar 1 mês</button></>}
+          {!training && g?.age != null && <span className="chip">🎂 {g.age} anos</span>}
           {!training && g?.month && <><span className="chip">📅 {fmtMonth(g.month)}</span>
-            <Link className="btn primary small" to="/orcamento">⏭ Passar o mês</Link></>}
+            {!g?.ended && <Link className="btn primary small" to="/orcamento">⏭ Passar o mês</Link>}</>}
         </div>
       </header>
+      {!training && g?.ended && <EndScreen reason={g.ended} name={g.name} age={g.age} />}
       {training && <div className="training-banner">🎓 <b>Modo treino:</b> tudo aqui é simulado e o dinheiro é de mentirinha. Os preços são os <b>reais do passado</b>; você pode avançar meses ou voltar no tempo.</div>}
       {!training && g?.started && inInvest && <div className="sim-banner-game">🎲 <b>Mercado simulado:</b> o preço de partida de cada ativo é a cotação real de quando você começou; daqui para a frente os preços são <b>gerados pelo jogo</b> (economia, juros, crises). Não são previsões do mundo real.</div>}
       {err && <div className="alert" style={{ margin: "8px 16px" }}>{err}</div>}

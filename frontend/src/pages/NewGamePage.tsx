@@ -98,7 +98,7 @@ export function NewGamePage() {
               <div className="big-cards five">{info.scenarios.map((s) => (
                 <button key={s.key} className={`big-card pick small${scenario === s.key ? " on" : ""}`} onClick={() => setScenario(s.key)}>
                   <span className="big-emoji">{EMOJI[s.key] ?? "⭐"}</span><h3>{s.name}</h3><p>{s.description}</p>
-                  <span className="small">Caixa {fmtBRL(String(s.cash))} · renda {fmtBRL(String(s.salary))}/mês</span></button>))}</div>
+                  <span className="small">🎂 {s.age ?? 28} anos · Caixa {fmtBRL(String(s.cash))} · renda {fmtBRL(String(s.salary))}/mês</span></button>))}</div>
               {sc && <div className="panel"><h3>🎯 Objetivos</h3><ul className="clean">{sc.goals.map((g) => <li key={g.key}>{g.title}</li>)}</ul>
                 <h3>⚠️ Desafios</h3><ul className="clean">{sc.challenges.map((c) => <li key={c}>{c}</li>)}</ul></div>}
             </>
@@ -111,6 +111,7 @@ export function NewGamePage() {
                 <label className="stack"><span>🏠 Aluguel (R$, 0 = casa própria)</span><input value={cfg.rent} onChange={(e) => setCfg({ ...cfg, rent: e.target.value })} inputMode="decimal" /></label>
                 <label className="stack"><span>🎂 Idade</span><input value={cfg.age} onChange={(e) => setCfg({ ...cfg, age: e.target.value })} inputMode="numeric" /></label>
               </div>
+              <p className="muted small">Sua família já começa com pai e mãe e, por sorteio, irmãos. A idade do personagem aparece no topo da partida.</p>
               <p className="muted small">Se os números não fecharem (gastos que o dinheiro não aguenta), o jogo avisa para você ajustar.</p></div>)}
           <details className="panel"><summary>Opções avançadas</summary>
             <label className="stack" style={{ marginTop: 10 }}><span className="muted small">Semente do mundo (repete o mesmo cenário econômico)</span><input value={seed} onChange={(e) => setSeed(e.target.value)} inputMode="numeric" style={{ maxWidth: 200 }} /></label></details>

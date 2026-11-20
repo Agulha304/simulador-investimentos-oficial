@@ -52,7 +52,10 @@ def _out(db, g: Game) -> dict:
     else:
         prof = db.scalar(select(GameProfile).where(GameProfile.user_id == g.world_user_id))
         month = db.scalar(select(SimMonth.ref_month).where(SimMonth.user_id == g.world_user_id, SimMonth.status == "OPEN"))
-        out.update({"mode": prof.mode if prof else None, "scenario": prof.scenario_key if prof else None,
+        from backend.models import LifeProfile
+        lp = db.scalar(select(LifeProfile).where(LifeProfile.user_id == g.world_user_id))
+        out.update({"age": lp.age_years if lp else None, "ended": prof.ended_reason if prof else None, "ended_month": prof.ended_month.isoformat() if prof and prof.ended_month else None,
+                    "mode": prof.mode if prof else None, "scenario": prof.scenario_key if prof else None,
                     "started": bool(prof and prof.started_month), "month": month.isoformat() if month else None})
     return out
 

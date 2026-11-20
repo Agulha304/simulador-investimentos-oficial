@@ -16,7 +16,7 @@ from backend.models import (
     LoanStatus, MonthReport, MonthStatus, Person, Portfolio, REAL_ESTATE, Relationship, SimMonth, Transaction,
     TransactionSource, TransactionType, WorldEvent,
 )
-from backend.services import budget_service, economy_service, finance_ledger, ledger_service, life_service, portfolio_service, wealth_service
+from backend.services import budget_service, debt_service, economy_service, finance_ledger, ledger_service, life_service, portfolio_service, wealth_service
 from backend.services import progression_rules as P
 from backend.services.finance_ledger import ConflictError, FinanceError, NotFoundError
 
@@ -88,7 +88,7 @@ def metrics(db: Session, user_id: int, ref: date, closed: SimMonth | None = None
     invested = summary.market_value_brl + summary.fixed_income_value_brl
     return {
         "cash": portfolio.cash_balance, "net_worth": summary.total_equity_brl, "invested": quantize_money(invested),
-        "debts": quantize_money(wealth_service.debts(db, user_id) + _company_loans(db, user_id)),
+        "debts": quantize_money(wealth_service.debts(db, user_id) + _company_loans(db, user_id) + wealth_service.personal_debts(db, user_id)),
         "emergency_months": round(emergency, 2), "passive_income": quantize_money(passive),
         "real_estate": real_estate, "companies": len(companies), "company_revenue": quantize_money(revenue),
         "employees": employees, "units": sum(c.units for c in companies), "profit_streak": _streak(profit_seq),
@@ -425,6 +425,7 @@ def start_game(db: Session, user_id: int, *, mode: str, scenario_key: str | None
             economy_service.set_indexation(db, user_id, bi.recurring_item_id, "MONTHLY", e.index)
     life_service.create_character(db, user_id, name=name, age_years=age, gender=gender, interested_in=interested_in)
     life_service.set_initial_field(db, user_id, month, career_field)
+    life_service.create_family(db, user_id, month.ref_month, seed)           # pai, mãe e (por sorteio) irmãos
     if sc and sc.partner:
         _seed_family(db, user_id, month, sc)
     game = economy_service.get_game(db, user_id)
@@ -481,7 +482,8 @@ def dashboard(db: Session, user_id: int) -> dict:
     last_report = db.scalar(select(MonthReport).where(MonthReport.user_id == user_id).order_by(MonthReport.ref_month.desc()).limit(1))
     return {
         "month": month.ref_month.isoformat(), "mode": game.mode, "scenario": game.scenario_key, "dynamic_economy": game.economy_mode == "DYNAMIC",
-        "cash": str(m["cash"]), "monthly_income": str(summary.planned_income), "monthly_expense": str(summary.planned_expense),
+        "cash": str(m["cash"]), "overdraft": str((debt_service.get_overdraft(db, user_id, month.ref_month, create=False) or type("o", (), {"balance": "0.00"})).balance),
+        "age": prof.age_years if prof else None, "ended": game.ended_reason, "monthly_income": str(summary.planned_income), "monthly_expense": str(summary.planned_expense),
         "net_worth": str(m["net_worth"]), "debts": str(m["debts"]), "invested": str(m["invested"]),
         "passive_income": str(m["passive_income"]), "emergency_months": m["emergency_months"],
         "companies": [{"id": c.id, "name": c.name, "segment": c.segment.value} for c in companies],
@@ -495,3 +497,72 @@ def dashboard(db: Session, user_id: int) -> dict:
         "last_report_month": last_report.ref_month.isoformat() if last_report else None,
         "achievements_unlocked": db.scalar(select(func.count(Achievement.id)).where(Achievement.user_id == user_id)) or 0,
     }
+
+
+# ------------------------------------------------------------------ desempenho da CARREIRA (vida financeira completa)
+def career_performance(db: Session, user_id: int) -> dict:
+    """Como a sua vida financeira está indo: patrimônio (nominal e real), poupança, dívidas, saúde e carreira — mês a mês."""
+    from backend.services import career_rules, debt_service
+    month = budget_service.ensure_setup(db, user_id)
+    reps = list(db.scalars(select(MonthReport).where(MonthReport.user_id == user_id).order_by(MonthReport.ref_month)))
+    m = metrics(db, user_id, month.ref_month)
+    g = economy_service.get_game(db, user_id)
+    prof = life_service.get_profile(db, user_id, create=False)
+    start_nw = (g.config or {}).get("initial_net_worth")
+    series = []
+    for r in reps:
+        d = r.data
+        income, expense = d["income"], d["expense"]
+        series.append({"month": d["month"], "net_worth": d["net_worth"], "net_worth_real": d.get("real", {}).get("net_worth_real", d["net_worth"]),
+                       "income": income, "expense": expense, "result": d["result"], "debts": d["debts"],
+                       "savings_rate": round((income - expense) / income * 100, 1) if income > 0 else None,
+                       "health": (d.get("attributes") or {}).get("health"), "wellbeing": (d.get("attributes") or {}).get("wellbeing"),
+                       "satisfaction": (d.get("attributes") or {}).get("satisfaction")})
+    rates = [x["savings_rate"] for x in series if x["savings_rate"] is not None]
+    avg_rate = round(sum(rates[-12:]) / len(rates[-12:]), 1) if rates else None
+    now_nw = _num(m["net_worth"])
+    summary = {"net_worth": now_nw, "start_net_worth": start_nw, "net_worth_change": round(now_nw - start_nw, 2) if start_nw is not None else None,
+               "months_played": len(reps), "avg_savings_rate_12m": avg_rate, "emergency_months": m["emergency_months"], "debts": _num(m["debts"]),
+               "positive_months": sum(1 for x in series if x["result"] > 0), "passive_income": _num(m["passive_income"]),
+               "age": prof.age_years if prof else None, "health": prof.health if prof else None, "wellbeing": prof.wellbeing if prof else None,
+               "satisfaction": prof.satisfaction if prof else None}
+    last_real = reps[-1].data.get("real") if reps else None
+    first_real = reps[0].data.get("real") if reps else None
+    career = {"field": prof.career_field if prof else None, "label": career_rules.FIELDS[prof.career_field]["label"] if prof and prof.career_field else None,
+              "degrees": list(prof.degrees or []) if prof else [], "studying": prof.degree_field if prof else None,
+              "cost_of_living_change_pct": round((last_real["cpi"] / first_real["cpi"] - 1) * 100, 2) if last_real and first_real else None,
+              "wage_index_change_pct": round((last_real["wage_index"] / first_real["wage_index"] - 1) * 100, 2) if last_real and first_real else None}
+    # dicas ligadas a aulas, baseadas em dados reais da sua vida financeira
+    tips: list[dict] = []
+
+    def tip(tone, text, lesson=None):
+        tips.append({"tone": tone, "text": text, "lesson_id": lesson})
+    if avg_rate is not None and avg_rate < 10:
+        tip("warn", f"Você guardou em média {avg_rate}% da renda nos últimos meses. A regra 50-30-20 sugere poupar pelo menos 20%.", "m0-l2")
+    elif avg_rate is not None and avg_rate >= 20:
+        tip("good", f"Ótimo: você poupa {avg_rate}% da sua renda em média.", None)
+    if m["emergency_months"] < 3:
+        tip("warn", f"Sua reserva cobre só {m['emergency_months']:.1f} mês(es) de despesas. O ideal é de 3 a 6 meses.", "m0-l4")
+    od = debt_service.get_overdraft(db, user_id, month.ref_month, create=False)
+    if od is not None and od.balance > 0:
+        tip("warn", f"Você está no cheque especial (R$ {od.balance}), com juros altíssimos. Veja como sair do vermelho.", "m0-l3")
+    elif m["debts"] > 0 and m["net_worth"] > 0 and float(m["debts"]) > 0.5 * float(m["net_worth"]):
+        tip("warn", "Suas dívidas já passam de metade do seu patrimônio.", "m0-l3")
+    if m["invested"] <= 0 and float(m["cash"]) > 5000:
+        tip("info", "Você tem dinheiro parado e nada investido. Investir faz o dinheiro render mais que a inflação.", "m1-l1")
+    if last_real and last_real["purchasing_power"] < 0.92:
+        tip("warn", f"A inflação já consumiu {round((1 - last_real['purchasing_power']) * 100)}% do poder de compra desde o início. Rendas fixas perdem para os preços.", "m2-l2")
+    if career["wage_index_change_pct"] is not None and career["cost_of_living_change_pct"] is not None and career["cost_of_living_change_pct"] > career["wage_index_change_pct"] + 2:
+        tip("info", "Os preços subiram mais que os salários do mercado: negociar reajuste ou mudar de área ajuda.", None)
+    if prof and prof.health < 45:
+        tip("warn", "Sua saúde está baixa: isso aumenta o risco de adoecer e de uma vida mais curta. Invista em saúde e em descanso.", None)
+    if prof and prof.wellbeing < 40:
+        tip("warn", "Seu bem-estar está baixo. Dinheiro não é tudo: cuide do tempo livre, dos amigos e da família.", None)
+    lessons = []
+    for t in tips:
+        if t["lesson_id"] and t["lesson_id"] not in {x["lesson_id"] for x in lessons}:
+            from backend.content.course import LESSONS
+            if t["lesson_id"] in LESSONS:
+                lessons.append({"lesson_id": t["lesson_id"], "title": LESSONS[t["lesson_id"]].title, "reason": t["text"], "review": False})
+    return {"series": series, "summary": summary, "career": career, "insights": tips, "recommended_lessons": lessons,
+            "economy_dynamic": g.economy_mode == "DYNAMIC", "ended": g.ended_reason}

@@ -24,6 +24,7 @@ from backend.models import (
     BudgetItem, EntryOrigin, FlowKind, LedgerEntry, MonthStatus, Portfolio, SimMonth, TransactionSource,
 )
 from backend.services import budget_service, company_service, economy_service, finance_ledger, goods_service, ledger_service, life_service, progression_service
+from backend.services import debt_service
 from backend.services.finance_ledger import ConflictError, NotFoundError
 
 log = logging.getLogger(__name__)
@@ -47,6 +48,8 @@ def _origin_of(source_key: str) -> EntryOrigin:
         return EntryOrigin.FAMILY
     if source_key.startswith("econ:"):
         return EntryOrigin.EVENT
+    if source_key.startswith("debt:"):
+        return EntryOrigin.SYSTEM
     return EntryOrigin.ASSET
 
 
@@ -84,9 +87,11 @@ def close_month(db: Session, user_id: int, ref_month: date) -> SimMonth:
         raise NotFoundError("mês não encontrado")
     if month.status != MonthStatus.OPEN:
         raise ConflictError("este mês já foi fechado")
+    debt_service.require_playing(db, user_id)                      # partida terminada (morte ou falência): não avança
 
     company_service.process_month(db, user_id, month)          # empresas primeiro: pró-labore e aluguel entram no caixa pessoal
     life_service.process_month(db, user_id, month)             # atributos e relacionamentos do mês que termina
+    debt_service.cover_shortfall(db, user_id, month)           # saldo negativo: o cheque especial cobre o que faltar (até o limite)
     pending = _pending_recurring(db, month)
     pending.sort(key=lambda b: (b.kind != FlowKind.INCOME, b.id))   # receitas antes das despesas
     for bi in pending:
@@ -106,6 +111,8 @@ def close_month(db: Session, user_id: int, ref_month: date) -> SimMonth:
             source=TransactionSource.SYSTEM,
         )
     goods_service.settle_month(db, user_id, month)             # parcelas pagas, saldo devedor atualizado
+    debt_service.settle_month(db, user_id, month)              # parcelas dos empréstimos pessoais
+    debt_service.autorepay(db, user_id, month)                 # o que sobrar paga o cheque especial
 
     summary = budget_service.summarize(db, user_id, month)
     now = datetime.now(timezone.utc)
@@ -128,6 +135,8 @@ def close_month(db: Session, user_id: int, ref_month: date) -> SimMonth:
     budget_service.generate_items(db, user_id, nxt)
     goods_service.advance_to_month(db, user_id, nxt)          # valorização, ocupação e itens dos bens
     life_service.advance_to_month(db, user_id, nxt)           # nascimentos, mudanças, escola e itens da família
+    debt_service.sync_month(db, user_id, nxt)                 # parcelas e juros do cheque especial do mês novo
+    debt_service.check_bankruptcy(db, user_id, month.ref_month)
     progression_service.on_month_closed(db, user_id, month, nxt)   # objetivos, conquistas e relatório do mês
     log.info("mês %s fechado user=%s saldo=%s", month.ref_month, user_id, portfolio.cash_balance)
     return nxt

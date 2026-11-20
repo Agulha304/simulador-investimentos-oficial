@@ -18,6 +18,7 @@ import { PortfolioPage } from "./pages/PortfolioPage";
 import { RankingPage } from "./pages/RankingPage";
 import { EconomyPage } from "./pages/EconomyPage";
 import { LifePage } from "./pages/LifePage";
+import { DesempenhoPage } from "./pages/DesempenhoPage";
 import { AchievementsPage } from "./pages/AchievementsPage";
 import { HubPage } from "./pages/HubPage";
 import { NewGamePage } from "./pages/NewGamePage";
@@ -69,7 +70,8 @@ export default function App() {
               <Route path="vida" element={<LifePage />} />
               <Route path="economia" element={<EconomyPage />} />
               <Route path="resumos" element={<ReportsPage />} />
-              <Route path="desempenho" element={<PerformancePage />} />
+              <Route path="desempenho" element={<DesempenhoPage />} />
+              <Route path="desempenho/investimentos" element={<PerformancePage />} />
             </Route>
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />

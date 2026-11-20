@@ -64,7 +64,7 @@ def _person_out(db: Session, p, r: Relationship, person: Person) -> dict:
     return {"person_id": person.id, "name": person.name, "age": person.age, "personality": person.personality,
             "interests": person.interests, "occupation": person.occupation, "income": str(person.income),
             "assets": str(person.assets), "debts": str(person.debts), "finance_label": partners.finance_label(person), "wants_children": person.wants_children,
-            "stage": r.stage, "affinity": r.affinity, "trust": r.trust, "compatibility": ls.compatibility(p, person, r.compat_bonus), "compat_bonus": r.compat_bonus, "gender": person.gender,
+            "role": person.role, "alive": person.alive, "stage": r.stage, "affinity": r.affinity, "trust": r.trust, "compatibility": ls.compatibility(p, person, r.compat_bonus), "compat_bonus": r.compat_bonus, "gender": person.gender,
             "since_month": r.since_month.isoformat(), "stage_since": r.stage_since.isoformat(),
             "finance_mode": r.finance_mode, "contribution_pct": str(r.contribution_pct)}
 

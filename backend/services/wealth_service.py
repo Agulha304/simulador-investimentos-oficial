@@ -31,6 +31,13 @@ def debts(db: Session, user_id: int) -> Decimal:
         Loan.user_id == user_id, Loan.status == LoanStatus.ACTIVE, Good.status == GoodStatus.ACTIVE)))
 
 
+def personal_debts(db: Session, user_id: int) -> Decimal:
+    """Empréstimos pessoais + cheque especial em aberto."""
+    from backend.models import PersonalLoan
+    return quantize_money(db.scalar(select(func.coalesce(func.sum(PersonalLoan.balance), 0)).where(
+        PersonalLoan.user_id == user_id, PersonalLoan.status == "ACTIVE")) or ZERO)
+
+
 def company_equity(db: Session, company: Company) -> Decimal:
     """Patrimônio empresarial = caixa (negativo = dívida) + estoque + bens da empresa − empréstimos."""
     from backend.models import CompanyLoan   # evita ciclo de import no topo

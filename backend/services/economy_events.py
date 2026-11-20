@@ -245,6 +245,7 @@ def _out(amount, label, price_cat="lazer"):
 
 
 _has_rel = lambda m, c: 1.0 if c.get("relationships") else 0.0               # noqa: E731
+_has_friends = lambda m, c: 1.0 if c.get("friends", 0) > 0 else 0.0                # noqa: E731  — "um amigo te chamou" só com amigos de verdade
 _has_salary = lambda m, c: 1.0 if c["salary"] > 0 else 0.0                    # noqa: E731
 _always = lambda m, c: 1.0                                                    # noqa: E731
 
@@ -274,7 +275,7 @@ MONTHLY: tuple[EventDef, ...] = (
              options=(_o("fazer", "Fazer o curso", "Investir em conhecimento.", _oc(0.65, "Você aprendeu a negociar e o salário subiu um pouco.", {"income_pct": 3, "life": {"quality": 2}}, 12),
                          _oc(0.35, "O curso foi fraco, mas ensinou algumas coisas.", {"life": {"quality": 1}}), cost=300),
                       _o("pular", "Pular", "Sem custo.", _oc(1.0, "Você deixou o curso passar.", {}), default=True))),
-    EventDef("d_amigo_emprestimo", "Amigo pede dinheiro emprestado", "Um amigo pede R$ 500 emprestados para uma emergência.", "FINANCIAL", "USER", False, 1, (1, 1), 0.7, _always,
+    EventDef("d_amigo_emprestimo", "Amigo pede dinheiro emprestado", "Um amigo pede R$ 500 emprestados para uma emergência.", "FINANCIAL", "USER", False, 1, (1, 1), 0.7, _has_friends,
              options=(_o("emprestar", "Emprestar", "Pode voltar, pode não voltar.", _oc(0.55, "Ele devolveu direitinho!", {"life": {"satisfaction": 2}}),
                          _oc(0.45, "Ele não devolveu o dinheiro.", {"oneoff": [_out(500, "Empréstimo não devolvido")], "life": {"satisfaction": -2}})),
                       _o("negar", "Dizer que não pode", "Preserva o caixa.", _oc(1.0, "O amigo entendeu, mas ficou chateado.", {"life": {"satisfaction": -1}}), default=True))),
@@ -286,7 +287,7 @@ MONTHLY: tuple[EventDef, ...] = (
              options=(_o("trocar", "Trocar de plano", "Economiza, mas é mais arriscado.", _oc(0.6, "Economia boa e nenhum problema.", {"oneoff": [_in(250, "Economia no plano de saúde", "saude")]}),
                          _oc(0.4, "Precisou de um atendimento fora da cobertura.", {"oneoff": [_out(700, "Atendimento fora da cobertura", "saude")]})),
                       _o("manter", "Manter o plano", "Segurança.", _oc(1.0, "Você manteve o plano.", {}), default=True))),
-    EventDef("d_investir_dica", "Dica quente de investimento", "Um colega jura que uma aplicação vai dobrar o dinheiro (R$ 1.000).", "FINANCIAL", "USER", False, 1, (1, 1), 0.7, _always,
+    EventDef("d_investir_dica", "Dica quente de investimento", "Um colega de trabalho jura que uma aplicação vai dobrar o dinheiro (R$ 1.000).", "FINANCIAL", "USER", False, 1, (1, 1), 0.7, _has_salary,
              options=(_o("entrar", "Entrar com R$ 1.000", "Alto risco: pode perder tudo.", _oc(0.2, "Deu certo! O dinheiro dobrou.", {"oneoff": [_in(1000, "Lucro da aplicação")]}),
                          _oc(0.8, "A promessa era exagerada e você perdeu o dinheiro.", {"oneoff": [_out(1000, "Prejuízo na aplicação")], "life": {"wellbeing": -3}})),
                       _o("ignorar", "Ignorar a dica", "Promessa fácil costuma ser perigosa.", _oc(1.0, "Você ignorou e dormiu tranquilo.", {"life": {"quality": 1}}), default=True))),
@@ -294,7 +295,7 @@ MONTHLY: tuple[EventDef, ...] = (
     EventDef("d_checkup", "Hora do check-up", "Já faz tempo que você não vai ao médico (R$ 250).", "PERSONAL", "USER", True, 1, (1, 1), 1.0, _always,
              options=(_o("fazer", "Fazer os exames", "Cuidar da saúde.", _oc(1.0, "Está tudo bem e você descobriu pontos para melhorar.", {"life": {"health": 4}}), cost=250),
                       _o("adiar", "Adiar", "Sem custo, mas arriscado.", _oc(1.0, "Você adiou o check-up.", {"life": {"health": -1}}), default=True))),
-    EventDef("d_viagem", "Convite para uma viagem", "Amigos convidam você para um fim de semana na praia (R$ 900).", "PERSONAL", "USER", True, 1, (1, 1), 0.9, _always,
+    EventDef("d_viagem", "Convite para uma viagem", "Amigos convidam você para um fim de semana na praia (R$ 900).", "PERSONAL", "USER", True, 1, (1, 1), 0.9, _has_friends,
              options=(_o("ir", "Viajar", "Diversão e novas amizades.", _oc(0.8, "Foi incrível!", {"life": {"wellbeing": 5, "satisfaction": 3, "social": 4}}), _oc(0.2, "Choveu o tempo todo, mas foi divertido mesmo assim.", {"life": {"wellbeing": 2, "social": 3}}), cost=900),
                       _o("ficar", "Ficar em casa", "Economiza.", _oc(1.0, "Você ficou em casa.", {"life": {"social": -1}}), default=True))),
     EventDef("d_pet", "Adotar um pet?", "Um cachorrinho precisa de um lar (R$ 600 para começar).", "PERSONAL", "USER", True, 1, (1, 1), 0.6, _always,
@@ -303,17 +304,17 @@ MONTHLY: tuple[EventDef, ...] = (
     EventDef("d_academia", "Matrícula na academia", "Uma academia perto de casa está com matrícula grátis (R$ 120/mês no começo).", "PERSONAL", "USER", True, 1, (1, 1), 0.8, _always,
              options=(_o("matricular", "Matricular-se", "Mais saúde, se você for mesmo.", _oc(0.6, "Você foi com frequência e se sente ótimo.", {"life": {"health": 4, "wellbeing": 2}}), _oc(0.4, "Foi só nas primeiras semanas.", {"life": {"health": 1}}), cost=120),
                       _o("nao", "Deixar para lá", "Sem custo.", _oc(1.0, "Você ficou sem academia.", {}), default=True))),
-    EventDef("d_turma", "Reunir a turma", "Que tal chamar as pessoas que você conhece para um encontro (R$ 150)?", "PERSONAL", "USER", True, 1, (1, 1), 1.0, _has_rel,
+    EventDef("d_turma", "Reunir a turma", "Que tal chamar as pessoas que você conhece para um encontro (R$ 150)?", "PERSONAL", "USER", True, 1, (1, 1), 1.0, _has_friends,
              options=(_o("chamar", "Organizar o encontro", "Fortalece os laços.", _oc(0.85, "Todos vieram e foi ótimo!", {"relationship_affinity": 4, "life": {"social": 4, "wellbeing": 2}}), _oc(0.15, "Poucos puderam ir.", {"relationship_affinity": 1, "life": {"social": 1}}), cost=150),
                       _o("nao", "Deixar quieto", "As relações esfriam sem contato.", _oc(1.0, "Passou o mês sem encontro.", {"relationship_affinity": -1}), default=True))),
-    EventDef("d_casamento_amigo", "Casamento de um amigo", "Você foi convidado para o casamento de um amigo querido (R$ 400 entre roupa e presente).", "PERSONAL", "USER", True, 1, (1, 1), 0.7, _always,
+    EventDef("d_casamento_amigo", "Casamento de um amigo", "Você foi convidado para o casamento de um amigo querido (R$ 400 entre roupa e presente).", "PERSONAL", "USER", True, 1, (1, 1), 0.7, _has_friends,
              options=(_o("ir", "Ir à festa", "Um dia especial.", _oc(1.0, "Festa linda, você reviu muita gente.", {"life": {"social": 4, "wellbeing": 3}}), cost=400),
                       _o("nao", "Mandar um abraço", "Economiza.", _oc(1.0, "Seu amigo entendeu.", {"life": {"social": -1}}), default=True))),
     EventDef("d_descanso", "Um mês puxado", "O trabalho tem estado pesado. Tirar uns dias de descanso?", "PERSONAL", "USER", True, 1, (1, 1), 0.8,
              lambda m, c: 1.0 if c.get("work_level") != "REDUCED" else 0.2,
              options=(_o("descansar", "Descansar", "Recarregar as energias.", _oc(1.0, "Você voltou renovado.", {"life": {"wellbeing": 5, "health": 2}}), cost=200),
                       _o("seguir", "Seguir trabalhando", "Mais produtivo hoje, mais cansado depois.", _oc(0.5, "Aguentou firme.", {}), _oc(0.5, "O cansaço pesou.", {"life": {"wellbeing": -4, "health": -2}}), default=True))),
-    EventDef("d_festa_surpresa", "Festa surpresa", "Amigos querem fazer uma festa de aniversário para você. Aceitar a ajuda ou preferir algo simples?", "PERSONAL", "USER", True, 1, (1, 1), 0.7, _always,
+    EventDef("d_festa_surpresa", "Festa surpresa", "Amigos querem fazer uma festa de aniversário para você. Aceitar a ajuda ou preferir algo simples?", "PERSONAL", "USER", True, 1, (1, 1), 0.7, _has_friends,
              options=(_o("festa", "Fazer a festa", "Mais alegria e mais gasto.", _oc(1.0, "A festa foi inesquecível!", {"life": {"social": 5, "wellbeing": 4, "satisfaction": 3}}), cost=350),
                       _o("simples", "Algo simples em casa", "Barato e acolhedor.", _oc(1.0, "Um jantar tranquilo foi suficiente.", {"life": {"wellbeing": 2}}), default=True))),
     EventDef("d_voluntariado", "Convite para ser voluntário", "Uma ONG da sua cidade precisa de ajuda no próximo mês.", "PERSONAL", "USER", True, 1, (1, 1), 0.7, _always,
@@ -348,5 +349,38 @@ MONTHLY = MONTHLY + (
                          _oc(0.5, "A justiça deu razão a você.", {"oneoff": [_out(500, "Advogado", "moradia")]}),
                          _oc(0.5, "Você perdeu e teve que indenizar.", {"oneoff": [_out(500, "Advogado", "moradia"), _out(1800, "Indenização ao vizinho", "moradia")], "life": {"wellbeing": -3}})))),
 )
+MONTHLY_BY_KEY = {e.key: e for e in MONTHLY}
+CATALOG_BY_KEY.update(MONTHLY_BY_KEY)
+
+
+# ----------------------------------------------------------------------------------------------------------
+# Conhecer gente nova através das decisões: efeito {"meet": {"prob", "where", "interest"}} aplicado aos resultados da opção indicada
+import dataclasses as _dc
+
+_MEET = {  # decisão: (opção, probabilidade, onde, interesse, resultados afetados (None = todos))
+    "d_viagem": ("ir", 0.55, "durante a viagem", "viagens", None), "d_casamento_amigo": ("ir", 0.65, "no casamento do seu amigo", "música", None),
+    "d_academia": ("matricular", 0.50, "na academia", "esporte", None), "d_voluntariado": ("aceitar", 0.75, "no trabalho voluntário", "causas", None),
+    "d_curso_fin": ("fazer", 0.35, "no curso de finanças", "finanças", None), "d_festa_surpresa": ("festa", 0.55, "na sua festa de aniversário", None, None),
+    "d_bico": ("aceitar", 0.20, "no bico de fim de semana", None, (0,)), "d_pet": ("adotar", 0.45, "passeando com o pet", "animais", None),
+    "d_turma": ("chamar", 0.40, "no encontro (um amigo levou alguém)", None, (0,)),
+}
+
+
+def _with_meet(d: EventDef) -> EventDef:
+    spec = _MEET.get(d.key)
+    if spec is None:
+        return d
+    opt_key, prob, where, interest, which = spec
+    opts = []
+    for o in d.options:
+        if o.key == opt_key:
+            outs = tuple(_dc.replace(x, effects={**x.effects, "meet": {"prob": prob, "where": where, "interest": interest}}) if (which is None or i in which) else x
+                         for i, x in enumerate(o.outcomes))
+            o = _dc.replace(o, outcomes=outs)
+        opts.append(o)
+    return _dc.replace(d, options=tuple(opts))
+
+
+MONTHLY = tuple(_with_meet(d) for d in MONTHLY)
 MONTHLY_BY_KEY = {e.key: e for e in MONTHLY}
 CATALOG_BY_KEY.update(MONTHLY_BY_KEY)

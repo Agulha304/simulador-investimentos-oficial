@@ -263,6 +263,8 @@ def _context(db: Session, user_id: int, ref: date) -> dict:
         "children": bool(prof and life_service.children(db, user_id)),
         "relationships": bool(prof and db.scalar(select(func.count(Relationship.id)).where(
             Relationship.user_id == user_id, Relationship.stage != "ENDED"))),
+        "friends": (db.scalar(select(func.count(Relationship.id)).where(
+            Relationship.user_id == user_id, Relationship.stage.in_(("FRIEND", "DATING", "COHABITING", "MARRIED")))) or 0) if prof else 0,
         "salary": item_sync.salary_total(db, user_id, ref),
         "co_employees": {c: n for c, n in db.execute(select(Employee.company_id, func.count(Employee.id)).join(Company, Company.id == Employee.company_id).where(
             Company.user_id == user_id, Employee.status == EmployeeStatus.ACTIVE).group_by(Employee.company_id))},
@@ -329,6 +331,9 @@ def _partner_default(db: Session, ev: WorldEvent, ref: date, seed: int) -> None:
     if rel is not None:
         rel.affinity, rel.trust = life_service._clamp(rel.affinity - 30), life_service._clamp(rel.trust - 35)
     life_service.log(db, ev.user_id, ref, "LEGAL", f"{person.name} deu um calote na sociedade da empresa {c.name} (prejuízo de {loss})", person_id=person.id)
+    prof = life_service.get_profile(db, ev.user_id, create=False)
+    if prof is not None:
+        life_service._hit_mood(prof, -6, -5)                              # ser traído por um sócio abala muito
 
 
 def _activate(db: Session, ev: WorldEvent, ref: date) -> None:
@@ -342,6 +347,17 @@ def _activate(db: Session, ev: WorldEvent, ref: date) -> None:
             for attr, delta in life_fx.items():
                 setattr(prof, attr, life_service._clamp(getattr(prof, attr) + delta))
             life_service.log(db, ev.user_id, ref, "EVENT", f"{ev.name}: {ev.description}", event_id=ev.id)
+    meet = fx.pop("meet", None)
+    if meet:
+        prof = life_service.get_profile(db, ev.user_id, create=False)
+        if prof is not None and hash01("meetfx", ev.user_id, ev.id, ref.isoformat()) < meet["prob"]:
+            life_service.meet_person(db, prof, ref, where=meet["where"], interest=meet.get("interest"))
+    if not fx.get("life") and ev.scope in ("USER", "COMPANY"):               # todo acontecimento mexe com o bem-estar e a satisfação
+        w, sat = _default_mood(fx)
+        prof = life_service.get_profile(db, ev.user_id, create=False)
+        if prof is not None and (w or sat):
+            life_service._hit_mood(prof, w, sat)
+            life_service.log(db, ev.user_id, ref, "EVENT", f"{ev.name}: {ev.outcome or ev.description}", event_id=ev.id)
     aff = fx.get("relationship_affinity")
     if aff:
         for r in db.scalars(select(Relationship).where(Relationship.user_id == ev.user_id, Relationship.stage != "ENDED")):
@@ -376,6 +392,29 @@ def _activate(db: Session, ev: WorldEvent, ref: date) -> None:
             company_service._post(db, c, ref, kind=FlowKind.INCOME, amount=amt, desc=f"{ci['label']} (evento)", line="REVENUE",
                                   key=f"econ:ev:{ev.id}:recovery")
     ev.effects = fx
+
+
+def _default_mood(fx: dict) -> tuple[int, int]:
+    """Efeito padrão no humor quando o resultado não define um: dinheiro perdido pesa, ganho e conquistas animam, processos pesam mais."""
+    exp = sum(float(o["amount"]) for o in fx.get("oneoff", []) if o.get("kind") == "EXPENSE")
+    inc = sum(float(o["amount"]) for o in fx.get("oneoff", []) if o.get("kind") == "INCOME")
+    w = sat = 0
+    if fx.get("company_oneoff"):
+        w, sat = (-4, -3) if "label" in fx["company_oneoff"] and any(k in fx["company_oneoff"]["label"].lower() for k in ("trabalhista", "advogado", "condenação", "acordo")) else (-2, -2)
+    elif exp >= 1500:
+        w, sat = -3, -2
+    elif exp > 0 and inc == 0:
+        w, sat = -2, -1
+    elif inc > 0 and exp == 0:
+        w, sat = 2, 2
+    if fx.get("company_income"):
+        w, sat = w + 2, sat + 2
+    pct = fx.get("income_pct", 0)
+    if pct > 0:
+        w, sat = w + 2, sat + 3
+    elif pct < 0:
+        w, sat = w - 3, sat - 3
+    return w, sat
 
 
 def _spawn(db: Session, user_id: int, ref: date, seed: int, macro: dict, freq: float = 1.0) -> list[WorldEvent]:

@@ -7,7 +7,8 @@ import { sim, type Career, type Kid, type Life, type Rel } from "../services/sim
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : "Erro inesperado");
 type Tab = "status" | "people" | "family" | "career";
-const STAGE: Record<string, string> = { ACQUAINTANCE: "Conhecido(a)", FRIEND: "Amigo(a)", DATING: "Namoro", COHABITING: "União estável", MARRIED: "Casamento", ENDED: "Encerrado" };
+const FAMILY_LABEL: Record<string, string> = { MOTHER: "👩 Mãe", FATHER: "👨 Pai", BROTHER: "👦 Irmão", SISTER: "👧 Irmã" };
+const STAGE: Record<string, string> = { FAMILY: "Família", ACQUAINTANCE: "Conhecido(a)", FRIEND: "Amigo(a)", DATING: "Namoro", COHABITING: "União estável", MARRIED: "Casamento", ENDED: "Encerrado" };
 const CHOICE_LABEL: Record<string, [string, Record<string, string>]> = {
   work_level: ["Jornada de trabalho", { REDUCED: "Reduzida (menos renda, mais tempo)", NORMAL: "Normal", INTENSE: "Intensa (mais renda, menos tempo)" }],
   food_level: ["Alimentação", { BASIC: "Econômica", NORMAL: "Normal", PREMIUM: "Qualidade premium" }],
@@ -42,7 +43,7 @@ export function LifePage() {
       {note && <Toast text={note} onClose={() => setNote(null)} />}
       <div className="seg compact tabs">
         <button className={tab === "status" ? "on" : ""} onClick={() => setTab("status")}>Situação</button>
-        <button className={tab === "people" ? "on" : ""} onClick={() => setTab("people")}>Relacionamentos ({life.relationships.filter((r) => r.stage !== "ENDED").length})</button>
+        <button className={tab === "people" ? "on" : ""} onClick={() => setTab("people")}>Pessoas ({life.relationships.filter((r) => r.stage !== "ENDED").length})</button>
         <button className={tab === "family" ? "on" : ""} onClick={() => setTab("family")}>Família e filhos</button>
         <button className={tab === "career" ? "on" : ""} onClick={() => setTab("career")}>Carreira e estudos</button>
       </div>
@@ -83,8 +84,11 @@ export function LifePage() {
 
       {tab === "people" && (
         <section className="stack">
-          {life.relationships.length === 0 && <div className="card muted">Você ainda não conheceu ninguém. Participe de atividades sociais na aba “Situação”.</div>}
-          {life.relationships.map((r) => <PersonCard key={r.person_id} r={r} life={life} busy={busy} act={act} />)}
+          {life.relationships.filter((r) => r.role).length > 0 && <><h2 style={{ margin: "0 0 4px" }}>👨‍👩‍👧 Família de origem</h2>
+            {life.relationships.filter((r) => r.role).map((r) => <PersonCard key={r.person_id} r={r} life={life} busy={busy} act={act} />)}</>}
+          <h2 style={{ margin: "8px 0 4px" }}>🤝 Amigos e conhecidos</h2>
+          {life.relationships.filter((r) => !r.role).length === 0 && <div className="card muted">Você ainda não conheceu ninguém além da sua família. Participe de atividades sociais na aba “Situação”, faça faculdade ou aceite convites nas decisões do mês.</div>}
+          {life.relationships.filter((r) => !r.role).map((r) => <PersonCard key={r.person_id} r={r} life={life} busy={busy} act={act} />)}
         </section>
       )}
 
@@ -125,21 +129,21 @@ export function LifePage() {
 type Act = (fn: () => Promise<Life>, ok?: (l: Life) => string | null) => Promise<void>;
 
 function PersonCard({ r, life, busy, act }: { r: Rel; life: Life; busy: boolean; act: Act }) {
-  const ended = r.stage === "ENDED";
+  const ended = r.stage === "ENDED" || !r.alive;
   const next: Record<string, [string, string] | undefined> = { ACQUAINTANCE: ["befriend", "Virar amigos"], FRIEND: ["date", "Convidar para namorar"], DATING: ["cohabit", "Morarem juntos"], COHABITING: ["marry", "Casar"] };
   const nx = next[r.stage];
   return (
     <div className="card stack" style={ended ? { opacity: 0.6 } : undefined}>
-      <div className="row between"><h3 style={{ margin: 0 }}>{r.gender === "F" ? "👩" : "👨"} {r.name}, {r.age}</h3><span className="chip">{STAGE[r.stage]}</span></div>
+      <div className="row between"><h3 style={{ margin: 0 }}>{r.gender === "F" ? "👩" : "👨"} {r.name}, {r.age}{!r.alive && " ✝"}</h3><span className="chip">{r.role ? FAMILY_LABEL[r.role] : STAGE[r.stage]}{!r.alive && " (faleceu)"}</span></div>
       <p className="muted small">{r.personality} · {r.occupation} · interesses: {r.interests.join(", ")}</p>
       <p className="small">💼 Situação financeira: <b>{r.finance_label}</b> <span className="muted">· renda {fmtBRL(r.income)} · patrimônio {fmtBRL(r.assets)} · dívidas {fmtBRL(r.debts)}</span></p>
       <div className="cols-2"><Meter label="Afinidade" value={r.affinity} /><Meter label="Confiança" value={r.trust} /><Meter label={`Compatibilidade${r.compat_bonus ? ` (+${r.compat_bonus} por convivência)` : ""}`} value={r.compatibility} /></div>
       {!ended && (
         <div className="row">
           {life.interactions.map((i) => <button key={i.key} className="btn ghost small" disabled={busy} onClick={() => void act(() => sim.lifeInteract(r.person_id, i.key), (l) => l.result?.story ?? null)}>{i.label} · {i.cost ? fmtBRL(String(i.cost)) : "grátis"} · {i.hours}h</button>)}
-          {nx && <button className="btn primary small" disabled={busy} onClick={() => void act(() => sim.lifeRelationship(r.person_id, nx[0]))}>{nx[1]}</button>}
-          {r.stage === "DATING" && <button className="btn primary small" disabled={busy} onClick={() => void act(() => sim.lifeRelationship(r.person_id, "marry"))}>Casar</button>}
-          <button className="btn danger small" disabled={busy} onClick={() => window.confirm(`Encerrar o relacionamento com ${r.name}?`) && void act(() => sim.lifeRelationship(r.person_id, "end"))}>Encerrar</button>
+          {nx && !r.role && <button className="btn primary small" disabled={busy} onClick={() => void act(() => sim.lifeRelationship(r.person_id, nx[0]))}>{nx[1]}</button>}
+          {r.stage === "DATING" && !r.role && <button className="btn primary small" disabled={busy} onClick={() => void act(() => sim.lifeRelationship(r.person_id, "marry"))}>Casar</button>}
+          {!r.role && <button className="btn danger small" disabled={busy} onClick={() => window.confirm(`Encerrar o relacionamento com ${r.name}?`) && void act(() => sim.lifeRelationship(r.person_id, "end"))}>Encerrar</button>}
         </div>)}
       {["COHABITING", "MARRIED"].includes(r.stage) && (
         <div className="row"><span className="muted small">Finanças do casal:</span>

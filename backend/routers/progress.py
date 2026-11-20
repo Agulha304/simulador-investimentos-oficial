@@ -50,14 +50,14 @@ def _scenario_out(s: P.Scenario) -> dict:
     return {"key": s.key, "name": s.name, "description": s.description, "cash": s.cash, "salary": s.salary,
             "expenses": [{"category": e.category, "name": e.name, "amount": e.amount, "indexed": e.index} for e in s.expenses],
             "goals": [{"key": g.key, "title": g.title, "kind": g.kind} for g in s.goals], "challenges": list(s.challenges),
-            "partner": s.partner is not None, "children": len(s.children_ages)}
+            "partner": s.partner is not None, "children": len(s.children_ages), "age": s.age}
 
 
 @game_router.get("")
 def game_info(user: CurrentUser, db: DbSession):
     def go():
         g = economy_service.get_game(db, user.id)
-        return {"mode": g.mode, "scenario": g.scenario_key, "started": g.started_month is not None, "dynamic": g.economy_mode == "DYNAMIC",
+        return {"mode": g.mode, "scenario": g.scenario_key, "started": g.started_month is not None, "ended": g.ended_reason, "dynamic": g.economy_mode == "DYNAMIC",
                 "seed": g.seed, "config": g.config, "scenarios": [_scenario_out(s) for s in P.SCENARIOS.values()],
                 "goal_templates": [{"key": k, "kind": v[0], "title": v[1], "metric": v[2], "default_target": v[4]}
                                    for k, v in P.GOAL_TEMPLATES.items()]}
@@ -75,6 +75,12 @@ def start(body: StartIn, user: CurrentUser, db: DbSession):
 @router.get("/overview")
 def overview(user: CurrentUser, db: DbSession):
     return _run(db, lambda: ps.dashboard(db, user.id))
+
+
+@router.get("/performance")
+def career_performance(user: CurrentUser, db: DbSession):
+    """Desempenho da carreira (vida financeira completa): patrimônio, poupança, dívidas, saúde e carreira ao longo dos meses."""
+    return _run(db, lambda: ps.career_performance(db, user.id))
 
 
 @router.get("/goals")

@@ -27,6 +27,8 @@ class GameProfile(Base):
     seed: Mapped[int] = mapped_column(Integer, default=0)
     config: Mapped[dict] = mapped_column(JSON, default=dict)                      # parâmetros iniciais usados
     started_month: Mapped[date | None] = mapped_column(Date)
+    ended_reason: Mapped[str | None] = mapped_column(String(10))               # DEAD | BANKRUPT — fim de jogo
+    ended_month: Mapped[date | None] = mapped_column(Date)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

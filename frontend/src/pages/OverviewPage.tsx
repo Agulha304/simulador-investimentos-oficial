@@ -18,11 +18,11 @@ export function OverviewPage() {
   return (
     <div className="page">
       <header className="page-head">
-        <div><h1>Vida financeira</h1><p className="muted">{fmtMonth(o.month)} · {o.mode === "CAREER" ? "Modo carreira" : "Modo livre"}{!o.dynamic_economy && " · economia estável"}</p></div>
+        <div><h1>Vida financeira</h1><p className="muted">{fmtMonth(o.month)}{o.age != null ? ` · 🎂 ${o.age} anos` : ""} · {o.mode === "CAREER" ? "Modo carreira" : "Modo livre"}{!o.dynamic_economy && " · economia estável"}</p></div>
         <Link className="btn ghost small" to="/resumos">Resumos do mês e do ano</Link>
       </header>
       <section className="stats-grid">
-        <StatCard label="Dinheiro disponível" value={fmtBRL(o.cash)} emphasis />
+        <StatCard label="Dinheiro disponível" value={fmtBRL(String(Number(o.cash) - Number(o.overdraft)))} sub={Number(o.overdraft) > 0 ? `cheque especial: ${fmtBRL(o.overdraft)}` : undefined} tone={Number(o.overdraft) > 0 ? "down" : "neutral"} emphasis />
         <StatCard label="Patrimônio total" value={fmtBRL(o.net_worth)} sub={`${fmtBRL(o.invested)} investidos`} />
         <StatCard label="Receitas do mês" value={fmtBRL(o.monthly_income)} tone="up" />
         <StatCard label="Despesas do mês" value={fmtBRL(o.monthly_expense)} sub={`saldo previsto ${fmtBRL(String(flow))}`} tone={trend(String(flow))} />
