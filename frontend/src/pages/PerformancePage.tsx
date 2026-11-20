@@ -66,6 +66,16 @@ export function PerformancePage() {
           </section>
         )}
 
+        {data.recommended_lessons?.length > 0 && (
+          <section className="card tips">
+            <h2>📚 Aulas para você melhorar</h2>
+            <p className="muted small">Escolhidas pelo que o seu desempenho mostrou:</p>
+            <div className="tip-grid">{data.recommended_lessons.map((l) => (
+              <Link key={l.lesson_id} to={`/aulas/${l.lesson_id}`} className="tip-card">
+                <b>{l.title}</b><span className="small">{l.reason}</span><span className="chip">{l.review ? "🔁 revisar" : "▶ assistir"}</span></Link>))}</div>
+          </section>
+        )}
+
         <div className="viz-grid">
           <div className="wide"><EquityChart points={data.series} /></div>
           <ReturnVsCdiChart points={data.series} />

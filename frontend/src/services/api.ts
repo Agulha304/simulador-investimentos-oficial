@@ -1,3 +1,4 @@
+import { ACCOUNT_PATHS, gameStore } from "./gameStore";
 /** Cliente HTTP da API. Valores Decimal chegam como string e assim são mantidos. */
 export type Decimal = string;
 
@@ -112,6 +113,7 @@ export interface Performance {
   realized_cumulative: { date: string; cumulative: Decimal }[];
   achievements: { id: string; title: string; description: string; unlocked: boolean; current: number; target: number; detail: string }[];
   insights: { tone: "good" | "warn" | "info"; text: string; lesson_id: string | null }[];
+  recommended_lessons: { lesson_id: string; title: string; reason: string; review: boolean }[];
 }
 export interface RankEntry { rank: number; nickname: string; wealth_brl: Decimal; gain_brl: Decimal; return_pct: Decimal; is_me: boolean }
 export interface Ranking { board: string; period: string; participants: number; entries: RankEntry[]; me: RankEntry | null; me_hidden: boolean; note: string }
@@ -281,6 +283,8 @@ export async function request<T>(path: string, init: RequestInit = {}): Promise<
   headers.set("Content-Type", "application/json");
   const token = tokenStore.get();
   if (token) headers.set("Authorization", `Bearer ${token}`);
+  const game = gameStore.get();
+  if (game && !ACCOUNT_PATHS.some((p) => path.startsWith(p))) headers.set("X-Game-Id", String(game.id));
 
   const res = await fetch(`/api${path}`, { ...init, headers });
   if (!res.ok) {

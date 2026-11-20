@@ -50,10 +50,24 @@ export interface AnnualReport {
   achievements: { key: string; name: string }[]; goals_done: { key: string; title: string }[]; monthly: { month: string; income: number; expense: number; result: number; net_worth: number }[];
 }
 
+export interface GameSummary {
+  id: number; kind: "LIFE" | "TRAINING"; name: string; status: string; created_at: string; last_played_at: string; equity_brl: string | null;
+  market_date?: string; start_date?: string; at_present?: boolean; mode?: string | null; scenario?: string | null; started?: boolean; month?: string | null;
+}
+export interface Hub { account: { name: string; email: string }; games: GameSummary[]; achievements: Achievement[]; lessons: { done: number; total: number } }
+
 const put = (body: unknown) => ({ method: "PUT", body: JSON.stringify(body) });
 const post = (body: unknown = {}) => ({ method: "POST", body: JSON.stringify(body) });
 
 export const sim = {
+  hub: () => request<Hub>("/games"),
+  createGame: (kind: string, name: string, start_date?: string) => request<GameSummary>("/games", post({ kind, name, start_date })),
+  game_: (id: number) => request<GameSummary>(`/games/${id}`),
+  renameGame: (id: number, name: string) => request<GameSummary>(`/games/${id}`, { method: "PATCH", body: JSON.stringify({ name }) }),
+  archiveGame: (id: number) => request<GameSummary>(`/games/${id}/archive`, post()),
+  trainAdvance: (id: number, months: number) => request<GameSummary>(`/games/${id}/training/advance`, post({ months })),
+  trainDate: (id: number, date: string) => request<GameSummary>(`/games/${id}/training/date`, post({ date })),
+  trainMoney: (id: number, amount: string) => request<GameSummary>(`/games/${id}/training/money`, post({ amount })),
   life: () => request<Life>("/life"),
   lifeCharacter: (name: string, age_years: number) => request<Life>("/life/character", put({ name, age_years })),
   lifeChoices: (c: Record<string, string>) => request<Life>("/life/choices", put(c)),
