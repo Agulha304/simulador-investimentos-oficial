@@ -38,6 +38,10 @@ class ConflictError(FinanceError):
     pass
 
 
+def scoped_key(user_id: int, key: str) -> str:
+    return f"u{user_id}|{key}"
+
+
 def signed_amount(entry: LedgerEntry) -> Decimal:
     """Valor da entrada na sua natureza (receita/despesa): estornos contam negativo."""
     return -entry.amount if entry.origin == EntryOrigin.REVERSAL else entry.amount
@@ -81,11 +85,13 @@ def post_entry(
     amount = quantize_money(amount)
     if amount <= 0:
         raise FinanceError("o valor deve ser positivo")
+    raw_key = idempotency_key
     if idempotency_key:
-        prev = db.scalar(select(LedgerEntry).where(LedgerEntry.idempotency_key == idempotency_key))
+        # A chave é do USUÁRIO (cada partida é um mundo): duas partidas no mesmo mês geram chaves iguais ("life:tuition"...) e não
+        # podem se atrapalhar. Registros antigos (sem prefixo) continuam valendo para o próprio dono.
+        idempotency_key = scoped_key(user_id, idempotency_key)
+        prev = db.scalar(select(LedgerEntry).where(LedgerEntry.idempotency_key.in_((idempotency_key, raw_key)), LedgerEntry.user_id == user_id))
         if prev:
-            if prev.user_id != user_id:
-                raise ConflictError("chave de idempotência já utilizada")
             return prev
 
     reversal = origin == EntryOrigin.REVERSAL

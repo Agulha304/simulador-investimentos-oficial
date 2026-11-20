@@ -217,7 +217,9 @@ def test_hourly_resolution_for_short_ranges(client, auth_headers, db):
     db.query(PortfolioSnapshot).filter(PortfolioSnapshot.portfolio_id == 1).update({"portfolio_id": pid})
     db.commit()
     assert len(perf(client, auth_headers, "1d")["series"]) >= 3          # horário
-    assert len(perf(client, auth_headers, "30d")["series"]) == 1         # diário: tudo no mesmo dia
+    from backend.core.dates import TZ
+    days = {t.astimezone(TZ).date() for t in (now - timedelta(hours=2), now - timedelta(hours=3), now)}
+    assert len(perf(client, auth_headers, "30d")["series"]) == len(days)   # diário: um ponto por dia local (2 dias se a hora cruza a meia-noite)
 
 
 def test_scheduler_registers_snapshot_job():

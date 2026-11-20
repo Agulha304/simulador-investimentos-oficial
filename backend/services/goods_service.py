@@ -480,7 +480,8 @@ def register_maintenance(db: Session, user_id: int, month: SimMonth, good_id: in
         raise ConflictError("este bem não está ativo")
     cat = _category(db, user_id, FlowKind.EXPENSE, rules.COST_BUDGET_CATEGORY[CostKind.MAINTENANCE])
     ref_key = key or uuid.uuid4().hex
-    replay = db.scalar(select(LedgerEntry.id).where(LedgerEntry.idempotency_key == f"good:{good.id}:maintenance:{ref_key}"))
+    mkey = f"good:{good.id}:maintenance:{ref_key}"
+    replay = db.scalar(select(LedgerEntry.id).where((LedgerEntry.idempotency_key == mkey) | LedgerEntry.idempotency_key.endswith(f"|{mkey}", autoescape=True)))
     entry = finance_ledger.post_entry(
         db, user_id, kind=FlowKind.EXPENSE, amount=amount, description=description.strip() or f"Manutenção: {good.name}",
         ref_month=month.ref_month, entry_date=month.ref_month, category_id=cat.id, origin=EntryOrigin.ASSET,

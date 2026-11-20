@@ -380,3 +380,28 @@ def test_career_performance_recommends_lessons_for_the_problems_found(client, au
     ids = {l["lesson_id"] for l in j["recommended_lessons"]}
     assert "m0-l3" in ids and "m0-l4" in ids                                                           # dívidas (cheque especial) e reserva
     assert any(t["tone"] == "warn" and "cheque especial" in t["text"].lower() for t in j["insights"])
+
+
+# ------------------------------------------------------------------ chave de idempotência: cada partida tem as suas
+
+def test_two_games_closing_the_same_month_do_not_collide_on_idempotency_keys(client, auth_headers):
+    """Duas partidas do mesmo cenário geram itens com a MESMA chave lógica (family:housing...): não pode dar 'chave já utilizada'."""
+    credit(client, auth_headers, "900000")
+    worlds = []
+    for i in range(2):
+        g = client.post("/api/games", headers=auth_headers, json={"kind": "LIFE", "name": f"Família {i}"}).json()
+        h = {**auth_headers, "X-Game-Id": str(g["id"])}
+        assert client.post("/api/game/start", headers=h, json={"mode": "CAREER", "scenario": "family", "seed": 5}).status_code == 200
+        worlds.append(h)
+    for h in worlds:
+        client.get("/api/progress/overview", headers=h)
+    for _ in range(3):
+        for h in worlds:
+            _advance(client, h, 1)                                             # a 2ª partida fecha o mesmo mês com as mesmas chaves
+    with SessionLocal() as s:
+        keys = list(s.scalars(select(LedgerEntry.idempotency_key).where(LedgerEntry.idempotency_key.is_not(None))))
+        assert len(keys) == len(set(keys)) and any(k.startswith("u") and "|asset:family:housing" in k for k in keys)
+    a, b = (client.get(f"{L}", headers=h).json()["expenses"] for h in worlds)
+    import re
+    norm = lambda rows: {re.sub(r"child:\d+:", "child:N:", e["key"]) for e in rows}          # noqa: E731
+    assert norm(a) == norm(b) and "family:housing" in norm(a)

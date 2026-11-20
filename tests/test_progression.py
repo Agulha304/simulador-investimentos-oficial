@@ -139,7 +139,9 @@ def test_each_career_scenario_starts_with_defined_conditions(client, auth_header
 def test_family_scenario_has_partner_children_and_shared_costs(client, auth_headers):
     career(client, auth_headers, "family")
     life = client.get("/api/life", headers=auth_headers).json()
-    assert life["relationships"][0]["stage"] == "MARRIED" and len(life["children"]) == 1
+    spouse = next(r for r in life["relationships"] if r["stage"] == "MARRIED")
+    assert spouse["name"].startswith("Marina") and len(life["children"]) == 1
+    assert {"MOTHER", "FATHER"} <= {r["role"] for r in life["relationships"]}              # a família de origem também começa com você
     assert life["children"][0]["age_years"] == 3 and life["housing"]["kind"] == "SHARED"
     keys = {e["key"] for e in life["expenses"]}
     assert "family:housing" in keys and "family:partner:contribution" in keys and any(k.startswith("child:") for k in keys)

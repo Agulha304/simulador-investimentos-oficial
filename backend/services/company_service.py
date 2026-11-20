@@ -84,7 +84,7 @@ def _post_personal(db: Session, c: Company, ref: date, *, kind: FlowKind, amount
 
 def _replayed(db: Session, key: str) -> bool:
     """A mesma solicitação (mesma chave de idempotência) já foi processada: não repetir nenhum efeito."""
-    return db.scalar(select(LedgerEntry.id).where(LedgerEntry.idempotency_key == key)) is not None
+    return db.scalar(select(LedgerEntry.id).where((LedgerEntry.idempotency_key == key) | LedgerEntry.idempotency_key.endswith(f"|{key}", autoescape=True))) is not None
 
 
 def monthly_obligations(db: Session, c: Company) -> Decimal:
