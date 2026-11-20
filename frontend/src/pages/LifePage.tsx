@@ -3,7 +3,7 @@ import { Meter } from "../components/Meter";
 import { Toast } from "../components/Toast";
 import { StatCard } from "../components/StatCard";
 import { fmtBRL, fmtMonth } from "../lib/format";
-import { sim, type Career, type Kid, type Life, type Rel } from "../services/sim";
+import { sim, type Career, type HousingOffer, type Kid, type Life, type Rel } from "../services/sim";
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : "Erro inesperado");
 type Tab = "status" | "people" | "family" | "career";
@@ -98,7 +98,7 @@ export function LifePage() {
             <StatCard label="Parceiro(a)" value={partner ? partner.name : "—"} sub={partner ? STAGE[partner.stage] : "sem relacionamento sério"} />
             <StatCard label="Filhos" value={life.children.filter((c) => c.active).length} sub={life.pregnancy_due_month ? `nascimento previsto ${fmtMonth(life.pregnancy_due_month)}` : undefined} />
             <StatCard label="Despesas familiares (mês)" value={fmtBRL(life.family_expense_total)} />
-            <StatCard label="Moradia" value={life.housing.kind === "EXISTING" ? "pelo orçamento" : fmtBRL(life.housing.monthly_cost)} sub={life.housing.pending ? `mudança em ${fmtMonth(life.housing.pending.effective_month)}` : life.housing.kind} />
+            <StatCard label="Moradia" value={life.housing.kind === "EXISTING" ? "pelo orçamento" : fmtBRL(life.housing.monthly_cost)} sub={life.housing.pending ? `mudança em ${fmtMonth(life.housing.pending.effective_month)}` : (life.housing.description || life.housing.kind)} tone={life.housing.quality < 0 ? "down" : life.housing.quality > 0 ? "up" : "neutral"} />
           </section>
           <section className="card stack">
             <div className="row between"><h2>Filhos</h2>
@@ -172,13 +172,39 @@ function ChildCard({ c, busy, act }: { c: Kid; busy: boolean; act: Act }) {
 
 function MoveForm({ busy, act }: { busy: boolean; act: Act }) {
   const [kind, setKind] = useState("RENT");
-  const [cost, setCost] = useState("2000");
+  const [cost, setCost] = useState("1500");
+  const [offer, setOffer] = useState<HousingOffer | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const rent = kind === "RENT" || kind === "SHARED";
+  const go = async () => {
+    setErr(null);
+    if (!rent) { void act(() => sim.lifeMove(kind, "0"), () => "Mudança agendada para o próximo mês."); return; }
+    try { setOffer(await sim.searchHousing(cost)); } catch (e) { setErr(errMsg(e)); }
+  };
   return (
-    <div className="row">
-      <select value={kind} onChange={(e) => setKind(e.target.value)}>
-        <option value="RENT">Aluguel próprio</option><option value="SHARED">Residência compartilhada</option><option value="FAMILY_HOME">Casa da família</option><option value="EXISTING">Voltar ao orçamento atual (sem custo extra)</option></select>
-      <input type="number" min={0} value={cost} onChange={(e) => setCost(e.target.value)} aria-label="Custo mensal" />
-      <button className="btn primary small" disabled={busy} onClick={() => void act(() => sim.lifeMove(kind, cost), () => "Mudança agendada para o próximo mês: os custos antigos terminam e os novos começam lá.")}>Agendar mudança</button>
+    <div className="stack">
+      <div className="row">
+        <select value={kind} onChange={(e) => setKind(e.target.value)}>
+          <option value="RENT">Alugar um imóvel só para mim</option><option value="SHARED">Alugar uma residência compartilhada</option><option value="FAMILY_HOME">Morar na casa de familiares</option><option value="EXISTING">Voltar ao orçamento atual (sem custo extra)</option></select>
+        {rent && <label className="row small">Quanto quero pagar (R$/mês)<input type="number" min={0} value={cost} onChange={(e) => setCost(e.target.value)} style={{ width: 120 }} /></label>}
+        <button className="btn primary small" disabled={busy} onClick={() => void go()}>{rent ? "🔎 Procurar imóvel" : "Agendar mudança"}</button>
+      </div>
+      {rent && <p className="muted small" style={{ margin: 0 }}>Você diz quanto quer pagar; <b>o jogo decide se existe uma oferta</b> nesse valor e em que condições. Quanto mais barato, pior costuma ser o lugar — e onde você mora afeta a saúde, o bem-estar e a satisfação.</p>}
+      {err && <div className="alert">{err}</div>}
+      {offer && (
+        <div className="modal-back" role="dialog" aria-modal="true" aria-label="Resultado da busca de imóvel">
+          <div className="card modal">
+            <div className="row between"><h2>{offer.available ? "🏠 Encontramos uma oferta!" : "😕 Sem oferta por esse valor"}</h2><button className="link-btn" onClick={() => setOffer(null)}>fechar ✕</button></div>
+            <p>{offer.message}</p>
+            {offer.available && (<>
+              <div className="card"><b>{offer.title}</b><p style={{ margin: "6px 0" }}>{offer.description}</p>
+                <p className="small" style={{ margin: 0 }}>Aluguel: <b>{fmtBRL(offer.rent ?? "0")}</b> por mês · Condição: {["muito precária", "ruim", "simples", "boa", "muito boa", "ótima", "excelente"][(offer.quality ?? 0) + 3]}</p></div>
+              <div className={`notice`}>{(offer.quality ?? 0) < 0 ? "⚠️" : (offer.quality ?? 0) > 0 ? "✨" : "🙂"} {offer.effect}</div>
+              <div className="row"><button className="btn primary" disabled={busy} onClick={() => { setOffer(null); void act(() => sim.lifeMove(kind, cost), () => "Mudança agendada: o aluguel começa no próximo mês."); }}>Alugar este imóvel</button>
+                <button className="btn ghost" onClick={() => setOffer(null)}>Continuar procurando</button></div></>)}
+            {!offer.available && <button className="btn primary" onClick={() => setOffer(null)}>Tentar outro valor</button>}
+          </div>
+        </div>)}
     </div>
   );
 }
@@ -201,7 +227,7 @@ function CareerTab({ life, busy, act }: { life: Life; busy: boolean; act: Act })
       {c.studying && (
         <section className="card stack"><h2>🎓 Cursando {c.studying.name}</h2>
           <Meter label={`${c.studying.progress} de ${c.studying.total} meses`} value={(c.studying.progress / c.studying.total) * 100} />
-          <p className="muted small">Custa mensalidade (~{fmtBRL(String(c.studying.cost))}/mês corrigida pela inflação da educação) e toma horas livres do seu mês.</p>
+          <p className="muted small">Custa mensalidade (~{fmtBRL(String(c.studying.cost))}/mês corrigida pela inflação da educação) e toma horas livres do seu mês. Na faculdade você também conhece gente nova.</p>
           <div><button className="btn danger small" disabled={busy} onClick={() => window.confirm("Trancar a faculdade? O que já estudou fica perdido.") && void act(sim.lifeDegreeDrop)}>Trancar a faculdade</button></div></section>)}
       <section className="card stack">
         <h2>🔀 Escolher outra área ou estudar</h2>

@@ -27,6 +27,7 @@ export function NewGamePage() {
   const [gender, setGender] = useState<"M" | "F" | "N">("N");
   const [interestedIn, setInterestedIn] = useState<"ANY" | "M" | "F">("ANY");
   const [field, setField] = useState("comercio");
+  const [age, setAge] = useState("");
   const [mode, setMode] = useState<"CAREER" | "FREE">("CAREER");
   const [scenario, setScenario] = useState("young_pro");
   const [cfg, setCfg] = useState({ cash: "20000", monthly_income: "4000", monthly_expenses: "2000", rent: "1000", age: "28" });
@@ -42,7 +43,7 @@ export function NewGamePage() {
       const g = await sim.createGame("LIFE", name.trim() || "Minha partida");
       created = g;
       gameStore.set({ id: g.id, kind: "LIFE", name: g.name });
-      const body: Record<string, unknown> = { mode, name: charName.trim() || "Você", seed: seed ? Number(seed) : undefined, gender, interested_in: interestedIn, career_field: field };
+      const body: Record<string, unknown> = { mode, name: charName.trim() || "Você", seed: seed ? Number(seed) : undefined, gender, interested_in: interestedIn, career_field: field, age: age ? Number(age) : undefined };
       if (mode === "CAREER") body.scenario = scenario;
       else body.free = { cash: cfg.cash, monthly_income: cfg.monthly_income, monthly_expenses: cfg.monthly_expenses, rent: cfg.rent, age: Number(cfg.age) };
       await sim.gameStart(body);
@@ -68,6 +69,7 @@ export function NewGamePage() {
           <input className="xl" value={name} onChange={(e) => setName(e.target.value)} maxLength={60} />
           <p className="muted">Você pode ter várias partidas salvas e voltar nelas quando quiser.</p>
           <h2>Quem é o seu personagem?</h2>
+          <label className="stack"><span>🎂 Idade inicial (18 a 80) — vazio = a do cenário</span><input className="xl" value={age} onChange={(e) => setAge(e.target.value.replace(/\D/g, ""))} inputMode="numeric" maxLength={2} placeholder="ex.: 18" style={{ maxWidth: 160 }} /></label>
           <label className="stack"><span>Nome do personagem</span><input className="xl" value={charName} onChange={(e) => setCharName(e.target.value)} maxLength={60} placeholder="Como você quer ser chamado" /></label>
           <div><span className="muted small">Sexo</span>
             <div className="seg compact" style={{ marginTop: 6 }}>

@@ -2,6 +2,7 @@ import { Link } from "react-router-dom";
 import { Suspense, lazy, useCallback, useEffect, useState } from "react";
 import { CloseModal, EntryModal, ItemModal } from "../components/BudgetModals";
 import { DebtCard } from "../components/DebtCard";
+import { InvestPlanCard } from "../components/InvestPlanCard";
 import { DecisionModal } from "../components/DecisionModal";
 import { sim, type EcoEvent } from "../services/sim";
 import { StatCard } from "../components/StatCard";
@@ -109,6 +110,7 @@ export function BudgetPage() {
             <EntriesTable entries={entries} canReverse onReverse={(e) => act(() => api.budgetReverseEntry(e.id), "Estorno registrado.")} />
           </section>
 
+          <InvestPlanCard onChange={() => void reload()} />
           <DebtCard onChange={() => void reload()} />
           <section className="card"><h2>Categorias</h2><p className="muted small">As categorias que você usa (ativar, desativar, criar) ficam nas <Link to="/configuracoes">configurações da conta</Link> e valem para todas as suas partidas.</p></section>
         </>

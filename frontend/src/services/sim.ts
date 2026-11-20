@@ -18,7 +18,7 @@ export interface Career {
 }
 export interface Life {
   month: string; character: { name: string; age_years: number; gender: string; interested_in: string }; career: Career; attributes: Attrs; choices: Record<string, string>;
-  options: Record<string, string[]>; housing: { kind: string; monthly_cost: string; pending: { kind: string; monthly_cost: string; effective_month: string } | null };
+  options: Record<string, string[]>; housing: { quality: number; description: string; kind: string; monthly_cost: string; pending: { kind: string; monthly_cost: string; effective_month: string } | null };
   pregnancy_due_month: string | null; relationships: Rel[]; children: Kid[]; expenses: FamExpense[]; family_expense_total: string;
   activities: { key: string; label: string; cost: number; hours: number }[]; interactions: { key: string; label: string; cost: number; hours: number }[];
   history: { month: string; kind: string; text: string }[];
@@ -58,6 +58,13 @@ export interface Debt {
   cash: string; overdraft: string; balance: string; overdraft_limit: string; overdraft_rate: string; loan_rate: string; credit_limit: string;
   min_term: number; max_term: number; total_debt: string; ended: string | null;
   loans: { id: number; principal: string; balance: string; rate: string; term: number; status: string; start: string; next_payment: string | null; next_due: string | null }[];
+}
+export interface HousingOffer { available: boolean; budget: string; rent?: string; quality?: number; title?: string; tier?: string; description?: string; effect?: string; message: string }
+export interface PlanRow { key: string; label: string; target_pct: number; target_amount: string; current: string; missing: string; filled_pct: number; month_pct: number; month_amount: string }
+export interface InvestPlan {
+  profile: string; profile_label: string; profile_text: string; quiz_score: number | null; wanted: string[]; customized: boolean; goal_total: string; goal_is_custom: boolean;
+  invested_now: string; recommended: { amount: string; surplus: string; share_pct: number; reserve_mode: boolean; reason: string }; planned_investment: string;
+  rows: PlanRow[]; classes: { key: string; label: string }[]; profiles: { key: string; label: string; text: string; alloc: Record<string, number> }[];
 }
 export interface CareerPerf {
   series: { month: string; net_worth: number; net_worth_real: number; income: number; expense: number; result: number; debts: number; savings_rate: number | null;
@@ -99,6 +106,12 @@ const post = (body: unknown = {}) => ({ method: "POST", body: JSON.stringify(bod
 export interface AccountCategory { id: number; kind: "INCOME" | "EXPENSE"; name: string; active: boolean }
 
 export const sim = {
+  searchHousing: (budget: string) => request<HousingOffer>("/life/housing/search", post({ budget })),
+  investPlan: () => request<InvestPlan>("/invest-plan"),
+  investSettings: (b: { profile?: string; wanted?: string[]; alloc?: Record<string, number>; goal_total?: string }) => request<InvestPlan>("/invest-plan", put(b)),
+  investQuiz: () => request<{ questions: { text: string; options: string[] }[] }>("/invest-plan/quiz"),
+  investQuizSubmit: (answers: number[]) => request<InvestPlan>("/invest-plan/quiz", post({ answers })),
+  investApply: () => request<InvestPlan>("/invest-plan/apply", post()),
   debt: () => request<Debt>("/debt"),
   takeLoan: (amount: string, term_months: number) => request<Debt>("/debt/loans", post({ amount, term_months })),
   prepayLoan: (id: number) => request<Debt>(`/debt/loans/${id}/prepay`, post()),
