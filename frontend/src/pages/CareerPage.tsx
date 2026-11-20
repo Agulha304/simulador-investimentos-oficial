@@ -70,6 +70,12 @@ function Now({ c, busy, act }: P) {
         <p className="muted small">Mais horas rendem mais, mas cansam e tiram tempo da vida pessoal. Tempo livre neste mês: <b>{c.free_hours}h</b>.</p>
         <div className="seg compact">{c.work_options.map((o) => <button key={o} className={c.work_level === o ? "on" : ""} disabled={busy} onClick={() => void act(() => sim.careerWork(o))}>{WORK[o]}</button>)}</div>
       </section>
+      <section className="card stack">
+        <h2>📈 Reconhecimento e aumento</h2>
+        <div className="row"><span style={{ width: 150 }}>Mérito no trabalho</span><div className="meter-bar" style={{ flex: 1 }}><i style={{ width: `${c.merit}%` }} /></div><b className="num">{c.merit}/{c.merit_needed}+</b></div>
+        <p className="muted small" style={{ margin: 0 }}>Trabalhar bastante (jornada intensa) e tomar boas decisões no trabalho acumula mérito. Com {c.merit_needed} ou mais, a empresa pode dar um aumento por conta própria. Você também pode pedir: a chance hoje é de <b>{c.raise_chance}%</b> e depende do seu mérito (só CLT, a cada 6 meses).</p>
+        <div><button className="btn primary small" disabled={busy || cur.length === 0} onClick={() => void act(sim.careerAskRaise, (r) => r.raise_result ? (r.raise_result.granted ? "🎉 " : "😕 ") + r.raise_result.text : null)}>Pedir aumento</button></div>
+      </section>
       <h2>Empregos atuais</h2>
       {cur.length === 0 && <p className="muted">Nenhum emprego no momento. Use a aba <b>Procurar emprego</b>.</p>}
       <div className="cols-2">{cur.map((j) => <JobCard key={j.id} j={j} busy={busy} act={act} />)}</div>

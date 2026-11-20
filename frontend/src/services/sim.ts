@@ -118,6 +118,7 @@ export interface CareerHub {
   salary: string; jobs: HubJob[]; fgts_balance: string; fgts_can_withdraw: boolean; work_level: string; work_options: string[]; free_hours: number;
   resume_scores: Record<string, { score: number; label: string; emoji: string }>; resume_items: { kind: string; name: string; points: number }[];
   applications: HubApplication[]; applications_left: number; fields: { key: string; label: string; emoji: string }[];
+  merit: number; merit_needed: number; raise_chance: number; raise_ready_in: number; raise_result?: { granted: boolean; pct: number; chance: number; text: string };
   rules: { pj_premium_pct: number; apply_hours: number; pj_extra_hours: number }; result?: { status: string; chance: number; title: string; employer: string; app_id: number };
 }
 export interface Gig { key: string; field: string; field_label: string; title: string; hours: number; pay: string; taken: boolean }
@@ -136,6 +137,7 @@ export const sim = {
   careerQuit: (id: number) => request<CareerHub>(`/career/jobs/${id}/quit`, post()),
   careerResume: (kind: string, id: number, in_resume: boolean) => request<CareerHub>("/career/resume", put({ kind, id, in_resume })),
   careerWork: (work_level: string) => request<CareerHub>("/career/work", put({ work_level })),
+  careerAskRaise: () => request<CareerHub>("/career/raise/ask", post()),
   careerFgts: () => request<CareerHub>("/career/fgts/withdraw", post()),
   freelance: (field: string) => request<{ field: string; free_hours: number; score: number; gigs: Gig[] }>(`/career/freelance?field=${field}`),
   freelanceAccept: (field: string, key: string) => request<CareerHub>("/career/freelance/accept", post({ field, key })),

@@ -412,6 +412,8 @@ def process_month(db: Session, p: LifeProfile, ref: date) -> None:
             plan = plan or j.health_plan
     if plan:
         p.health = ls._clamp(p.health + 1)                                      # plano de saúde do emprego
+    if active_jobs(db, p.user_id, ref):                                         # trabalhar muito gera mérito; trabalhar pouco, não
+        add_merit(p, {"INTENSE": 12, "NORMAL": 2, "REDUCED": -4}.get(p.work_level, 0))
     p.fgts_release = ZERO
     recalc_hours(db, p.user_id)
 
@@ -430,3 +432,99 @@ def withdraw_fgts(db: Session, user_id: int, month: SimMonth) -> Decimal:
     db.flush()
     ls.sync_month(db, user_id, month)
     return amount
+
+
+# ------------------------------------------------------------------ aumento por mérito e pedido de aumento
+RAISE_COOLDOWN = 6                     # meses entre aumentos / pedidos
+MERIT_NEEDED = 60
+
+
+def _top_job(db: Session, user_id: int, ref: date) -> CareerJob | None:
+    act = [j for j in active_jobs(db, user_id, ref)]
+    return max(act, key=lambda j: job_net(db, j, ref), default=None)
+
+
+def raise_salary(db: Session, user_id: int, job: CareerJob, effective: date, pct: float) -> None:
+    """Aumento de verdade: nova versão do salário do emprego a partir de `effective` (o histórico fica)."""
+    cat = db.scalar(select(BudgetCategory.id).where(BudgetCategory.user_id == user_id, BudgetCategory.kind == FlowKind.INCOME, BudgetCategory.name == "Salário"))
+    linked = _linked_ids(db, user_id)
+    for r in db.scalars(select(RecurringItem).where(RecurringItem.user_id == user_id, RecurringItem.category_id == cat, RecurringItem.active.is_(True))):
+        if (job.recurring_item_id and r.id != job.recurring_item_id) or (not job.recurring_item_id and r.id in linked):
+            continue
+        cur = budget_service.version_amount(db, r.id, effective)
+        if not cur:
+            continue
+        new = quantize_money(cur * D(str(1 + pct / 100)))
+        ex = db.scalar(select(RecurringItemVersion).where(RecurringItemVersion.item_id == r.id, RecurringItemVersion.effective_from == effective))
+        if ex:
+            ex.amount = new
+        else:
+            db.add(RecurringItemVersion(item_id=r.id, amount=new, effective_from=effective))
+    db.flush()
+
+
+def add_merit(p: LifeProfile, n: int) -> None:
+    p.merit = max(0, min(100, (p.merit or 0) + n))
+
+
+def months_since_raise(db: Session, p: LifeProfile, ref: date) -> int:
+    last = max([d for d in (p.last_raise_month, p.career_since) if d] or [ref])
+    return budget_service.months_between(last, ref)
+
+
+def raise_chance(db: Session, p: LifeProfile, ref: date) -> int:
+    ch = 0.12 + (p.merit or 0) * 0.006 + (0.06 if (p.degrees or []) else 0.0) + (0.04 if p.satisfaction >= 60 else 0.0)
+    return int(round(max(0.05, min(0.70, ch)) * 100))
+
+
+def ask_raise(db: Session, user_id: int, month: SimMonth) -> dict:
+    budget_service.require_open(month)
+    ensure_jobs(db, user_id, month)
+    p = _profile(db, user_id)
+    ref = month.ref_month
+    job = _top_job(db, user_id, ref)
+    if job is None:
+        raise ConflictError("você não tem emprego para pedir aumento")
+    if job.kind == "PJ":
+        raise ConflictError("no PJ você renegocia o contrato ao trocar de cliente: aumento só em emprego CLT")
+    if budget_service.months_between(job.start_month, ref) < RAISE_COOLDOWN:
+        raise ConflictError("espere pelo menos 6 meses no emprego antes de pedir aumento")
+    if p.raise_asked_month and budget_service.months_between(p.raise_asked_month, ref) < RAISE_COOLDOWN:
+        raise ConflictError("você já pediu aumento há pouco tempo: espere 6 meses")
+    chance = raise_chance(db, p, ref)
+    p.raise_asked_month = ref
+    ok = hash01("ask-raise", user_id, ref.isoformat()) * 100 < chance
+    if ok:
+        pct = round(5 + 7 * hash01("raise-pct", user_id, ref.isoformat()), 1)
+        raise_salary(db, user_id, job, budget_service.shift_month(ref, 1), pct)
+        p.last_raise_month, p.merit = ref, max(0, (p.merit or 0) - 25)
+        p.satisfaction = ls._clamp(p.satisfaction + 4)
+        text = f"Seu chefe concedeu um aumento de {pct:.1f}% a partir do mês que vem!"
+    else:
+        pct = 0.0
+        add_merit(p, -5)
+        ls._hit_mood(p, -2, -3)
+        text = "Seu chefe disse que agora não dá. Mostre mais resultado e tente de novo em 6 meses."
+    ls.log(db, user_id, ref, "RAISE_ASK", f"Pedido de aumento: {text}")
+    db.flush()
+    ls.sync_month(db, user_id, month)
+    return {"granted": ok, "pct": pct, "chance": chance, "text": text}
+
+
+def merit_raise_on_open(db: Session, user_id: int, new_month: SimMonth) -> None:
+    """Abertura do mês: quem trabalhou muito e acumulou mérito pode ganhar um aumento espontâneo."""
+    p = ls.get_profile(db, user_id, create=False, lock=True)
+    if p is None or (p.merit or 0) < MERIT_NEEDED:
+        return
+    ref = new_month.ref_month
+    job = _top_job(db, user_id, ref)
+    if job is None or job.kind != "CLT" or months_since_raise(db, p, ref) < RAISE_COOLDOWN:
+        return
+    if hash01("merit-raise", user_id, ref.isoformat()) > 0.45:
+        return
+    pct = round(4 + 6 * hash01("merit-pct", user_id, ref.isoformat()), 1)
+    raise_salary(db, user_id, job, ref, pct)
+    p.last_raise_month, p.merit = ref, 15
+    p.satisfaction = ls._clamp(p.satisfaction + 5)
+    ls.log(db, user_id, ref, "RAISE_MERIT", f"Por todo o seu empenho, a empresa deu um aumento de {pct:.1f}% em {job.title}!")
+    db.flush()

@@ -87,6 +87,8 @@ def _overview(db, user_id: int) -> dict:
             "work_level": p.work_level, "work_options": list(R.LEVELS["work_level"]), "free_hours": ls.free_hours(p) - p.hours_used,
             "resume_scores": scores, "resume_items": items, "applications": apps, "applications_left": H.MAX_APPLICATIONS - len(apps),
             "fields": [{"key": k, "label": f["label"], "emoji": f["emoji"]} for k, f in career_rules.FIELDS.items()],
+            "merit": p.merit, "merit_needed": ch.MERIT_NEEDED, "raise_chance": ch.raise_chance(db, p, ref),
+            "raise_ready_in": max(0, ch.RAISE_COOLDOWN - (bs.months_between(p.raise_asked_month, ref) if p.raise_asked_month else ch.RAISE_COOLDOWN)),
             "rules": {"pj_premium_pct": int((H.PJ_PREMIUM * (1 - H.PJ_TAX) - 1) * 100), "apply_hours": H.APPLY_HOURS, "pj_extra_hours": H.PJ_EXTRA_HOURS}}
 
 
@@ -142,6 +144,14 @@ def work(body: WorkIn, user: CurrentUser, db: DbSession):
     def go():
         ls.set_choices(db, user.id, bs.ensure_setup(db, user.id), work_level=body.work_level)
         return _overview(db, user.id)
+    return _run(db, go)
+
+
+@router.post("/raise/ask")
+def ask_raise(user: CurrentUser, db: DbSession):
+    def go():
+        res = ch.ask_raise(db, user.id, bs.ensure_setup(db, user.id))
+        return {**_overview(db, user.id), "raise_result": res}
     return _run(db, go)
 
 

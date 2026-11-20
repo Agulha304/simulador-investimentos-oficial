@@ -44,6 +44,8 @@ class LifeProfile(Base):
     degree_total: Mapped[int] = mapped_column(Integer, default=0)
     degrees: Mapped[list] = mapped_column(JSON, default=list)                  # áreas em que já se formou
     pending_career: Mapped[dict | None] = mapped_column(JSON)                 # mudança de área combinada para o mês seguinte
+    merit: Mapped[int] = mapped_column(Integer, default=0, server_default="0")                   # mérito acumulado no trabalho (0..100)
+    raise_asked_month: Mapped[date | None] = mapped_column(Date)                                  # último pedido de aumento
     fgts_balance: Mapped[Decimal] = mapped_column(Money(), default=0, server_default="0")          # FGTS acumulado (CLT)
     fgts_release: Mapped[Decimal] = mapped_column(Money(), default=0, server_default="0")          # FGTS sacado para receber neste mês
     career_hours: Mapped[int] = mapped_column(Integer, default=0, server_default="0")             # horas/mês de cursos e empregos extras

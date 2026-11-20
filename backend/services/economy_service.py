@@ -347,6 +347,19 @@ def _activate(db: Session, ev: WorldEvent, ref: date) -> None:
             for attr, delta in life_fx.items():
                 setattr(prof, attr, life_service._clamp(getattr(prof, attr) + delta))
             life_service.log(db, ev.user_id, ref, "EVENT", f"{ev.name}: {ev.description}", event_id=ev.id)
+    wk = fx.get("merit") or fx.get("raise_pct")
+    if wk:
+        from backend.services import career_hub
+        prof = life_service.get_profile(db, ev.user_id, create=False)
+        if prof is not None:
+            if fx.get("merit"):
+                career_hub.add_merit(prof, fx["merit"])
+            if fx.get("raise_pct"):
+                job = career_hub._top_job(db, ev.user_id, ref)
+                if job is not None:
+                    career_hub.raise_salary(db, ev.user_id, job, budget_service.shift_month(ref, 1), fx["raise_pct"])
+                    prof.last_raise_month = ref
+                    life_service.log(db, ev.user_id, ref, "RAISE", f"Aumento de {fx['raise_pct']}% concedido ({ev.name})")
     meet = fx.pop("meet", None)
     if meet:
         prof = life_service.get_profile(db, ev.user_id, create=False)
@@ -409,7 +422,7 @@ def _default_mood(fx: dict) -> tuple[int, int]:
         w, sat = 2, 2
     if fx.get("company_income"):
         w, sat = w + 2, sat + 2
-    pct = fx.get("income_pct", 0)
+    pct = fx.get("income_pct", 0) or fx.get("raise_pct", 0)
     if pct > 0:
         w, sat = w + 2, sat + 3
     elif pct < 0:

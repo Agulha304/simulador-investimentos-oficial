@@ -256,7 +256,7 @@ MONTHLY: tuple[EventDef, ...] = (
                       _o("presente", "Comprar algo especial", "Gasta uma parte, mas traz alegria.", _oc(1.0, "Você se presenteou: valeu a pena!", {"oneoff": [_in(1200, "Bônus recebido"), _out(700, "Presente para você")], "life": {"wellbeing": 4, "satisfaction": 3}})))),
     EventDef("d_aumento", "Pedir um aumento?", "Você sente que está na hora de conversar com o chefe sobre o salário.", "FINANCIAL", "USER", True, 1, (1, 1), 0.8,
              lambda m, c: _has_salary(m, c) * (1.0 if c["months"] >= 6 else 0.0),
-             options=(_o("pedir", "Pedir o aumento", "Pode dar certo... ou não.", _oc(0.4, "Seu chefe aprovou: salário maior por um ano!", {"income_pct": 8, "life": {"satisfaction": 3}}, 12),
+             options=(_o("pedir", "Pedir o aumento", "Pode dar certo... ou não.", _oc(0.4, "Seu chefe aprovou: salário maior por um ano!", {"raise_pct": 8, "life": {"satisfaction": 3}}),
                          _oc(0.6, "Dessa vez não deu, mas você mostrou iniciativa.", {"life": {"wellbeing": -2}})),
                       _o("esperar", "Esperar mais um pouco", "Sem risco.", _oc(1.0, "Você decidiu esperar.", {}), default=True))),
     EventDef("d_bico", "Bico de fim de semana", "Um conhecido ofereceu um trabalho extra por R$ 900.", "FINANCIAL", "USER", True, 1, (1, 1), 1.0, _always,
@@ -380,6 +380,40 @@ def _with_meet(d: EventDef) -> EventDef:
         opts.append(o)
     return _dc.replace(d, options=tuple(opts))
 
+
+# ------------------------------------------------------------ trabalho e decisões com várias escolhas (3 ou 4 opções)
+_has_job = lambda m, c: 1.0 if c["salary"] > 0 and c["months"] >= 3 else 0.0       # noqa: E731
+MONTHLY = MONTHLY + (
+    EventDef("d_trab_projeto", "Projeto importante na empresa", "Sua equipe precisa entregar um projeto grande. O que você faz?", "FINANCIAL", "USER", True, 1, (1, 1), 1.0, _has_job,
+             options=(_o("extra", "Assumir e fazer hora extra", "Cansa, mas a chefia nota.", _oc(0.4, "A entrega foi um sucesso e você foi reconhecido(a): aumento!", {"merit": 20, "raise_pct": 6, "life": {"health": -1, "wellbeing": -1, "satisfaction": 3}}),
+                                                          _oc(0.6, "Você se esforçou muito e a diretoria percebeu.", {"merit": 20, "life": {"health": -1, "wellbeing": -2}})),
+                      _o("combinado", "Fazer só o combinado", "Sem sobrecarga.", _oc(1.0, "Você cumpriu o que foi pedido.", {"merit": 3})),
+                      _o("melhoria", "Propor um jeito de economizar para a empresa", "Exige pensar fora da caixa.", _oc(0.35, "A ideia economizou muito dinheiro para a empresa e rendeu um aumento!", {"merit": 14, "raise_pct": 5, "life": {"satisfaction": 3}}),
+                         _oc(0.65, "A ideia foi elogiada e anotada.", {"merit": 12, "life": {"satisfaction": 1}})),
+                      _o("recusar", "Dizer que não dá", "Preserva o seu tempo.", _oc(1.0, "A chefia ficou desapontada.", {"merit": -6, "life": {"wellbeing": 1}}), default=True))),
+    EventDef("d_trab_cliente", "Cliente difícil", "Um cliente importante está insatisfeito e ameaça cancelar o contrato com a empresa.", "FINANCIAL", "USER", False, 1, (1, 1), 0.9, _has_job,
+             options=(_o("resolver", "Ficar até resolver o problema", "Desgasta, mas salva o cliente.", _oc(0.6, "O cliente ficou e a empresa agradeceu muito.", {"merit": 18, "life": {"wellbeing": -1, "satisfaction": 2}}),
+                         _oc(0.4, "Mesmo com esforço, o cliente saiu. Mas viram sua dedicação.", {"merit": 9, "life": {"wellbeing": -2}})),
+                      _o("equipe", "Chamar a equipe para dividir o problema", "Mais seguro e divide o mérito.", _oc(1.0, "Em equipe, o problema foi resolvido.", {"merit": 8, "life": {"satisfaction": 1}})),
+                      _o("passar", "Passar o caso para o chefe", "Sem risco para você.", _oc(1.0, "O chefe resolveu, mas notou a sua omissão.", {"merit": -4}), default=True))),
+    EventDef("d_trab_proposta", "Outra empresa quer contratar você", "Um recrutador ofereceu uma vaga parecida na concorrência, pagando mais.", "FINANCIAL", "USER", True, 1, (1, 1), 0.6,
+             lambda m, c: _has_job(m, c) * (1.0 if c["months"] >= 8 else 0.0),
+             options=(_o("negociar", "Usar a proposta para negociar um aumento", "Arriscado: o chefe pode se irritar.", _oc(0.4, "Para não perder você, a empresa cobriu a oferta!", {"raise_pct": 10, "merit": 4, "life": {"satisfaction": 3}}),
+                         _oc(0.35, "O chefe não gostou da chantagem.", {"merit": -12, "life": {"wellbeing": -2}}), _oc(0.25, "Nada mudou, mas ficou combinado conversar depois.", {})),
+                      _o("agradecer", "Agradecer e ficar onde está", "Lealdade vale pontos.", _oc(1.0, "A chefia soube da sua lealdade.", {"merit": 6, "life": {"satisfaction": 1}}), default=True),
+                      _o("conversar", "Pedir mais responsabilidades à empresa", "Mostra ambição sem ameaçar.", _oc(0.5, "Você ganhou um cargo maior e um aumento!", {"raise_pct": 7, "merit": 8, "life": {"satisfaction": 3}}),
+                         _oc(0.5, "Você ganhou novas tarefas, por enquanto sem reajuste.", {"merit": 10, "life": {"wellbeing": -1}})))),
+    EventDef("d_fim_de_semana", "Como usar o seu fim de semana?", "Você tem um fim de semana livre pela frente.", "PERSONAL", "USER", True, 1, (1, 1), 1.0, _always,
+             options=(_o("descansar", "Descansar em casa", "Recupera as energias.", _oc(1.0, "Você descansou e voltou renovado(a).", {"life": {"health": 2, "wellbeing": 3}}), default=True),
+                      _o("passear", "Passear com quem você gosta (R$ 200)", "Diversão e convivência.", _oc(1.0, "O passeio foi ótimo.", {"oneoff": [_out(200, "Passeio de fim de semana")], "life": {"satisfaction": 3, "social": 2}}), cost=200),
+                      _o("estudar", "Estudar algo novo", "Investe em você.", _oc(1.0, "Você aprendeu bastante.", {"life": {"quality": 2, "wellbeing": -1}, "merit": 3})),
+                      _o("bico", "Fazer um bico (R$ 300)", "Dinheiro extra, menos descanso.", _oc(1.0, "O bico rendeu um dinheirinho.", {"oneoff": [_in(300, "Bico de fim de semana", "outros")], "life": {"wellbeing": -2}})))),
+    EventDef("d_dinheiro_sobrando", "Sobrou um dinheiro", "No fim do mês sobraram R$ 1.500. O que fazer?", "FINANCIAL", "USER", True, 1, (1, 1), 0.9, _has_salary,
+             options=(_o("reserva", "Reforçar a reserva de emergência", "Mais segurança.", _oc(1.0, "Você ficou mais tranquilo(a) com a reserva maior.", {"life": {"satisfaction": 2}}), default=True),
+                      _o("curso", "Pagar um curso (R$ 600)", "Investe na carreira.", _oc(1.0, "O curso abriu portas no trabalho.", {"oneoff": [_out(600, "Curso de aperfeiçoamento", "educacao")], "life": {"quality": 2}, "merit": 6}), cost=600),
+                      _o("viagem", "Fazer uma viagem (R$ 1.200)", "Memórias e descanso.", _oc(1.0, "A viagem foi inesquecível!", {"oneoff": [_out(1200, "Viagem")], "life": {"satisfaction": 4, "wellbeing": 3}}), cost=1200),
+                      _o("dividas", "Antecipar o pagamento de dívidas", "Menos juros no futuro.", _oc(1.0, "Você se sentiu mais leve sem tantas parcelas.", {"life": {"satisfaction": 2, "wellbeing": 1}})))),
+)
 
 MONTHLY = tuple(_with_meet(d) for d in MONTHLY)
 MONTHLY_BY_KEY = {e.key: e for e in MONTHLY}

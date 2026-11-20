@@ -765,6 +765,8 @@ def apply_career_changes(db: Session, user_id: int, new_month: SimMonth) -> None
         log(db, user_id, ref, "RAISE", f"Reajuste anual de {pct:.1f}% em {career_rules.FIELDS[p.career_field]['label']}")
     if factor != 1.0:
         _apply_salary_factor(db, user_id, ref, factor)
+    from backend.services import career_hub
+    career_hub.merit_raise_on_open(db, user_id, new_month)
 
 
 # ------------------------------------------------------------------ moradia

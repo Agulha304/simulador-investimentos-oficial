@@ -164,3 +164,42 @@ def test_company_price_has_a_ceiling_and_real_estate_is_harder(client, auth_head
     re_seg = next(s for s in cr.SEGMENTS.values() if s.key.value == "REAL_ESTATE_AGENCY")
     rs = next(s for s in cr.SEGMENTS.values() if s.key.value == "RESTAURANT")
     assert cr.price_factor(re_seg, re_seg.price * Dd("1.5")) < cr.price_factor(rs, rs.price * Dd("1.5"))
+
+
+# ------------------------------------------------------------------ mérito, aumento e decisões com várias opções
+def test_working_hard_builds_merit_and_eventually_brings_a_raise(client, auth_headers):
+    g, h = _free_world(client, auth_headers, cash=30000, income=4000, expenses=1500, rent=0, name="Esforçado", seed=21)
+    assert client.put(f"{C}/work", headers=h, json={"work_level": "INTENSE"}).status_code == 200
+    start = D(career(client, h)["salary"])
+    _advance(client, h, 14)
+    j = career(client, h)
+    assert D(j["salary"]) > start, "trabalhar muito deveria render um aumento em 14 meses"
+    lazy = _free_world(client, auth_headers, cash=30000, income=4000, expenses=1500, rent=0, name="Preguiçoso", seed=21)[1]
+    client.put(f"{C}/work", headers=lazy, json={"work_level": "REDUCED"})
+    _advance(client, lazy, 14)
+    assert career(client, lazy)["merit"] == 0
+
+
+def test_ask_for_a_raise_rules_and_outcome(client, auth_headers):
+    g, h = _free_world(client, auth_headers, cash=30000, income=4000, expenses=1500, rent=0, name="Pede", seed=22)
+    assert client.post(f"{C}/raise/ask", headers=h).status_code == 409                                   # menos de 6 meses de casa
+    _advance(client, h, 7)
+    before = D(career(client, h)["salary"])
+    r = client.post(f"{C}/raise/ask", headers=h)
+    assert r.status_code == 200, r.text
+    res = r.json()["raise_result"]
+    assert 5 <= res["chance"] <= 70 and res["text"]
+    assert client.post(f"{C}/raise/ask", headers=h).status_code == 409                                   # espere 6 meses
+    _advance(client, h, 1)
+    after = D(career(client, h)["salary"])
+    assert (after > before) == res["granted"]
+
+
+def test_decisions_with_more_than_two_options_exist():
+    from backend.services import economy_events as E
+    many = [d for d in E.MONTHLY if len(d.options) >= 3]
+    assert len(many) >= 5 and any(d.key == "d_trab_projeto" and len(d.options) == 4 for d in many)
+    for d in E.MONTHLY:
+        for o in d.options:
+            assert abs(sum(x.prob for x in o.outcomes) - 1.0) < 1e-9, (d.key, o.key)
+        assert sum(1 for o in d.options if o.default) <= 1
