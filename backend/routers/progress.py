@@ -38,6 +38,7 @@ class StartIn(BaseModel):
     gender: str | None = None
     interested_in: str | None = None
     career_field: str | None = None
+    age: int | None = Field(default=None, ge=18, le=80)                  # idade inicial (vale também no modo carreira)
 
 
 class GoalIn(BaseModel):
@@ -69,7 +70,7 @@ def start(body: StartIn, user: CurrentUser, db: DbSession):
     return _run(db, lambda: ps.start_game(
         db, user.id, mode=body.mode, scenario_key=body.scenario, seed=body.seed, name=body.name,
         free=body.free.model_dump() if body.free else None, economy=body.economy, sim=body.sim,
-        gender=body.gender, interested_in=body.interested_in, career_field=body.career_field))
+        gender=body.gender, interested_in=body.interested_in, career_field=body.career_field, age_override=body.age))
 
 
 @router.get("/overview")

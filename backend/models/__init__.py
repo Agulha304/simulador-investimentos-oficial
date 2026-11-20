@@ -17,7 +17,7 @@ from backend.models.enums import (
     IndexName, Indexer, InvestmentStatus, Liquidity, PaymentFrequency, ProductSource, RateMode, RiskLevel,
     TaxRegime, TransactionSource, TransactionType,
 )
-from backend.models.debt import PersonalLoan, PersonalLoanInstallment
+from backend.models.debt import InvestorProfile, PersonalLoan, PersonalLoanInstallment
 from backend.models.economy import EconomicCrisis, EconomyState, GameProfile, SimPrice, WorldEvent
 from backend.models.fixed_income import FinancialEvent, FixedIncomeInvestment, FixedIncomeProduct, IndexRate
 from backend.models.goods import (
@@ -33,7 +33,7 @@ from backend.models.transaction import Transaction
 from backend.models.user import User
 
 __all__ = [
-    "PersonalLoan", "PersonalLoanInstallment",    "CompanyPartner", "PartnerInvite",    "ShortStayMonth",    "AccountCategory", "Game",
+    "InvestorProfile",    "PersonalLoan", "PersonalLoanInstallment",    "CompanyPartner", "PartnerInvite",    "ShortStayMonth",    "AccountCategory", "Game",
     "Achievement", "Goal", "MonthReport",
     "EconomicCrisis", "EconomyState", "GameProfile", "SimPrice", "WorldEvent",
     "Child", "LifeLog", "LifeProfile", "Person", "Relationship",

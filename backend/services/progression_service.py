@@ -373,7 +373,7 @@ def validate_free_config(cash: Decimal, salary: Decimal, expenses: list[P.Expens
 
 def start_game(db: Session, user_id: int, *, mode: str, scenario_key: str | None = None, seed: int | None = None,
                name: str = "Você", free: dict | None = None, economy: dict | None = None, sim: dict | None = None,
-               gender: str | None = None, interested_in: str | None = None, career_field: str | None = None) -> dict:
+               gender: str | None = None, interested_in: str | None = None, career_field: str | None = None, age_override: int | None = None) -> dict:
     if mode not in P.MODES:
         raise FinanceError("modo inválido (use FREE ou CAREER)")
     month = budget_service.ensure_setup(db, user_id)
@@ -411,6 +411,10 @@ def start_game(db: Session, user_id: int, *, mode: str, scenario_key: str | None
         raise FinanceError("área de atuação inválida")
     if mode == "CAREER":                  # cenário: a área ajusta levemente o salário inicial (todas começam parecidas); no modo livre vale o valor digitado
         salary = (salary * D(str(career_rules.FIELDS[career_field]["start"]))).quantize(D("0.01"))
+    if age_override is not None:
+        if not 18 <= age_override <= 80:
+            raise FinanceError("a idade inicial deve estar entre 18 e 80 anos")
+        age = age_override                               # dá para começar aos 18 anos também nos cenários da carreira
     seed = int(seed if seed is not None else user_id)
     _set_cash(db, user_id, cash)
     if salary > 0:

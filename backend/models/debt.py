@@ -2,7 +2,7 @@
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import Date, ForeignKey, Index, Integer, Numeric, String, UniqueConstraint
+from sqlalchemy import JSON, Date, ForeignKey, Index, Integer, Numeric, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.database import Base
@@ -37,3 +37,17 @@ class PersonalLoanInstallment(Base):
     amortization: Mapped[Decimal] = mapped_column(Money())
     balance_after: Mapped[Decimal] = mapped_column(Money())
     status: Mapped[str] = mapped_column(String(10), default="PENDING")  # PENDING | PAID | CANCELLED
+
+
+class InvestorProfile(Base):
+    """Perfil de investidor e carteira-alvo (orçamento de investimentos) da partida."""
+    __tablename__ = "investor_profiles"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), unique=True)
+    profile: Mapped[str] = mapped_column(String(14), default="MODERATE")        # CONSERVATIVE | MODERATE | AGGRESSIVE
+    wanted: Mapped[list] = mapped_column(JSON, default=list)                    # classes em que o jogador quer investir
+    target_alloc: Mapped[dict] = mapped_column(JSON, default=dict)              # classe -> % da carteira-alvo (soma 100)
+    goal_total: Mapped[Decimal | None] = mapped_column(Money())                 # objetivo de dinheiro investido (R$)
+    quiz_score: Mapped[int | None] = mapped_column(Integer)
+    customized: Mapped[bool] = mapped_column(default=False)                     # o jogador editou a carteira à mão
