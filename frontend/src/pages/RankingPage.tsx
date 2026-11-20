@@ -60,6 +60,7 @@ export function RankingPage() {
           )}
           {data.me_hidden && <div className="alert info">Você está oculto no ranking. Ative a opção abaixo para aparecer.</div>}
 
+          {board === "wealth" && <div className="notice">🏆 O ranking de patrimônio só conta partidas do <b>modo ranqueado</b> (18 anos, R$ 1.800/mês num subemprego): todo mundo começa igual.</div>}
           <section className="card">
             {data.entries.length === 0 ? <div className="empty">Ninguém no ranking ainda.</div> : (
               <div className="table-wrap"><table>

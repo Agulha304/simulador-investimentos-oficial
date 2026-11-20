@@ -132,7 +132,8 @@ def test_life_game_runs_the_whole_simulator_inside_its_world(client, auth_header
 
 def test_ranking_counts_game_worlds_for_their_owner(client, auth_headers, assets):
     t = new_game(client, auth_headers, "TRAINING", start_date="2024-01-01")
-    new_game(client, auth_headers, "LIFE", "V")
+    v = new_game(client, auth_headers, "LIFE", "V")
+    assert client.post("/api/game/start", headers=gh(auth_headers, v), json={"mode": "RANKED", "seed": 1}).status_code == 200      # só o modo ranqueado entra no ranking de patrimônio
     for board in ("return", "wealth"):
         j = client.get(f"/api/ranking?board={board}&period=all", headers=auth_headers).json()
         assert j["participants"] == 1 and j["entries"][0]["is_me"] is True, (board, j)

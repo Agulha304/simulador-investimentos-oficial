@@ -16,6 +16,8 @@ const LIFE_NAV = [
   { to: "/automoveis", icon: "🚗", label: "Automóveis" },
   { to: "/patrimonio", icon: "🎻", label: "Bens" },
   { to: "/vida", icon: "💖", label: "Vida pessoal" },
+  { to: "/carreira", icon: "💼", label: "Carreira" },
+  { to: "/educacao", icon: "🎓", label: "Educação" },
   { to: "/economia", icon: "🌍", label: "Economia" },
   { to: "/desempenho", icon: "🏅", label: "Desempenho" },
   { to: "/resumos", icon: "📊", label: "Resumos" },

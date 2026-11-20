@@ -2,6 +2,8 @@ import { Suspense, lazy } from "react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { GameLayout } from "./components/GameLayout";
 import { HubLayout } from "./components/HubLayout";
+import { CareerPage } from "./pages/CareerPage";
+import { EducationPage } from "./pages/EducationPage";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 import { BudgetPage } from "./pages/BudgetPage";
 import { CompaniesPage } from "./pages/CompaniesPage";
@@ -68,6 +70,8 @@ export default function App() {
               <Route path="automoveis" element={<WealthPage group="vehicles" />} />
               <Route path="patrimonio/:id" element={<GoodPage />} />
               <Route path="vida" element={<LifePage />} />
+              <Route path="carreira" element={<CareerPage />} />
+              <Route path="educacao" element={<EducationPage />} />
               <Route path="economia" element={<EconomyPage />} />
               <Route path="resumos" element={<ReportsPage />} />
               <Route path="desempenho" element={<DesempenhoPage />} />

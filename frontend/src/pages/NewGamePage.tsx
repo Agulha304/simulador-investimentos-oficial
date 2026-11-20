@@ -28,7 +28,7 @@ export function NewGamePage() {
   const [interestedIn, setInterestedIn] = useState<"ANY" | "M" | "F">("ANY");
   const [field, setField] = useState("comercio");
   const [age, setAge] = useState("");
-  const [mode, setMode] = useState<"CAREER" | "FREE">("CAREER");
+  const [mode, setMode] = useState<"CAREER" | "FREE" | "RANKED">("CAREER");
   const [scenario, setScenario] = useState("young_pro");
   const [cfg, setCfg] = useState({ cash: "20000", monthly_income: "4000", monthly_expenses: "2000", rent: "1000", age: "28" });
   const [seed, setSeed] = useState("");
@@ -45,7 +45,7 @@ export function NewGamePage() {
       gameStore.set({ id: g.id, kind: "LIFE", name: g.name });
       const body: Record<string, unknown> = { mode, name: charName.trim() || "Você", seed: seed ? Number(seed) : undefined, gender, interested_in: interestedIn, career_field: field, age: age ? Number(age) : undefined };
       if (mode === "CAREER") body.scenario = scenario;
-      else body.free = { cash: cfg.cash, monthly_income: cfg.monthly_income, monthly_expenses: cfg.monthly_expenses, rent: cfg.rent, age: Number(cfg.age) };
+      else if (mode === "FREE") body.free = { cash: cfg.cash, monthly_income: cfg.monthly_income, monthly_expenses: cfg.monthly_expenses, rent: cfg.rent, age: Number(cfg.age) };
       await sim.gameStart(body);
       nav("/painel");
     } catch (e) {
@@ -83,18 +83,23 @@ export function NewGamePage() {
       {step === 2 && (
         <section className="stack">
           <h2>Como você quer jogar?</h2>
-          <div className="big-cards two">
+          <div className="big-cards three">
             <button className={`big-card pick${mode === "CAREER" ? " on" : ""}`} onClick={() => setMode("CAREER")}>
               <span className="big-emoji">🧭</span><h2>Modo carreira</h2><p>Você começa numa situação pronta (cenário) e recebe objetivos para te guiar. Ótimo para aprender!</p></button>
             <button className={`big-card pick${mode === "FREE" ? " on" : ""}`} onClick={() => setMode("FREE")}>
               <span className="big-emoji">🎨</span><h2>Modo livre</h2><p>Você monta o começo do seu jeito e define as suas próprias metas. Sem regras de caminho.</p></button>
+            <button className={`big-card pick${mode === "RANKED" ? " on" : ""}`} onClick={() => setMode("RANKED")}>
+              <span className="big-emoji">🏆</span><h2>Modo ranqueado</h2><p>Todo mundo começa igual: 18 anos, R$ 1.800/mês num subemprego (caixa, repositor, atendente...). Só este modo entra no ranking!</p></button>
           </div>
           <div className="row"><button className="btn ghost" onClick={() => setStep(1)}>← Voltar</button><button className="btn primary big" onClick={() => setStep(3)}>Próximo →</button></div>
         </section>)}
 
       {step === 3 && info && (
         <section className="stack">
-          {mode === "CAREER" ? (
+          {mode === "RANKED" ? (
+            <div className="card stack"><h2>🏆 Largada igual para todos</h2>
+              <p>Você começa com <b>18 anos</b>, <b>R$ 1.800 por mês</b> num subemprego da área que escolher no passo anterior e <b>R$ 1.500</b> no bolso. A partir daí, evolua: estude, faça cursos, procure empregos melhores, invista e abra empresas. O seu patrimônio aparece no ranking.</p></div>
+          ) : mode === "CAREER" ? (
             <>
               <h2>Escolha o seu cenário</h2>
               <div className="big-cards five">{info.scenarios.map((s) => (

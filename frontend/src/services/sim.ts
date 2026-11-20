@@ -110,7 +110,38 @@ export interface BudgetImpact {
   effects: { label: string; text: string; spend: string | null; level: string | null; health: number; wellbeing: number; satisfaction: number; quality: number }[];
 }
 
+export interface HubJob { id: number; title: string; employer: string; field: string; field_label: string; kind: "CLT" | "PJ"; level_name: string; net: string; hired_net: string; since: string; until: string | null; status: "ACTIVE" | "PENDING" | "ENDED"; in_resume: boolean; hours: number; perks: string[]; end_reason: string | null }
+export interface JobOffer { key: string; field: string; field_label: string; level: number; level_name: string; need: number; title: string; employer: string; chance: number; applied: string | null; clt: { net: number; gross: number; vr: number; health_plan: boolean; fgts_month: number }; pj: { net: number } }
+export interface HubApplication { id: number; title: string; employer: string; status: "APPROVED" | "REJECTED" | "ACCEPTED"; chance: number; offer: JobOffer; can_accept: boolean }
+export interface CareerHub {
+  month: string; field: { key: string | null; label: string | null; emoji: string | null; outlook: string | null; growth_pct: number | null; next_raise: string | null };
+  salary: string; jobs: HubJob[]; fgts_balance: string; fgts_can_withdraw: boolean; work_level: string; work_options: string[]; free_hours: number;
+  resume_scores: Record<string, { score: number; label: string; emoji: string }>; resume_items: { kind: string; name: string; points: number }[];
+  applications: HubApplication[]; applications_left: number; fields: { key: string; label: string; emoji: string }[];
+  rules: { pj_premium_pct: number; apply_hours: number; pj_extra_hours: number }; result?: { status: string; chance: number; title: string; employer: string; app_id: number };
+}
+export interface Gig { key: string; field: string; field_label: string; title: string; hours: number; pay: string; taken: boolean }
+export interface EduRow { id: number; key: string; name: string; kind: "COURSE" | "DEGREE"; field: string; field_label: string; months_total: number; progress: number; cost_month: string; hours: number; status: "ACTIVE" | "DONE" | "DROPPED"; start: string; end: string | null; in_resume: boolean; points: number }
+export interface Education {
+  month: string; free_hours: number; history: EduRow[]; studying: { field: string; progress: number; total: number } | null;
+  courses: { key: string; name: string; field: string; field_label: string; months: number; cost_month: number; hours: number; points: number; status: string | null; id: number | null }[];
+  degrees: { key: string; label: string; emoji: string; degree: string; months: number; cost_month: number; hours: number; premium_pct: number; status: string | null }[];
+}
+
 export const sim = {
+  career: () => request<CareerHub>("/career"),
+  careerOffers: (field: string) => request<{ field: string; score: number; offers: JobOffer[] }>(`/career/offers?field=${field}`),
+  careerApply: (field: string, offer_key: string) => request<CareerHub>("/career/apply", post({ field, offer_key })),
+  careerAccept: (id: number, kind: string, replace_job_id?: number) => request<CareerHub>(`/career/applications/${id}/accept`, post({ kind, replace_job_id })),
+  careerQuit: (id: number) => request<CareerHub>(`/career/jobs/${id}/quit`, post()),
+  careerResume: (kind: string, id: number, in_resume: boolean) => request<CareerHub>("/career/resume", put({ kind, id, in_resume })),
+  careerWork: (work_level: string) => request<CareerHub>("/career/work", put({ work_level })),
+  careerFgts: () => request<CareerHub>("/career/fgts/withdraw", post()),
+  freelance: (field: string) => request<{ field: string; free_hours: number; score: number; gigs: Gig[] }>(`/career/freelance?field=${field}`),
+  freelanceAccept: (field: string, key: string) => request<CareerHub>("/career/freelance/accept", post({ field, key })),
+  education: () => request<Education>("/career/education"),
+  enrollCourse: (key: string) => request<Education>("/career/education/courses", post({ key })),
+  dropCourse: (id: number) => request<Education>(`/career/education/courses/${id}`, { method: "DELETE" }),
   budgetImpact: () => request<BudgetImpact>("/life/budget-impact"),
   searchHousing: (budget: string) => request<HousingOffer>("/life/housing/search", post({ budget })),
   investPlan: () => request<InvestPlan>("/invest-plan"),
