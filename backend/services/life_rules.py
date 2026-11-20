@@ -178,3 +178,32 @@ MEDICAL_CRISIS_COST = 900
 PREGNANCY_MONTHS = 9
 MIN_MONTHS_TO_MARRY = 6
 MIN_MONTHS_TO_COHABIT = 4
+
+
+# ---------------------------------------------------------------- histórias (aparecem em um aviso temporário depois de cada convivência)
+STORIES = {
+    "chat": ["Vocês passaram a tarde conversando sobre sonhos e planos para o futuro.", "{name} contou uma história engraçada da infância e vocês riram muito.",
+             "Vocês tiveram uma conversa sincera e se conheceram melhor."],
+    "walk": ["Vocês fizeram uma caminhada até um mirante e viram o pôr do sol.", "Vocês passearam pelo parque e descobriram uma cachoeira escondida.",
+             "Vocês andaram pela cidade e acharam uma livraria charmosa."],
+    "cook": ["Vocês cozinharam uma lasanha juntos — a cozinha ficou uma bagunça, mas estava deliciosa!", "Vocês testaram uma receita nova e {name} virou o chef da noite.",
+             "Vocês fizeram pães caseiros e a casa ficou com cheiro de padaria."],
+    "outing": ["Vocês jantaram em um restaurante aconchegante e brindaram ao acaso que uniu vocês.", "Vocês foram a uma sorveteria artesanal e provaram sabores malucos.",
+               "Vocês passaram uma noite especial num lugar novo da cidade."],
+    "trip": ["Vocês viajaram para uma praia tranquila e acordaram vendo o nascer do sol.", "Vocês exploraram uma cidadezinha histórica de mãos dadas.",
+             "Vocês acamparam sob as estrelas e conversaram até tarde."],
+    "movie": ["Vocês assistiram a um filme de aventura e discutiram o final por horas.", "Vocês viram uma série juntos e já combinaram o próximo episódio.",
+              "Vocês foram ao cinema e dividiram a pipoca com {name}."],
+    "game": ["Vocês jogaram um jogo cooperativo e salvaram o mundo juntos!", "{name} ganhou três partidas seguidas e pediu revanche.",
+             "Vocês participaram de um torneio de jogos de tabuleiro e quase brigaram pela vitória."],
+    "sport": ["Vocês jogaram vôlei de praia e terminaram exaustos e felizes.", "Vocês correram juntos no parque e fizeram uma pequena competição.",
+              "Vocês foram a uma aula de escalada e {name} se superou."],
+    "study": ["Vocês estudaram juntos para uma prova e se ajudaram a entender a matéria.", "Vocês montaram um plano de estudos e combinaram revisões semanais.",
+              "Vocês passaram a tarde na biblioteca, cada um com seu livro."],
+    "music": ["Vocês foram a um show ao vivo e cantaram todas as músicas.", "Vocês descobriram uma banda nova e já fizeram uma playlist juntos.",
+              "Vocês tocaram violão juntos e {name} arriscou cantar."],
+    "help": ["Vocês ajudaram uma ONG que salva baleias a organizar uma campanha.", "Vocês fizeram um mutirão para plantar mudas de árvores na cidade.",
+             "Vocês serviram refeições em um abrigo e foram aplaudidos pelos voluntários.", "Vocês arrecadaram agasalhos para famílias que precisavam."],
+    "tech": ["Vocês montaram um pequeno projeto de programação e viram o primeiro resultado funcionar.", "Vocês fizeram um curso online de tecnologia juntos.",
+             "Vocês consertaram um computador antigo e deram a ele nova vida."],
+}

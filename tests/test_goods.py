@@ -363,13 +363,13 @@ def test_rent_received_at_close_once_with_tax(client, auth_headers, db, monkeypa
     o = overview(client, auth_headers)
     rent = next(i for i in o["month"]["items"] if i["source"] == f"good:{gid}:rent")
     tax = next(i for i in o["month"]["items"] if i["source"] == f"good:{gid}:rent_tax")
-    assert D(rent["planned_amount"]) == D("2800") and D(tax["planned_amount"]) == D("210.00")      # 7,5%
+    assert D(rent["planned_amount"]) == D("2800") and D(tax["planned_amount"]) == D("40.56")      # IR progressivo (carnê-leão): 2.800 × 7,5% − 169,44
     monkeypatch.setattr(rules, "hash01", lambda *a: 0.99)                      # sem vacância nem mudanças de valor
     start = cash(client, auth_headers)
     assert close(client, auth_headers).status_code == 200
     delta = cash(client, auth_headers) - start
     costs = sum(D(i["planned_amount"]) for i in o["month"]["items"] if i["source"] and i["source"].startswith(f"good:{gid}:cost"))
-    assert delta == D("2800") - D("210.00") - costs
+    assert delta == D("2800") - D("40.56") - costs
     d2 = detail(client, auth_headers, gid)
     assert sum(1 for e in d2["entries"] if e["description"].startswith("Aluguel recebido")) == 1
     assert D(d2["income_total"]) == D("2800")
@@ -595,3 +595,151 @@ def test_existing_investing_flow_unaffected(client, auth_headers, assets):
     assert D(portfolio(client, auth_headers)["market_value_brl"]) == D(p["market_value_brl"])
     perf = client.get("/api/performance?range=7d", headers=auth_headers)
     assert perf.status_code == 200
+
+
+# ------------------------------------------------------------------ impostos brasileiros e hospedagem de temporada
+
+def _buy_listing(client, h, key, **kw):
+    r = client.post(f"{G}/purchase", headers=h, json={"listing_key": key, "idempotency_key": __import__("uuid").uuid4().hex, **kw})
+    assert r.status_code == 201, r.text
+    return r.json()["good"]["id"]
+
+
+def test_purchase_pays_brazilian_taxes_by_city(client, auth_headers):
+    from tests.conftest import credit
+    credit(client, auth_headers, "5000000")
+    listings = {x["key"]: x for x in client.get(f"{G}/market", headers=auth_headers).json()}
+    sp, gram = listings["apto-sp-studio"], listings["chale-gramado"]
+    names = {b["name"]: b for b in sp["fee_breakdown"]}
+    assert names["ITBI"]["rate_pct"] == "3.0" and names["Escritura e registro"]["rate_pct"] == "1.0"
+    assert D(sp["purchase_fee"]) == D(sp["price"]) * D("0.04")                      # SP: 3% + 1%
+    assert D(gram["purchase_fee"]) == D(gram["price"]) * D("0.03")                  # Gramado: 2% + 1%
+    car = listings["carro-hatch-novo"]
+    assert [b["name"] for b in car["fee_breakdown"]] == ["Transferência e vistoria"]
+    gid = _buy_listing(client, auth_headers, "apto-sp-studio")
+    d = client.get(f"{G}/{gid}", headers=auth_headers).json()
+    iptu = next(c for c in d["costs"] if c["kind"] == "IPTU")
+    assert D(iptu["amount"]) == (D(d["good"]["current_value"]) * D("0.010") / 12).quantize(D("0.01"))   # IPTU de SP: 1%/ano
+
+
+def test_capital_gains_tax_on_sale_and_exemptions(client, auth_headers):
+    from tests.conftest import credit
+    credit(client, auth_headers, "9000000")
+    gid = _buy_listing(client, auth_headers, "apto-rj-3q")
+    _buy_listing(client, auth_headers, "casa-poa-4q")                                # dois imóveis: sem isenção de imóvel único
+    from backend.database import SessionLocal
+    from backend.models import Good
+    with SessionLocal() as s:
+        g = s.get(Good, gid)
+        g.current_value = g.acquisition_cost + D("1000000")                         # valorizou R$ 1 milhão
+        s.commit()
+    q = client.get(f"{G}/{gid}/sale-quote", headers=auth_headers).json()
+    assert D(q["capital_gains_tax"]) == D("150000.00") and "15%" in q["tax_note"]
+    assert D(q["fees"]) == D(q["brokerage"]) + D(q["capital_gains_tax"])
+    sold = client.post(f"{G}/{gid}/sell", headers=auth_headers, json={}).json()
+    tx = client.get(f"{G}/taxes/summary", headers=auth_headers).json()
+    kinds = {i["tax"]: D(i["amount"]) for i in tx["items"]}
+    assert kinds["IR sobre ganho de capital (venda)"] == D("150000.00") and "ITBI, escritura e transferência (compra)" in kinds
+    assert D(tx["total"]) == sum(kinds.values())
+    assert D(sold["good"]["sale_result"]) < D("1000000") - D("150000")
+
+
+def test_sole_residential_property_up_to_440k_is_exempt_and_small_movable_sales_too(client, auth_headers):
+    from tests.conftest import credit
+    from backend.database import SessionLocal
+    from backend.models import Good
+    credit(client, auth_headers, "2000000")
+    gid = _buy_listing(client, auth_headers, "casa-popular-poa")
+    with SessionLocal() as s:
+        g = s.get(Good, gid)
+        g.current_value = D("430000")
+        s.commit()
+    assert D(client.get(f"{G}/{gid}/sale-quote", headers=auth_headers).json()["capital_gains_tax"]) == 0
+    v = _buy_listing(client, auth_headers, "violao-aco")
+    with SessionLocal() as s:
+        g = s.get(Good, v)
+        g.current_value = g.acquisition_cost + D("3000")
+        s.commit()
+    assert D(client.get(f"{G}/{v}/sale-quote", headers=auth_headers).json()["capital_gains_tax"]) == 0      # abaixo de R$ 35 mil
+
+
+def test_catalog_is_much_bigger_and_grouped(client, auth_headers):
+    items = client.get(f"{G}/market", headers=auth_headers).json()
+    by = {}
+    for i in items:
+        by.setdefault(i["category"], 0)
+        by[i["category"]] += 1
+    realty = by.get("RESIDENTIAL", 0) + by.get("COMMERCIAL", 0) + by.get("LAND", 0)
+    vehicles = by.get("CAR", 0) + by.get("MOTORCYCLE", 0)
+    goods = sum(v for k, v in by.items() if k not in ("RESIDENTIAL", "COMMERCIAL", "LAND", "CAR", "MOTORCYCLE"))
+    assert realty >= 25 and vehicles >= 18 and goods >= 25 and len({i["key"] for i in items}) == len(items)
+
+
+def test_short_stay_earns_more_than_fixed_rent_but_needs_time_or_a_manager(client, auth_headers):
+    from tests.conftest import credit
+    from tests.test_budget import close, overview
+    credit(client, auth_headers, "6000000")
+    fixed = _buy_listing(client, auth_headers, "flat-salvador")
+    stay = _buy_listing(client, auth_headers, "chale-gramado")
+    client.get("/api/life", headers=auth_headers)                                   # cria o perfil de vida (tempo livre)
+    # aluguel fixo mensal
+    r = client.post(f"{G}/{fixed}/occupancy", headers=auth_headers, json={"mode": "LISTED_FOR_RENT", "monthly_rent": "2400"})
+    assert r.status_code == 200, r.text
+    # temporada: gestão própria consome horas livres do mês
+    free_before = client.get("/api/life", headers=auth_headers).json()["attributes"]["free_hours_left"]
+    r = client.post(f"{G}/{stay}/occupancy", headers=auth_headers, json={"mode": "SHORT_STAY", "management": "SELF"})
+    assert r.status_code == 200, r.text
+    d = r.json()["real_estate"]
+    assert d["occupancy"] == "SHORT_STAY" and D(d["nightly_rate"]) == D(d["market_nightly"]) and d["management_hours"] == 14
+    assert client.get("/api/life", headers=auth_headers).json()["attributes"]["free_hours_left"] == free_before - 14
+    items = {i["source"]: i for i in overview(client, auth_headers)["month"]["items"] if i.get("source")}
+    inc = D(items[f"good:{stay}:stay"]["planned_amount"])
+    assert inc > 0 and f"good:{stay}:stay_iss" in items and f"good:{stay}:stay_platform" in items and f"good:{stay}:stay_clean" in items
+    assert f"good:{stay}:stay_manager" not in items                                  # sem gestor contratado
+    # com gestor contratado: sem horas, mas 20% da receita vai para ele
+    r = client.post(f"{G}/{stay}/occupancy", headers=auth_headers, json={"mode": "SHORT_STAY", "management": "HIRED", "nightly_rate": r.json()["real_estate"]["nightly_rate"]})
+    assert r.status_code == 200 and r.json()["real_estate"]["management_hours"] == 0
+    assert client.get("/api/life", headers=auth_headers).json()["attributes"]["free_hours_left"] == free_before
+    items = {i["source"]: i for i in overview(client, auth_headers)["month"]["items"] if i.get("source")}
+    assert D(items[f"good:{stay}:stay_manager"]["planned_amount"]) == (D(items[f"good:{stay}:stay"]["planned_amount"]) * D("0.2")).quantize(D("0.01"))
+    # rende mais que o aluguel fixo, mesmo depois de custos e impostos (e sem vacância de inquilino)
+    net_stay = sum(D(items[k]["planned_amount"]) * (1 if items[k]["kind"] == "INCOME" else -1) for k in items if k.startswith(f"good:{stay}:stay") or k == f"good:{stay}:rent_tax")
+    assert net_stay > D("2400") * D("0.9"), net_stay
+    # o mês seguinte gera nova ocupação (calculada uma vez) e a série fica no detalhe
+    assert close(client, auth_headers).status_code == 200
+    det = client.get(f"{G}/{stay}", headers=auth_headers).json()["real_estate"]
+    assert len(det["stay_months"]) >= 2 and all(m["nights"] >= 0 for m in det["stay_months"])
+
+
+def test_short_stay_only_for_houses_and_apartments_and_self_management_can_run_out_of_time(client, auth_headers):
+    from tests.conftest import credit
+    credit(client, auth_headers, "9000000")
+    land = _buy_listing(client, auth_headers, "terreno-atibaia")
+    assert client.post(f"{G}/{land}/occupancy", headers=auth_headers, json={"mode": "SHORT_STAY"}).status_code in (400, 422)
+    shop = _buy_listing(client, auth_headers, "sala-sp-comercial")
+    assert client.post(f"{G}/{shop}/occupancy", headers=auth_headers, json={"mode": "SHORT_STAY"}).status_code == 400
+    client.put("/api/life/choices", headers=auth_headers, json={"work_level": "INTENSE", "family_time": "HIGH"})        # pouco tempo livre
+    ids = [_buy_listing(client, auth_headers, k) for k in ("flat-salvador", "chale-gramado", "casa-praia-flo", "apto-fortaleza-3q")]
+    ratings = []
+    for i in ids:
+        client.post(f"{G}/{i}/occupancy", headers=auth_headers, json={"mode": "SHORT_STAY", "management": "SELF"})
+    free = client.get("/api/life", headers=auth_headers).json()["attributes"]
+    assert free["free_hours_left"] == 0                                              # 4 × 14h > tempo disponível
+    from tests.test_budget import close
+    assert close(client, auth_headers).status_code == 200
+    d = client.get(f"{G}/{ids[0]}", headers=auth_headers).json()["real_estate"]
+    assert "sem tempo" in d["stay_months"][0]["note"] and d["str_rating"] < 70       # na virada do mês a nota cai sem tempo para atender
+
+
+def test_move_in_stops_paying_rent_and_progressive_rent_tax(client, auth_headers):
+    from tests.conftest import credit
+    from tests.test_budget import add_recurring, overview
+    credit(client, auth_headers, "9000000")
+    rent_item = add_recurring(client, auth_headers, "Aluguel", 1800, category="Moradia")
+    gid = _buy_listing(client, auth_headers, "apto-bh-2q")
+    cand = client.get(f"{G}/housing-candidates", headers=auth_headers).json()
+    assert cand and any(c["name"] == "Aluguel" for c in cand)
+    r = client.post(f"{G}/{gid}/occupancy", headers=auth_headers, json={"mode": "OWNER_OCCUPIED", "end_recurring_item_ids": [c["id"] for c in cand if c["name"] == "Aluguel"]})
+    assert r.status_code == 200 and r.json()["real_estate"]["occupancy"] == "OWNER_OCCUPIED"
+    names = [i["name"] for i in overview(client, auth_headers)["month"]["items"]]
+    assert "Aluguel" not in names                                                    # parou de pagar aluguel

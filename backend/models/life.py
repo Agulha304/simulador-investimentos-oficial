@@ -57,6 +57,7 @@ class LifeProfile(Base):
     pending_housing_month: Mapped[date | None] = mapped_column(Date)
     pregnancy_due_month: Mapped[date | None] = mapped_column(Date)
     pregnancy_relationship_id: Mapped[int | None] = mapped_column(Integer)
+    hours_committed: Mapped[int] = mapped_column(Integer, default=0, server_default="0")   # horas/mês fixas (gestão de temporada)
     hours_used: Mapped[int] = mapped_column(Integer, default=0)            # horas livres gastas no mês corrente
     activity_seq: Mapped[int] = mapped_column(Integer, default=0)          # contador (chaves idempotentes, sorteios)
     last_processed_month: Mapped[date | None] = mapped_column(Date)
@@ -104,6 +105,7 @@ class Relationship(Base):
     finance_mode: Mapped[str] = mapped_column(String(12), default="SEPARATE")   # SEPARATE | SHARED
     contribution_pct: Mapped[Decimal] = mapped_column(Money(), default=Decimal("50"))   # % dos custos compartilhados
     interactions_month: Mapped[int] = mapped_column(Integer, default=0)
+    last_story: Mapped[str | None] = mapped_column(String(200))             # o que vocês fizeram por último (aviso temporário)
     compat_bonus: Mapped[int] = mapped_column(Integer, default=0)            # cresce com as atividades feitas juntos
     last_interaction_month: Mapped[date | None] = mapped_column(Date)       # base do esfriamento por falta de convivência
 

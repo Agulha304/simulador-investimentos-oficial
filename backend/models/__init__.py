@@ -5,6 +5,7 @@ from backend.models.budget import (
 )
 from backend.models.chart_layout import ChartLayout
 from backend.models.company import (
+    CompanyPartner, PartnerInvite,
     Company, CompanyCost, CompanyEvent, CompanyLease, CompanyLoan, CompanyLoanInstallment, CompanyMonth, Employee,
     InventoryItem,
 )
@@ -19,7 +20,7 @@ from backend.models.enums import (
 from backend.models.economy import EconomicCrisis, EconomyState, GameProfile, SimPrice, WorldEvent
 from backend.models.fixed_income import FinancialEvent, FixedIncomeInvestment, FixedIncomeProduct, IndexRate
 from backend.models.goods import (
-    Good, GoodCost, GoodEvent, GoodValue, Loan, LoanInstallment, RealEstateDetails, ValuationRule, VehicleDetails,
+    Good, GoodCost, GoodEvent, GoodValue, Loan, LoanInstallment, RealEstateDetails, ShortStayMonth, ValuationRule, VehicleDetails,
 )
 from backend.models.games import AccountCategory, Game
 from backend.models.holding import Holding
@@ -31,7 +32,7 @@ from backend.models.transaction import Transaction
 from backend.models.user import User
 
 __all__ = [
-    "AccountCategory", "Game",
+    "CompanyPartner", "PartnerInvite",    "ShortStayMonth",    "AccountCategory", "Game",
     "Achievement", "Goal", "MonthReport",
     "EconomicCrisis", "EconomyState", "GameProfile", "SimPrice", "WorldEvent",
     "Child", "LifeLog", "LifeProfile", "Person", "Relationship",

@@ -11,7 +11,7 @@ from backend.models import BudgetCategory, BudgetItem, Child, LifeLog, Person, R
 from backend.routers.budget import _run
 from backend.services import budget_service as bs
 from backend.services import life_rules as R
-from backend.services import career_rules, item_sync
+from backend.services import career_rules, item_sync, partners
 from backend.services import life_service as ls
 
 router = APIRouter(prefix="/life", tags=["life"])
@@ -63,7 +63,7 @@ class ChildIn(BaseModel):
 def _person_out(db: Session, p, r: Relationship, person: Person) -> dict:
     return {"person_id": person.id, "name": person.name, "age": person.age, "personality": person.personality,
             "interests": person.interests, "occupation": person.occupation, "income": str(person.income),
-            "assets": str(person.assets), "debts": str(person.debts), "wants_children": person.wants_children,
+            "assets": str(person.assets), "debts": str(person.debts), "finance_label": partners.finance_label(person), "wants_children": person.wants_children,
             "stage": r.stage, "affinity": r.affinity, "trust": r.trust, "compatibility": ls.compatibility(p, person, r.compat_bonus), "compat_bonus": r.compat_bonus, "gender": person.gender,
             "since_month": r.since_month.isoformat(), "stage_since": r.stage_since.isoformat(),
             "finance_mode": r.finance_mode, "contribution_pct": str(r.contribution_pct)}
@@ -169,7 +169,7 @@ def activity(body: ActivityIn, user: CurrentUser, db: DbSession):
     def go():
         res = ls.do_activity(db, user.id, bs.ensure_setup(db, user.id), body.key)
         out = _overview(db, user.id)
-        out["result"] = {"cost": str(res.cost), "met": res.met.name if res.met else None}
+        out["result"] = {"cost": str(res.cost), "met": res.met.name if res.met else None, "story": res.story}
         return out
     return _run(db, go)
 
@@ -177,8 +177,10 @@ def activity(body: ActivityIn, user: CurrentUser, db: DbSession):
 @router.post("/people/{person_id}/interact")
 def interact(person_id: int, body: ActivityIn, user: CurrentUser, db: DbSession):
     def go():
-        ls.interact(db, user.id, bs.ensure_setup(db, user.id), person_id, body.key)
-        return _overview(db, user.id)
+        r = ls.interact(db, user.id, bs.ensure_setup(db, user.id), person_id, body.key)
+        out = _overview(db, user.id)
+        out["result"] = {"story": r.last_story, "person_id": person_id}
+        return out
     return _run(db, go)
 
 

@@ -190,3 +190,33 @@ class CompanyEvent(Base):
     amount: Mapped[Decimal | None] = mapped_column(Money())
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
+
+
+class PartnerInvite(Base):
+    """Convite de sociedade a uma pessoa dos seus relacionamentos. A resposta é decidida UMA vez por pessoa e mês."""
+    __tablename__ = "partner_invites"
+    __table_args__ = (UniqueConstraint("user_id", "person_id", "ref_month", name="uq_partner_invite"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    person_id: Mapped[int] = mapped_column(ForeignKey("people.id", ondelete="CASCADE"))
+    ref_month: Mapped[date] = mapped_column(Date)
+    share_pct: Mapped[Decimal] = mapped_column(Numeric(5, 2))
+    capital: Mapped[Decimal] = mapped_column(Money())                 # capital total previsto da empresa
+    accepted: Mapped[bool] = mapped_column(Boolean)
+    message: Mapped[str] = mapped_column(String(200), default="")
+    used: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+
+
+class CompanyPartner(Base):
+    __tablename__ = "company_partners"
+    __table_args__ = (UniqueConstraint("company_id", "person_id", name="uq_company_partner"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id", ondelete="CASCADE"), index=True)
+    person_id: Mapped[int] = mapped_column(ForeignKey("people.id", ondelete="CASCADE"))
+    share_pct: Mapped[Decimal] = mapped_column(Numeric(5, 2))
+    contribution: Mapped[Decimal] = mapped_column(Money())
+    status: Mapped[str] = mapped_column(String(10), default="ACTIVE")       # ACTIVE | DEFAULTED | LEFT
+    joined_month: Mapped[date] = mapped_column(Date)
+    left_month: Mapped[date | None] = mapped_column(Date)

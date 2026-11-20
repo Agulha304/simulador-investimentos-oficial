@@ -10,6 +10,7 @@ from datetime import date
 from decimal import Decimal
 
 from backend.core.money import quantize_money
+from backend.services import br_taxes
 from backend.models import REAL_ESTATE, CostKind, GoodCategory
 
 D = Decimal
@@ -83,6 +84,21 @@ def hash01(*parts: object) -> float:
     return int.from_bytes(h[:8], "big") / 2**64
 
 
+def purchase_fee(category: GoodCategory, price: Decimal, location: str | None) -> tuple[Decimal, list[tuple[str, Decimal, Decimal]]]:
+    """Impostos e taxas da compra (ITBI, registro, transferência...): total e detalhamento."""
+    parts = br_taxes.purchase_taxes(category, price, location)
+    return quantize_money(sum((a for _, _, a in parts), D(0))), parts
+
+
+def market_nightly(category: GoodCategory, value: Decimal) -> Decimal:
+    """Diária sugerida para hospedagem de temporada: rende mais que o aluguel fixo, mas dá trabalho e tem custos."""
+    return quantize_money(market_rent(category, value) * D("0.10"))
+
+
+GROUPS = {"realty": REAL_ESTATE, "vehicles": (GoodCategory.CAR, GoodCategory.MOTORCYCLE),
+          "goods": (GoodCategory.INSTRUMENT, GoodCategory.EQUIPMENT, GoodCategory.ANTIQUE, GoodCategory.COLLECTIBLE, GoodCategory.OTHER)}
+
+
 def market_rent(category: GoodCategory, value: Decimal) -> Decimal:
     pct = D("0.70") if category == GoodCategory.COMMERCIAL else D("0.50")
     return quantize_money(value * pct / 100)
@@ -94,17 +110,17 @@ def monthly_factor(rule: Rule, key: str, month: date) -> Decimal:
 
 
 def default_costs(category: GoodCategory, value: Decimal, *, area_m2: Decimal | None = None,
-                  property_type: str | None = None, km_month: int = VEHICLE_DEFAULT_KM_MONTH):
+                  property_type: str | None = None, km_month: int = VEHICLE_DEFAULT_KM_MONTH, location: str | None = None):
     """Custos padrão ao comprar: lista de (kind, amount, frequency_name)."""
     q = quantize_money
     out: list[tuple[CostKind, Decimal, str]] = []
     if category in (GoodCategory.RESIDENTIAL, GoodCategory.COMMERCIAL):
-        out.append((CostKind.IPTU, q(value * D("0.008") / 12), "MONTHLY"))
+        out.append((CostKind.IPTU, q(value * br_taxes.iptu_rate(location) / 100 / 12), "MONTHLY"))
         if property_type == "apartment" or category == GoodCategory.COMMERCIAL:
             out.append((CostKind.CONDO, q((area_m2 or D(60)) * D("7.5")), "MONTHLY"))
         out.append((CostKind.MAINTENANCE, q(value * D("0.005") / 12), "MONTHLY"))
     elif category == GoodCategory.LAND:
-        out.append((CostKind.IPTU, q(value * D("0.005") / 12), "MONTHLY"))
+        out.append((CostKind.IPTU, q(value * br_taxes.iptu_rate(location) * D("0.6") / 100 / 12), "MONTHLY"))      # terreno: alíquota menor
     elif category in (GoodCategory.CAR, GoodCategory.MOTORCYCLE):
         car = category == GoodCategory.CAR
         out.append((CostKind.FUEL, q(D(km_month) / VEHICLE_KM_PER_LITER * FUEL_PRICE_PER_LITER), "MONTHLY"))
@@ -179,6 +195,71 @@ CATALOG: list[Listing] = [
     _l("movel-colonial", GoodCategory.ANTIQUE, "Cômoda colonial do século XIX", "Jacarandá, restauro parcial.", "16000", "Antiquário", "FAIR"),
     _l("moeda-rara", GoodCategory.COLLECTIBLE, "Moeda de ouro rara (1822)", "Coleção numismática.", "28000", "Leilão", "GOOD"),
     _l("hq-primeira-edicao", GoodCategory.COLLECTIBLE, "HQ de primeira edição lacrada", "Edição limitada, em estojo.", "7500", "Colecionador", "EXCELLENT"),
+
+    # ---- imóveis (mais cidades, tipos e perfis: bom para morar, alugar ou hospedar por temporada)
+    _l("kitnet-sp", R, "Kitnet na Barra Funda", "Compacta, perto do metrô e de faculdades.", "190000", "São Paulo, SP", "FAIR",
+       property_type="apartment", address="Rua Vitorino Carmilo, 400", area_m2="24", bedrooms=1),
+    _l("apto-recife-2q", R, "Apartamento 2 quartos em Boa Viagem", "A duas quadras da praia.", "620000", "Recife, PE", "GOOD",
+       property_type="apartment", address="Av. Boa Viagem, 3000", area_m2="72", bedrooms=2),
+    _l("flat-salvador", R, "Flat mobiliado na Barra", "Prédio com recepção e piscina, ótimo para temporada.", "480000", "Salvador, BA", "EXCELLENT",
+       property_type="apartment", address="Av. Oceânica, 1500", area_m2="38", bedrooms=1),
+    _l("apto-fortaleza-3q", R, "Apartamento 3 quartos na Meireles", "Vista para o mar e lazer completo.", "960000", "Fortaleza, CE", "EXCELLENT",
+       property_type="apartment", address="Av. Beira Mar, 2200", area_m2="105", bedrooms=3),
+    _l("cobertura-rj", R, "Cobertura duplex em Ipanema", "Terraço com vista para a Lagoa.", "4200000", "Rio de Janeiro, RJ", "EXCELLENT",
+       property_type="apartment", address="Rua Visconde de Pirajá, 90", area_m2="230", bedrooms=4),
+    _l("chale-gramado", R, "Chalé em Gramado", "Charmoso, a 5 minutos do centro: sucesso em temporada.", "850000", "Gramado, RS", "EXCELLENT",
+       property_type="house", address="Rua das Hortênsias, 120", area_m2="85", bedrooms=2),
+    _l("casa-praia-flo", R, "Casa de praia em Jurerê", "Piscina e quatro suítes.", "3100000", "Florianópolis, SC", "EXCELLENT",
+       property_type="house", address="Rua dos Búzios, 35", area_m2="260", bedrooms=4),
+    _l("sobrado-campinas", R, "Sobrado 3 quartos em Campinas", "Bairro tranquilo, perto de escolas.", "720000", "Campinas, SP", "GOOD",
+       property_type="house", address="Rua Barão de Itapura, 800", area_m2="150", bedrooms=3),
+    _l("casa-bsb", R, "Casa 3 quartos no Lago Sul", "Ampla, com quintal arborizado.", "1900000", "Brasília, DF", "GOOD",
+       property_type="house", address="QL 12, conjunto 4", area_m2="280", bedrooms=3),
+    _l("apto-goiania", R, "Apartamento 2 quartos no Setor Bueno", "Condomínio novo com academia.", "430000", "Goiânia, GO", "NEW",
+       property_type="apartment", address="Rua T-30, 700", area_m2="64", bedrooms=2),
+    _l("casa-popular-poa", R, "Casa popular em Porto Alegre", "Duas peças, bom para quem está começando.", "260000", "Porto Alegre, RS", "FAIR",
+       property_type="house", address="Rua Frederico Mentz, 55", area_m2="70", bedrooms=2),
+    _l("sitio-atibaia", R, "Sítio com lago em Atibaia", "Casa de campo e pomar.", "1100000", "Atibaia, SP", "GOOD",
+       property_type="house", address="Estrada do Rio Abaixo, km 4", area_m2="500", bedrooms=3),
+    _l("loja-shopping-bh", C, "Loja em shopping de BH", "Quiosque amplo em corredor de grande circulação.", "640000", "Belo Horizonte, MG", "GOOD",
+       property_type="commercial", address="Shopping Del Rey, loja 214", area_m2="38"),
+    _l("sala-recife", C, "Sala comercial no Recife Antigo", "Prédio histórico restaurado.", "380000", "Recife, PE", "GOOD",
+       property_type="commercial", address="Rua do Bom Jesus, 90", area_m2="32"),
+    _l("terreno-gramado", L, "Terreno em Gramado", "Lote com vista para o vale.", "540000", "Gramado, RS", None,
+       property_type="land", address="Rua das Azaleias, lote 3", area_m2="600"),
+    _l("terreno-goiania", L, "Terreno em condomínio em Goiânia", "Esquina, pronto para construir.", "310000", "Goiânia, GO", None,
+       property_type="land", address="Alameda dos Ipês, lote 18", area_m2="420"),
+    # ---- automóveis
+    _l("carro-popular-usado", GoodCategory.CAR, "Carro popular 2015", "Econômico, bom para o dia a dia.", "38000", "Goiânia, GO", "GOOD", km=110000),
+    _l("carro-hatch-medio", GoodCategory.CAR, "Hatch médio 2020", "Completo, com central multimídia.", "74000", "Recife, PE", "GOOD", km=48000),
+    _l("carro-sedan-novo", GoodCategory.CAR, "Sedan executivo 0 km", "Motor 2.0 turbo, couro e teto solar.", "165000", "Concessionária", "NEW"),
+    _l("carro-pickup", GoodCategory.CAR, "Picape cabine dupla 2021", "Diesel, ideal para trabalho e estrada.", "225000", "Goiânia, GO", "GOOD", km=70000),
+    _l("carro-minivan", GoodCategory.CAR, "Minivan 7 lugares 2019", "Espaço para a família toda.", "112000", "Campinas, SP", "GOOD", km=88000),
+    _l("carro-esportivo", GoodCategory.CAR, "Esportivo conversível", "Dois lugares, muita potência.", "480000", "Concessionária", "EXCELLENT", km=9000),
+    _l("carro-van-utilitaria", GoodCategory.CAR, "Van utilitária 2020", "Boa para entregas e pequenos negócios.", "132000", "São Paulo, SP", "GOOD", km=65000),
+    _l("carro-classico", GoodCategory.CAR, "Clássico dos anos 70 restaurado", "Peça de colecionador, uso eventual.", "88000", "Colecionador", "GOOD", km=30000),
+    _l("moto-scooter", GoodCategory.MOTORCYCLE, "Scooter urbana 125 cc", "Prática e econômica na cidade.", "13500", "Concessionária", "NEW"),
+    _l("moto-custom", GoodCategory.MOTORCYCLE, "Moto custom 650 cc", "Estilo clássico para viagens.", "46000", "Curitiba, PR", "GOOD", km=22000),
+    _l("moto-esportiva", GoodCategory.MOTORCYCLE, "Moto esportiva 600 cc 2021", "Rápida e potente.", "52000", "São Paulo, SP", "EXCELLENT", km=12000),
+    _l("moto-eletrica", GoodCategory.MOTORCYCLE, "Moto elétrica urbana", "Silenciosa, recarga em casa.", "29000", "Concessionária", "NEW"),
+    _l("moto-entregas", GoodCategory.MOTORCYCLE, "Moto 150 cc para entregas", "Econômica, ótima para trabalhar com apps.", "11500", "Goiânia, GO", "GOOD", km=40000),
+    # ---- outros bens (instrumentos, equipamentos, antiguidades, coleções)
+    _l("bateria-acustica", GoodCategory.INSTRUMENT, "Bateria acústica completa", "Cinco peças com pratos.", "9800", "Loja de instrumentos", "GOOD"),
+    _l("saxofone", GoodCategory.INSTRUMENT, "Saxofone alto profissional", "Revisado, com estojo.", "14500", "Loja de instrumentos", "EXCELLENT"),
+    _l("teclado-sintetizador", GoodCategory.INSTRUMENT, "Teclado sintetizador", "88 teclas pesadas.", "7200", "Loja de instrumentos", "NEW"),
+    _l("drone-pro", GoodCategory.EQUIPMENT, "Drone profissional 4K", "Para fotografia e mapeamento.", "16500", "Loja especializada", "NEW"),
+    _l("notebook-pro", GoodCategory.EQUIPMENT, "Notebook de alto desempenho", "Para edição e programação.", "13500", "Loja especializada", "NEW"),
+    _l("equip-academia", GoodCategory.EQUIPMENT, "Equipamentos de academia domiciliar", "Esteira, banco e halteres.", "11000", "Loja especializada", "GOOD"),
+    _l("trator-pequeno", GoodCategory.EQUIPMENT, "Micro trator agrícola", "Para pequenas propriedades.", "78000", "Revenda agrícola", "GOOD"),
+    _l("quadro-aquarela", GoodCategory.ANTIQUE, "Aquarela de paisagista do século XX", "Com certificado de autenticidade.", "34000", "Galeria", "GOOD"),
+    _l("escultura-bronze", GoodCategory.ANTIQUE, "Escultura em bronze (1930)", "Peça de ateliê numerada.", "26000", "Leilão", "EXCELLENT"),
+    _l("tapete-persa", GoodCategory.ANTIQUE, "Tapete persa antigo", "Feito à mão, lã e seda.", "21000", "Antiquário", "GOOD"),
+    _l("joia-colar", GoodCategory.OTHER, "Colar de ouro e esmeraldas", "Joia com certificado.", "38000", "Joalheria", "EXCELLENT"),
+    _l("relogio-luxo", GoodCategory.OTHER, "Relógio suíço de luxo", "Automático, com caixa e garantia.", "52000", "Joalheria", "EXCELLENT"),
+    _l("vinhos-safra", GoodCategory.COLLECTIBLE, "Coleção de vinhos de guarda", "Doze garrafas de safras premiadas.", "24000", "Adega", "EXCELLENT"),
+    _l("figurinhas-album", GoodCategory.COLLECTIBLE, "Álbum de figurinhas raro completo", "Edição de 1970 completa.", "9000", "Colecionador", "GOOD"),
+    _l("cartas-colecao", GoodCategory.COLLECTIBLE, "Cartas colecionáveis raras", "Lote lacrado de primeira edição.", "15500", "Colecionador", "EXCELLENT"),
+    _l("selo-raro", GoodCategory.COLLECTIBLE, "Selo postal raro do Império", "Certificado e moldura de proteção.", "12500", "Filatelia", "GOOD"),
 ]
 CATALOG_BY_KEY = {l.key: l for l in CATALOG}
 EPOCH = date(2026, 11, 1)

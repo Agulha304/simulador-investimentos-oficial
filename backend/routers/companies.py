@@ -14,6 +14,7 @@ from backend.models import (
 from backend.routers.budget import _run
 from backend.schemas import companies as s
 from backend.services import budget_service as bs
+from backend.services import partners
 from backend.services import company_rules as rules
 from backend.services import company_service as cs
 from backend.services import goods_service, wealth_service
@@ -54,7 +55,13 @@ def _detail(db: Session, c: Company) -> s.CompanyDetailOut:
     role_labels = {r.key: r.label for r in seg.roles}
     employees = list(db.scalars(select(Employee).where(Employee.company_id == c.id).order_by(Employee.id)))
     goods = list(db.scalars(select(Good).where(Good.owner_account_id == c.account_id).order_by(Good.id)))
+    from backend.models import CompanyPartner, Person
+    people = {x.id: x for x in db.scalars(select(Person).where(Person.user_id == c.user_id))}
+    partner_rows = [{"person_id": x.person_id, "name": people[x.person_id].name, "share_pct": str(x.share_pct), "contribution": str(x.contribution),
+                     "status": x.status, "joined_month": x.joined_month.isoformat(), "finance": partners.finance_label(people[x.person_id])}
+                    for x in partners.partners_of(db, c.id)]
     return s.CompanyDetailOut(
+        partners=partner_rows,
         company=_company_out(db, c), distributable_profit=cs.distributable_profit(db, c), runway_months=cs.runway(db, c),
         monthly_obligations=cs.monthly_obligations(db, c), loan_limit=cs.loan_limit(db, c),
         expected_demand=round(exp_dem, 1), expected_capacity=round(exp_cap, 1),
@@ -146,7 +153,8 @@ def create(body: s.CompanyCreate, user: CurrentUser, db: DbSession):
     def go():
         month = bs.ensure_setup(db, user.id)
         c = cs.create_company(db, user.id, month, name=body.name, segment=body.segment, location=body.location, size=body.size,
-                              capital=body.capital, owner_share_pct=body.owner_share_pct, business_type=body.business_type)
+                              capital=body.capital, owner_share_pct=body.owner_share_pct, business_type=body.business_type,
+                              partner_invite_ids=body.partner_invite_ids)
         return _detail(db, c)
     return _run(db, go)
 
@@ -220,3 +228,25 @@ def buy_good(company_id: int, body: s.CompanyGoodIn, user: CurrentUser, db: DbSe
         goods_service.purchase(db, user.id, month, listing_key=body.listing_key, purchase_key=body.idempotency_key,
                                extra_costs=body.extra_costs, company=c)
     return _run(db, lambda: _act(db, user.id, company_id, fn))
+
+
+@router.post("/partner-invites")
+def partner_invite(body: s.PartnerInviteIn, user: CurrentUser, db: DbSession):
+    """Convida um amigo ou parceiro para ser sócio. A resposta é decidida uma vez por pessoa e mês."""
+    def go():
+        month = bs.ensure_setup(db, user.id)
+        inv = partners.invite(db, user.id, month, body.person_id, body.share_pct, body.capital)
+        return {"id": inv.id, "person_id": inv.person_id, "accepted": inv.accepted, "message": inv.message,
+                "share_pct": str(inv.share_pct), "capital": str(inv.capital), "used": inv.used}
+    return _run(db, go)
+
+
+@router.get("/invites/current")
+def partner_invites(user: CurrentUser, db: DbSession):
+    def go():
+        from backend.models import PartnerInvite
+        month = bs.ensure_setup(db, user.id)
+        return [{"id": i.id, "person_id": i.person_id, "accepted": i.accepted, "message": i.message, "share_pct": str(i.share_pct),
+                 "capital": str(i.capital), "used": i.used}
+                for i in db.scalars(select(PartnerInvite).where(PartnerInvite.user_id == user.id, PartnerInvite.ref_month == month.ref_month))]
+    return _run(db, go)

@@ -98,8 +98,13 @@ def financial_stability(db: Session, user_id: int, month: SimMonth) -> int:
 
 
 def free_hours(p: LifeProfile) -> int:
-    studying = career_rules.FIELDS[p.degree_field]["hours"] if p.degree_field else 0          # a faculdade consome horas do mês
-    return max(0, R.FREE_HOURS[p.work_level] - R.FAMILY_TIME_HOURS[p.family_time] - studying)
+    return max(0, raw_free_hours(p))                                                         # faculdade e gestão consomem horas do mês
+
+
+def raw_free_hours(p: LifeProfile) -> int:
+    """Horas livres do mês SEM cortar em zero: negativo = você assumiu mais compromissos do que o seu tempo permite."""
+    studying = career_rules.FIELDS[p.degree_field]["hours"] if p.degree_field else 0
+    return R.FREE_HOURS[p.work_level] - R.FAMILY_TIME_HOURS[p.family_time] - studying - p.hours_committed
 
 
 def set_choices(db: Session, user_id: int, month: SimMonth, **choices: str) -> LifeProfile:
@@ -192,6 +197,7 @@ class ActivityResult:
     cost: Decimal
     met: Person | None
     profile: LifeProfile
+    story: str = ""
 
 
 def do_activity(db: Session, user_id: int, month: SimMonth, key: str) -> ActivityResult:
@@ -214,7 +220,8 @@ def do_activity(db: Session, user_id: int, month: SimMonth, key: str) -> Activit
                             trust=20, since_month=month.ref_month, stage_since=month.ref_month))
         log(db, user_id, month.ref_month, "MET", f"Você conheceu {met.name} ({met.occupation}) em: {a['label']}", person_id=met.id)
     db.flush()
-    return ActivityResult(key, cost, met, p)
+    story = f"Você foi a: {a['label']}." + (f" E acabou conhecendo {met.name}, {met.occupation.lower()}!" if met else " Foi um bom momento, mas ninguém novo apareceu.")
+    return ActivityResult(key, cost, met, p, story)
 
 
 # ------------------------------------------------------------------ relacionamentos
@@ -234,6 +241,11 @@ def active_partner(db: Session, user_id: int) -> Relationship | None:
 def _bump(r: Relationship, delta: int, trust: int = 0) -> None:
     r.affinity = _clamp(r.affinity + delta)
     r.trust = _clamp(r.trust + trust)
+
+
+def story_for(key: str, name: str, user_id: int, seq: int, ref: date) -> str:
+    options = R.STORIES.get(key) or ["Vocês passaram um tempo juntos."]
+    return R.pick(options, "story", user_id, ref.isoformat(), seq, key).format(name=name.split()[0])
 
 
 def interact(db: Session, user_id: int, month: SimMonth, person_id: int, key: str) -> Relationship:
@@ -260,6 +272,8 @@ def interact(db: Session, user_id: int, month: SimMonth, person_id: int, key: st
     r.last_interaction_month = month.ref_month
     p.social = _clamp(p.social + 1)
     p.wellbeing = _clamp(p.wellbeing + 1)
+    r.last_story = story_for(key, person.name, user_id, p.activity_seq, month.ref_month)
+    log(db, user_id, month.ref_month, "TOGETHER", f"{person.name}: {r.last_story}", person_id=person_id)
     db.flush()
     return r
 

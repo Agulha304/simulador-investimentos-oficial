@@ -61,7 +61,10 @@ class RealEstateDetails(Base):
     bedrooms: Mapped[int | None] = mapped_column(Integer)
     occupancy: Mapped[Occupancy] = mapped_column(StrEnumType(Occupancy, "occupancy"), default=Occupancy.VACANT)
     monthly_rent: Mapped[Decimal] = mapped_column(Money(), default=Decimal("0"), server_default="0")
-    rent_tax_pct: Mapped[Decimal] = mapped_column(Numeric(5, 2), default=Decimal("7.50"), server_default="7.50")
+    rent_tax_pct: Mapped[Decimal] = mapped_column(Numeric(5, 2), default=Decimal("7.50"), server_default="7.50")   # legado: o IR agora é progressivo (br_taxes)
+    nightly_rate: Mapped[Decimal] = mapped_column(Money(), default=Decimal("0"), server_default="0")             # diária da hospedagem de temporada
+    management: Mapped[str] = mapped_column(String(8), default="SELF", server_default="SELF")                     # SELF (você) | HIRED (gestor)
+    str_rating: Mapped[int] = mapped_column(Integer, default=70, server_default="70")                              # nota dos hóspedes (50..98)
 
 
 class VehicleDetails(Base):
@@ -160,3 +163,23 @@ class ValuationRule(Base):
     monthly_drift_pct: Mapped[Decimal] = mapped_column(Numeric(7, 4))
     volatility_pct: Mapped[Decimal] = mapped_column(Numeric(7, 4))
     uncertainty_pct: Mapped[Decimal] = mapped_column(Numeric(7, 4))
+
+
+class ShortStayMonth(Base):
+    """Resultado imutável de um mês de hospedagem de temporada (calculado uma vez por imóvel e mês)."""
+    __tablename__ = "short_stay_months"
+    __table_args__ = (UniqueConstraint("good_id", "ref_month", name="uq_short_stay_month"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    good_id: Mapped[int] = mapped_column(ForeignKey("goods.id", ondelete="CASCADE"), index=True)
+    ref_month: Mapped[date] = mapped_column(Date)
+    nights: Mapped[int] = mapped_column(Integer)
+    occupancy_pct: Mapped[Decimal] = mapped_column(Numeric(5, 1))
+    nightly: Mapped[Decimal] = mapped_column(Money())
+    gross: Mapped[Decimal] = mapped_column(Money())
+    platform_fee: Mapped[Decimal] = mapped_column(Money())
+    manager_fee: Mapped[Decimal] = mapped_column(Money())
+    cleaning: Mapped[Decimal] = mapped_column(Money())
+    iss: Mapped[Decimal] = mapped_column(Money())
+    rating: Mapped[int] = mapped_column(Integer)
+    note: Mapped[str] = mapped_column(String(160), default="")

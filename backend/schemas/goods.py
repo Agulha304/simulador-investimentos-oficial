@@ -44,6 +44,8 @@ class OccupancyIn(BaseModel):
     mode: Occupancy
     monthly_rent: Decimal | None = Field(None, gt=0, max_digits=20, decimal_places=2)
     end_recurring_item_ids: list[int] = []
+    nightly_rate: Decimal | None = Field(None, gt=0, max_digits=20, decimal_places=2)       # diária (temporada)
+    management: str | None = Field(None, pattern="^(SELF|HIRED)$")                         # gestão própria ou gestor contratado
 
 
 class CostIn(BaseModel):
@@ -92,6 +94,7 @@ class ListingOut(BaseModel):
     description: str
     price: Decimal
     purchase_fee: Decimal
+    fee_breakdown: list[dict] = []
     location: str
     condition: Condition | None
     property_type: str | None
@@ -155,6 +158,12 @@ class RealEstateOut(BaseModel):
     monthly_rent: Decimal
     rent_tax_pct: Decimal
     market_rent: Decimal
+    market_nightly: Decimal | None = None
+    nightly_rate: Decimal | None = None
+    management: str | None = None
+    str_rating: int | None = None
+    stay_months: list[dict] = []
+    management_hours: int = 0
 
 
 class CostOut(BaseModel):
@@ -231,6 +240,9 @@ class GoodDetailOut(BaseModel):
 class SaleQuoteOut(BaseModel):
     sale_price: Decimal
     fees: Decimal
+    brokerage: Decimal | None = None
+    capital_gains_tax: Decimal | None = None
+    tax_note: str | None = None
     loan_payoff: Decimal
     net_cash: Decimal
     result: Decimal

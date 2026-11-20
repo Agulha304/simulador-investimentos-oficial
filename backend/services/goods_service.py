@@ -12,18 +12,18 @@ import uuid
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from backend.core.money import quantize_money
 from backend.models import (
     REAL_ESTATE, AmortizationSystem, BudgetCategory, BudgetItem, Condition, CostKind, EntryOrigin, FlowKind, Frequency,
     Company, FinanceAccount, Good, GoodCategory, GoodCost, GoodEvent, GoodEventType, GoodStatus, GoodValue, InstallmentStatus, LedgerEntry,
-    Loan, LoanInstallment, LoanStatus, Occupancy, RealEstateDetails, RecurringItem, SimMonth, ValuationRule,
+    Loan, LoanInstallment, LoanStatus, Occupancy, RealEstateDetails, RecurringItem, ShortStayMonth, SimMonth, ValuationRule,
     ValueSource, VehicleDetails,
 )
 from backend.services import finance_ledger, loan_math
-from backend.services import economy_service
+from backend.services import br_taxes, economy_service, short_stay
 from backend.services import goods_rules as rules
 from backend.services.budget_service import first_of, months_between, require_open, shift_month
 from backend.services.finance_ledger import ConflictError, FinanceError, NotFoundError
@@ -157,7 +157,8 @@ def purchase(db: Session, user_id: int, month: SimMonth, *, listing_key: str, pu
     cat = listing.category
     rule_map = load_rules(db)
     price = market_price(listing, month.ref_month, rule_map)
-    fee = quantize_money(price * rules.PURCHASE_FEE_PCT.get(cat, Decimal(0)) / 100) + quantize_money(extra_costs)
+    tax_total, tax_parts = rules.purchase_fee(cat, price, listing.location)        # ITBI, registro, transferência...
+    fee = tax_total + quantize_money(extra_costs)
 
     rate, rows = None, []
     if financed:
@@ -186,7 +187,7 @@ def purchase(db: Session, user_id: int, month: SimMonth, *, listing_key: str, pu
                               km_per_liter=rules.VEHICLE_KM_PER_LITER))
     for kind, amount, freq in rules.default_costs(
             cat, price, area_m2=listing.area_m2, property_type=listing.property_type,
-            km_month=usage_km_month or rules.VEHICLE_DEFAULT_KM_MONTH):
+            km_month=usage_km_month or rules.VEHICLE_DEFAULT_KM_MONTH, location=listing.location):
         db.add(GoodCost(good_id=good.id, kind=kind, name=rules.COST_LABEL[kind], amount=amount,
                         frequency=Frequency(freq), start_month=start))
     db.add(GoodValue(good_id=good.id, ref_month=month.ref_month, value=price, source=ValueSource.PURCHASE))
@@ -217,7 +218,8 @@ def purchase(db: Session, user_id: int, month: SimMonth, *, listing_key: str, pu
             db, user_id, kind=FlowKind.EXPENSE, amount=fee, description=f"Taxas e impostos da compra: {good.name}",
             ref_month=month.ref_month, entry_date=month.ref_month, category_id=cat_goods.id if cat_goods else None,
             origin=EntryOrigin.ASSET, origin_ref=f"good:{good.id}:fees", idempotency_key=f"good:{good.id}:fees",
-            company_id=cid, line="FEES" if company else None)
+            company_id=cid, line="FEES" if company else None,
+            note="; ".join(f"{n} {r}% = {a}" for n, r, a in tax_parts) or None)
     if company is None:
         sync_month(db, user_id, month)
     log.info("compra good=%s user=%s preço=%s financiado=%s", good.id, user_id, price, financed)
@@ -228,11 +230,15 @@ def purchase(db: Session, user_id: int, month: SimMonth, *, listing_key: str, pu
 
 def sale_quote(db: Session, good: Good, sale_price: Decimal | None = None, extra_fees: Decimal = ZERO) -> dict:
     price = quantize_money(sale_price if sale_price is not None else good.current_value)
-    fees = quantize_money(price * rules.SALE_FEE_PCT.get(good.category, Decimal(3)) / 100) + quantize_money(extra_fees)
+    brokerage = quantize_money(price * rules.SALE_FEE_PCT.get(good.category, Decimal(3)) / 100) + quantize_money(extra_fees)
+    sole = (db.scalar(select(func.count(Good.id)).where(Good.user_id == good.user_id, Good.status == GoodStatus.ACTIVE,
+                                                        Good.category.in_(REAL_ESTATE))) or 0) <= 1
+    gain_tax, tax_note = br_taxes.capital_gains_tax(good.category, price, good.acquisition_cost, sole_property=sole)
+    fees = brokerage + gain_tax
     loan = _active_loan(db, good.id)
     payoff = loan.balance if loan else ZERO
-    return {"sale_price": price, "fees": fees, "loan_payoff": payoff, "net_cash": price - fees - payoff,
-            "result": price - fees - good.acquisition_cost}
+    return {"sale_price": price, "fees": fees, "brokerage": brokerage, "capital_gains_tax": gain_tax, "tax_note": tax_note,
+            "loan_payoff": payoff, "net_cash": price - fees - payoff, "result": price - fees - good.acquisition_cost}
 
 
 def sell(db: Session, user_id: int, month: SimMonth, good_id: int, *, sale_price: Decimal | None = None,
@@ -263,11 +269,16 @@ def sell(db: Session, user_id: int, month: SimMonth, good_id: int, *, sale_price
             db, user_id, kind=FlowKind.EXPENSE, amount=loan.balance, description=f"Quitação do financiamento: {good.name}",
             ref_month=ref, entry_date=ref, category_id=cat_out.id, origin=EntryOrigin.ASSET,
             origin_ref=f"loan:{loan.id}:payoff", idempotency_key=f"loan:{loan.id}:payoff", capital=True)
-    if q["fees"] > 0:
+    if q["brokerage"] > 0:
         finance_ledger.post_entry(
-            db, user_id, kind=FlowKind.EXPENSE, amount=q["fees"], description=f"Custos da venda: {good.name}", ref_month=ref,
+            db, user_id, kind=FlowKind.EXPENSE, amount=q["brokerage"], description=f"Custos da venda: {good.name}", ref_month=ref,
             entry_date=ref, category_id=cat_out.id, origin=EntryOrigin.ASSET, origin_ref=f"good:{good.id}:sale_fees",
             idempotency_key=f"good:{good.id}:sale_fees")
+    if q["capital_gains_tax"] > 0:
+        finance_ledger.post_entry(
+            db, user_id, kind=FlowKind.EXPENSE, amount=q["capital_gains_tax"], description=f"Imposto de renda sobre o ganho de capital: {good.name}",
+            ref_month=ref, entry_date=ref, category_id=_category(db, user_id, FlowKind.EXPENSE, "Impostos").id, origin=EntryOrigin.ASSET,
+            origin_ref=f"good:{good.id}:sale_tax", idempotency_key=f"good:{good.id}:sale_tax", note=q["tax_note"])
     if loan:
         loan.status = LoanStatus.SETTLED
         loan.balance = ZERO
@@ -283,6 +294,7 @@ def sell(db: Session, user_id: int, month: SimMonth, good_id: int, *, sale_price
         c.active = False
     _event(db, good, ref, GoodEventType.SALE, f"Vendido por {q['sale_price']} (resultado {q['result']})", q["sale_price"])
     db.flush()
+    _recommit_hours(db, user_id)
     sync_month(db, user_id, month)
     return good
 
@@ -320,8 +332,41 @@ def housing_candidates(db: Session, user_id: int) -> list[RecurringItem]:
         RecurringItem.active.is_(True))))
 
 
+def _recommit_hours(db: Session, user_id: int) -> None:
+    """Horas fixas do mês com a gestão própria de imóveis de temporada (reduz o tempo livre do personagem)."""
+    from backend.services import life_service
+    prof = life_service.get_profile(db, user_id, create=False)
+    if prof is None:
+        return
+    n = db.scalar(select(func.count(RealEstateDetails.good_id)).join(Good, Good.id == RealEstateDetails.good_id).where(
+        Good.user_id == user_id, Good.status == GoodStatus.ACTIVE, RealEstateDetails.occupancy == Occupancy.SHORT_STAY,
+        RealEstateDetails.management == "SELF")) or 0
+    prof.hours_committed = n * short_stay.STR_HOURS
+
+
+def _hours_ok(db: Session, user_id: int) -> bool:
+    from backend.services import life_service
+    prof = life_service.get_profile(db, user_id, create=False)
+    return prof is None or life_service.raw_free_hours(prof) >= 0
+
+
+def _stay_inputs(db: Session, user_id: int, ref: date) -> tuple[float, float]:
+    st = economy_service.get_state(db, user_id, ref)
+    return (float(st.demand) / 100.0 if st else 1.0), float(economy_service.index_value(db, user_id, ref, "servicos"))
+
+
+def ensure_stay_months(db: Session, user_id: int, ref: date, *, replace: bool = False) -> None:
+    demand, services = _stay_inputs(db, user_id, ref)
+    ok = _hours_ok(db, user_id)
+    for g in db.scalars(select(Good).join(RealEstateDetails, RealEstateDetails.good_id == Good.id).where(
+            Good.user_id == user_id, Good.status == GoodStatus.ACTIVE, RealEstateDetails.occupancy == Occupancy.SHORT_STAY)):
+        det = db.get(RealEstateDetails, g.id)
+        short_stay.ensure_month(db, g, det, ref, demand=demand, hours_ok=ok or det.management == "HIRED", services_index=services, replace=replace)
+
+
 def set_occupancy(db: Session, user_id: int, month: SimMonth, good_id: int, mode: Occupancy, *,
-                  monthly_rent: Decimal | None = None, end_recurring_item_ids: tuple[int, ...] = ()) -> Good:
+                  monthly_rent: Decimal | None = None, end_recurring_item_ids: tuple[int, ...] = (),
+                  nightly_rate: Decimal | None = None, management: str | None = None) -> Good:
     require_open(month)
     good = get_good(db, user_id, good_id, lock=True)
     _personal_only(db, good)
@@ -357,6 +402,16 @@ def set_occupancy(db: Session, user_id: int, month: SimMonth, good_id: int, mode
                 if not db.scalar(select(LedgerEntry.id).where(LedgerEntry.budget_item_id == bi.id).limit(1)):
                     db.delete(bi)                              # só remove o previsto ainda não realizado
         det.monthly_rent = ZERO
+    elif mode == Occupancy.SHORT_STAY:
+        if good.category != GoodCategory.RESIDENTIAL:
+            raise FinanceError("só casas e apartamentos podem receber hóspedes de temporada")
+        if management is not None and management not in ("SELF", "HIRED"):
+            raise FinanceError("gestão inválida (SELF ou HIRED)")
+        nightly = nightly_rate if nightly_rate is not None else (det.nightly_rate or rules.market_nightly(good.category, good.current_value))
+        if nightly <= 0:
+            raise FinanceError("informe o valor da diária")
+        det.nightly_rate, det.monthly_rent = quantize_money(nightly), ZERO
+        det.management = management or det.management or "SELF"
     elif mode == Occupancy.LISTED_FOR_RENT:
         rent = monthly_rent if monthly_rent is not None else (det.monthly_rent or rules.market_rent(good.category, good.current_value))
         if rent <= 0:
@@ -365,8 +420,11 @@ def set_occupancy(db: Session, user_id: int, month: SimMonth, good_id: int, mode
     else:
         det.monthly_rent = det.monthly_rent if mode == Occupancy.VACANT else ZERO
     det.occupancy = mode
-    _event(db, good, ref, GoodEventType.OCCUPANCY, f"Situação: {mode.value}" + (f", aluguel {det.monthly_rent}" if mode == Occupancy.LISTED_FOR_RENT else ""))
+    _event(db, good, ref, GoodEventType.OCCUPANCY, f"Situação: {mode.value}" + (f", aluguel {det.monthly_rent}" if mode == Occupancy.LISTED_FOR_RENT else "")
+           + (f", diária {det.nightly_rate} ({'gestor contratado' if det.management == 'HIRED' else 'gestão própria'})" if mode == Occupancy.SHORT_STAY else ""))
     db.flush()
+    _recommit_hours(db, user_id)
+    ensure_stay_months(db, user_id, ref, replace=True)             # refaz o mês aberto com a nova diária/gestão/horas
     sync_month(db, user_id, month)
     return good
 
@@ -456,6 +514,7 @@ def sync_month(db: Session, user_id: int, month: SimMonth) -> None:
             desired[key] = {"name": name[:80], "kind": kind, "cat": cat_name, "amount": quantize_money(amount), "capital": capital}
 
     personal_id = finance_ledger.personal_account(db, user_id).id
+    taxable: dict[int, Decimal] = {}
     for g in db.scalars(select(Good).where(Good.user_id == user_id, Good.status == GoodStatus.ACTIVE,
                                            Good.owner_account_id == personal_id)):
         for c in db.scalars(select(GoodCost).where(GoodCost.good_id == g.id)):
@@ -465,8 +524,17 @@ def sync_month(db: Session, user_id: int, month: SimMonth) -> None:
         det = db.get(RealEstateDetails, g.id)
         if det and det.occupancy == Occupancy.RENTED and det.monthly_rent > 0:
             want(f"good:{g.id}:rent", f"Aluguel recebido — {g.name}", FlowKind.INCOME, "Aluguéis recebidos", det.monthly_rent)
-            want(f"good:{g.id}:rent_tax", f"IR sobre aluguel — {g.name}", FlowKind.EXPENSE, "Impostos",
-                 det.monthly_rent * det.rent_tax_pct / 100)
+            taxable[g.id] = det.monthly_rent
+        elif det and det.occupancy == Occupancy.SHORT_STAY:
+            row = db.scalar(select(ShortStayMonth).where(ShortStayMonth.good_id == g.id, ShortStayMonth.ref_month == ref))
+            if row is not None:
+                want(f"good:{g.id}:stay", f"Hospedagens — {g.name} ({row.nights} noites, {row.occupancy_pct}%)", FlowKind.INCOME,
+                     "Aluguéis recebidos", row.gross)
+                want(f"good:{g.id}:stay_platform", f"Taxa da plataforma de reservas — {g.name}", FlowKind.EXPENSE, "Outros", row.platform_fee)
+                want(f"good:{g.id}:stay_manager", f"Gestão contratada — {g.name}", FlowKind.EXPENSE, "Outros", row.manager_fee)
+                want(f"good:{g.id}:stay_clean", f"Limpeza das hospedagens — {g.name}", FlowKind.EXPENSE, "Moradia", row.cleaning)
+                want(f"good:{g.id}:stay_iss", f"ISS da hospedagem — {g.name}", FlowKind.EXPENSE, "Impostos", row.iss)
+                taxable[g.id] = short_stay.taxable_net(row)
         loan = _active_loan(db, g.id)
         if loan:
             for inst in db.scalars(select(LoanInstallment).where(
@@ -478,6 +546,12 @@ def sync_month(db: Session, user_id: int, month: SimMonth) -> None:
                 want(f"loan:{loan.id}:{inst.number}:principal", f"Amortização do financiamento {label} — {g.name}",
                      FlowKind.EXPENSE, "Dívidas", inst.amortization, capital=True)
 
+    total_rent = sum(taxable.values(), ZERO)                  # IR progressivo (carnê-leão) sobre TODOS os aluguéis do mês, rateado
+    if total_rent > 0:
+        total_tax = br_taxes.rent_income_tax(total_rent)
+        for gid, base in taxable.items():
+            name = db.get(Good, gid).name
+            want(f"good:{gid}:rent_tax", f"IR sobre aluguel (carnê-leão) — {name}", FlowKind.EXPENSE, "Impostos", total_tax * base / total_rent)
     existing = {bi.source_key: bi for bi in db.scalars(select(BudgetItem).where(
         BudgetItem.month_id == month.id, BudgetItem.source_key.is_not(None))) if bi.source_key.startswith(("good:", "loan:"))}
     with_entries = set(db.scalars(select(LedgerEntry.budget_item_id).where(
@@ -545,4 +619,6 @@ def advance_to_month(db: Session, user_id: int, new_month: SimMonth) -> None:
                 det.occupancy = Occupancy.LISTED_FOR_RENT
                 _event(db, g, ref, GoodEventType.VACATED, "Inquilino saiu: imóvel vago e anunciado")
     db.flush()
+    _recommit_hours(db, user_id)
+    ensure_stay_months(db, user_id, ref)
     sync_month(db, user_id, new_month)

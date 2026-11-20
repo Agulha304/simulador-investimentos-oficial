@@ -48,6 +48,7 @@ class EventDef:
     effects: dict = field(default_factory=dict)
     options: tuple[Option, ...] = ()
     sectors: tuple[str, ...] = ()     # segmentos possíveis (SECTOR); vazio = todos
+    company_needs: str = ""           # COMPANY: só empresas com 'employees' ou 'partners'
 
 
 def _lo_conf(m, c): return 2.5 if m["confidence"] < 40 else 1.0 if m["confidence"] < 55 else 0.2
@@ -63,6 +64,22 @@ def _renting(m, c): return 1.0 if c["housing_kind"] in ("RENT", "SHARED") else 0
 
 
 CATALOG: tuple[EventDef, ...] = (
+    EventDef("processo_trabalhista", "Funcionário processa a empresa", "Um funcionário entrou com um processo trabalhista pedindo verbas. Como reagir?",
+             "BUSINESS", "COMPANY", False, 2, (1, 1), 0.012, lambda m, c: _has_employees(m, c) * (1.6 if m["unemployment"] > 10 else 1.0), company_needs="employees",
+             options=(Option("acordo", "Fazer um acordo", "Paga agora e encerra o assunto.", (Outcome(1.0, "Acordo fechado: o processo foi encerrado.", {"company_oneoff": {"payroll_mult": 2.0, "label": "Acordo trabalhista"}}, 1),)),
+                      Option("contestar", "Contestar na justiça", "Advogado custa; você pode ganhar ou perder feio.",
+                             (Outcome(0.5, "Você ganhou o processo e só pagou o advogado.", {"company_oneoff": {"payroll_mult": 0.5, "label": "Advogado (processo trabalhista)"}}, 1),
+                              Outcome(0.5, "Você perdeu: indenização maior e advogado.", {"company_oneoff": {"payroll_mult": 3.5, "label": "Condenação trabalhista e advogado"}}, 1))),
+                      Option("ignorar", "Deixar correr", "Sem resposta, o risco é maior.", (Outcome(1.0, "Sem defesa, a empresa foi condenada à revelia.", {"company_oneoff": {"payroll_mult": 4.0, "label": "Condenação trabalhista (revelia)"}}, 1),), default=True))),
+    EventDef("calote_socio", "Sócio dá um calote na sociedade", "Um sócio retirou dinheiro da empresa e sumiu com a sua parte. O que fazer?",
+             "BUSINESS", "COMPANY", False, 3, (1, 1), 0.010, lambda m, c: _has_partners(m, c) * 1.0, effects={"on_spawn": "partner_default"}, company_needs="partners",
+             options=(Option("negociar", "Negociar a devolução", "Recupera só uma parte, sem briga.", (Outcome(0.7, "O ex-sócio devolveu uma parte do dinheiro.", {"company_income": {"loss_mult": 0.4, "label": "Devolução negociada do ex-sócio"}}, 1),
+                                                                                                    Outcome(0.3, "O ex-sócio não respondeu mais.", {}, 1))),
+                      Option("processar", "Processar o ex-sócio", "Advogado custa e demora; pode recuperar quase tudo.",
+                             (Outcome(0.55, "A justiça determinou o ressarcimento: você recuperou a maior parte.", {"company_oneoff": {"amount": 3000, "label": "Advogado (ação contra sócio)"},
+                                                                                                                  "company_income": {"loss_mult": 0.8, "label": "Ressarcimento judicial"}}, 1),
+                              Outcome(0.45, "O processo foi perdido e ele não tinha bens para pagar.", {"company_oneoff": {"amount": 3000, "label": "Advogado (ação contra sócio)"}}, 1))),
+                      Option("aceitar", "Aceitar o prejuízo", "Segue em frente sem gastar mais.", (Outcome(1.0, "Você aceitou o prejuízo e reorganizou a empresa.", {}, 1),), default=True))),
     # ------------------------------------------------------------ macroeconomia / mundo
     EventDef("crescimento", "Crescimento econômico acelerado", "A economia aquece: mais consumo, emprego e confiança.",
              "ECONOMIC", "WORLD", True, 2, (6, 10), 0.07, _hi_conf,
@@ -302,6 +319,34 @@ MONTHLY: tuple[EventDef, ...] = (
     EventDef("d_voluntariado", "Convite para ser voluntário", "Uma ONG da sua cidade precisa de ajuda no próximo mês.", "PERSONAL", "USER", True, 1, (1, 1), 0.7, _always,
              options=(_o("aceitar", "Ajudar", "Faz bem para você e para os outros.", _oc(1.0, "Você se sentiu muito realizado e conheceu gente nova.", {"life": {"satisfaction": 4, "social": 3, "wellbeing": 3}})),
                       _o("recusar", "Dessa vez não", "Falta de tempo.", _oc(1.0, "Você não pôde ajudar agora.", {}), default=True))),
+)
+_has_employees = lambda m, c: 1.0 if any(v > 0 for v in c.get("co_employees", {}).values()) else 0.0     # noqa: E731
+_has_partners = lambda m, c: 1.0 if any(v > 0 for v in c.get("co_partners", {}).values()) else 0.0       # noqa: E731
+_has_vehicle = lambda m, c: 1.0 if c.get("has_vehicle") else 0.0                                        # noqa: E731
+_has_rented = lambda m, c: 1.0 if c.get("has_rented") else 0.0                                          # noqa: E731
+
+MONTHLY = MONTHLY + (
+    # ------------------------------------------------------------ processos jurídicos nas decisões do mês
+    EventDef("d_multa", "Multa de trânsito", "Você recebeu uma multa de R$ 195 (R$ 130 se pagar logo). Pagar ou recorrer?", "FINANCIAL", "USER", False, 1, (1, 1), 0.9, _has_vehicle,
+             options=(_o("pagar", "Pagar com desconto", "Resolve na hora.", _oc(1.0, "Multa paga com desconto.", {"oneoff": [_out(130, "Multa de trânsito", "transporte")]}), default=True),
+                      _o("recorrer", "Recorrer (com advogado)", "O advogado custa R$ 400 e o resultado é incerto.",
+                         _oc(0.4, "O recurso foi aceito: a multa foi cancelada.", {"oneoff": [_out(400, "Advogado (recurso de multa)", "transporte")]}),
+                         _oc(0.6, "O recurso foi negado: você pagou a multa e o advogado.", {"oneoff": [_out(400, "Advogado (recurso de multa)", "transporte"), _out(195, "Multa de trânsito", "transporte")], "life": {"wellbeing": -2}})))),
+    EventDef("d_inquilino", "Inquilino atrasou o aluguel", "O inquilino de um dos seus imóveis está com o aluguel atrasado. Negociar ou entrar na justiça?", "FINANCIAL", "USER", False, 1, (1, 1), 1.2, _has_rented,
+             options=(_o("negociar", "Negociar um parcelamento", "Perde parte do valor, evita briga.", _oc(1.0, "Vocês chegaram a um acordo e você perdoou parte da dívida.", {"oneoff": [_out(600, "Aluguel perdoado", "moradia")]}), default=True),
+                      _o("processar", "Entrar com ação de despejo", "Advogado de R$ 1.200; pode demorar e dar errado.",
+                         _oc(0.65, "A justiça decidiu a seu favor e o inquilino quitou o atraso.", {"oneoff": [_out(1200, "Advogado (ação de despejo)", "moradia"), _in(1500, "Aluguéis atrasados recebidos")]}),
+                         _oc(0.35, "O processo se arrastou e o inquilino não pagou.", {"oneoff": [_out(1200, "Advogado (ação de despejo)", "moradia")], "life": {"wellbeing": -3}})))),
+    EventDef("d_acidente", "Batida leve no trânsito", "Você bateu de leve no carro de outra pessoa. Acordo amigável ou acionar o seguro?", "PERSONAL", "USER", False, 1, (1, 1), 0.8, _has_vehicle,
+             options=(_o("acordo", "Acordo amigável", "Você paga o conserto dele(a).", _oc(1.0, "Vocês resolveram na hora.", {"oneoff": [_out(900, "Conserto no acordo amigável", "transporte")]}), default=True),
+                      _o("seguro", "Acionar o seguro", "Franquia de R$ 700; a outra parte pode ir à justiça.",
+                         _oc(0.6, "O seguro cobriu tudo.", {"oneoff": [_out(700, "Franquia do seguro", "transporte")]}),
+                         _oc(0.4, "A outra parte processou e você teve gastos extras.", {"oneoff": [_out(700, "Franquia do seguro", "transporte"), _out(1500, "Custas e indenização", "transporte")], "life": {"wellbeing": -4}})))),
+    EventDef("d_vizinho", "Vizinho ameaça processar", "Um vizinho reclama do barulho de uma reforma e ameaça ir à justiça.", "PERSONAL", "USER", False, 1, (1, 1), 0.7, _always,
+             options=(_o("acordo", "Fazer um acordo", "Paga uma compensação e encerra.", _oc(1.0, "Você fez as pazes com o vizinho.", {"oneoff": [_out(500, "Acordo com o vizinho", "moradia")]}), default=True),
+                      _o("enfrentar", "Enfrentar na justiça", "Advogado de R$ 500; pode ganhar ou perder.",
+                         _oc(0.5, "A justiça deu razão a você.", {"oneoff": [_out(500, "Advogado", "moradia")]}),
+                         _oc(0.5, "Você perdeu e teve que indenizar.", {"oneoff": [_out(500, "Advogado", "moradia"), _out(1800, "Indenização ao vizinho", "moradia")], "life": {"wellbeing": -3}})))),
 )
 MONTHLY_BY_KEY = {e.key: e for e in MONTHLY}
 CATALOG_BY_KEY.update(MONTHLY_BY_KEY)

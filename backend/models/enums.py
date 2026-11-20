@@ -217,6 +217,7 @@ class Occupancy(StrEnum):
     VACANT = "VACANT"                      # sem uso e sem anúncio
     LISTED_FOR_RENT = "LISTED_FOR_RENT"    # anunciado, aguardando inquilino (vacância)
     RENTED = "RENTED"                      # alugado, gerando renda
+    SHORT_STAY = "SHORT_STAY"              # hospedagem de temporada (o "Airbnb" do jogo): rende mais, exige gestão
     COMPANY_USE = "COMPANY_USE"            # cedido a uma empresa do usuário (contrato de locação interno)
 
 

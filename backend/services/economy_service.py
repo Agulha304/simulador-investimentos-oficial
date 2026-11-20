@@ -20,16 +20,19 @@ from sqlalchemy.orm import Session
 
 from backend.core.money import quantize_money
 from backend.models import (
-    Company, CompanySegment, CompanyStatus, EconomicCrisis, EconomyState, Relationship, EntryOrigin, FlowKind, GameProfile, REAL_ESTATE, RecurringItem,
+    Company, CompanyPartner, CompanySegment, CompanyStatus, EconomicCrisis, EconomyState, Employee, EmployeeStatus, Good, GoodCategory,
+    GoodStatus, Occupancy, RealEstateDetails, Relationship, EntryOrigin, FlowKind, GameProfile, REAL_ESTATE, RecurringItem,
     RecurringItemVersion, SimMonth, TransactionSource, WorldEvent,
 )
 from backend.services import budget_service, finance_ledger, item_sync
+from backend.services import partners as partners_mod
 from backend.services import economy_events as E
 from backend.services.engine import crises as engine_crises
 from backend.services.engine import world as engine_world
 from backend.services.engine.params import SimParams
 from backend.services.finance_ledger import ConflictError, FinanceError, NotFoundError
 from backend.services.life_rules import hash01
+from backend.models import Person
 
 ONE = Decimal("1.0000")
 D = Decimal
@@ -42,6 +45,11 @@ EXTRA_START = {"fx": (2.0, 30.0), "credit": (5, 95), "liquidity": (5, 100), "hou
                "business_conf": (0, 100), "commodity": (30, 400), "risk_appetite": (0, 100)}
 CAT_NAME = {"saude": "Saúde", "alimentacao": "Alimentação", "moradia": "Moradia", "transporte": "Transporte",
             "educacao": "Educação", "lazer": "Lazer", "vestuario": "Vestuário"}
+
+
+def rules_payroll(salary):
+    from backend.services import company_rules
+    return company_rules.payroll_cost(salary)
 
 
 def _clamp(v, lo, hi):
@@ -256,6 +264,15 @@ def _context(db: Session, user_id: int, ref: date) -> dict:
         "relationships": bool(prof and db.scalar(select(func.count(Relationship.id)).where(
             Relationship.user_id == user_id, Relationship.stage != "ENDED"))),
         "salary": item_sync.salary_total(db, user_id, ref),
+        "co_employees": {c: n for c, n in db.execute(select(Employee.company_id, func.count(Employee.id)).join(Company, Company.id == Employee.company_id).where(
+            Company.user_id == user_id, Employee.status == EmployeeStatus.ACTIVE).group_by(Employee.company_id))},
+        "co_partners": {c: n for c, n in db.execute(select(CompanyPartner.company_id, func.count(CompanyPartner.id)).join(
+            Company, Company.id == CompanyPartner.company_id).where(Company.user_id == user_id, CompanyPartner.status == "ACTIVE")
+            .group_by(CompanyPartner.company_id))},
+        "has_vehicle": bool(db.scalar(select(func.count(Good.id)).where(
+            Good.user_id == user_id, Good.status == GoodStatus.ACTIVE, Good.category.in_((GoodCategory.CAR, GoodCategory.MOTORCYCLE))))),
+        "has_rented": bool(db.scalar(select(func.count(RealEstateDetails.good_id)).join(Good, Good.id == RealEstateDetails.good_id).where(
+            Good.user_id == user_id, Good.status == GoodStatus.ACTIVE, RealEstateDetails.occupancy.in_((Occupancy.RENTED, Occupancy.SHORT_STAY))))),
         "months": budget_service.months_between(g.started_month, ref) if g.started_month else 12,
     }
 
@@ -269,6 +286,9 @@ def _make_event(db: Session, user_id: int, d: E.EventDef, ref: date, seed: int, 
         name = f"{d.name} ({sector.lower()})"
     elif d.scope == "COMPANY":
         cs = ctx["companies"]
+        if d.company_needs:                       # ex.: processo trabalhista só em empresa com funcionários; calote só com sócios
+            have = ctx.get("co_employees" if d.company_needs == "employees" else "co_partners", {})
+            cs = [c for c in cs if have.get(c.id, 0) > 0]
         if not cs:
             return None
         co = cs[int(hash01(seed, "co", d.key, ref.isoformat(), user_id) * len(cs)) % len(cs)]
@@ -284,7 +304,31 @@ def _make_event(db: Session, user_id: int, d: E.EventDef, ref: date, seed: int, 
         ev.options = [{"key": o.key, "label": o.label, "hint": o.hint, "cost": o.cost} for o in d.options]
     db.add(ev)
     db.flush()
+    if d.effects.get("on_spawn") == "partner_default" and ev.company_id:
+        _partner_default(db, ev, ref, seed)
     return ev
+
+
+def _partner_default(db: Session, ev: WorldEvent, ref: date, seed: int) -> None:
+    """O calote ACONTECE na criação do evento (o sócio sai com dinheiro); a decisão do jogador é sobre como reagir."""
+    from backend.services import company_service, life_service
+    c = db.get(Company, ev.company_id)
+    actives = [p for p in partners_mod.partners_of(db, c.id) if p.status == "ACTIVE"]
+    if not actives:
+        return
+    p = actives[int(hash01(seed, "default", c.id, ref.isoformat()) * len(actives)) % len(actives)]
+    person = db.get(Person, p.person_id)
+    loss = quantize_money(p.contribution * D("0.5"))
+    p.status, p.left_month = "DEFAULTED", ref
+    c.owner_share_pct = min(D(100), c.owner_share_pct + p.share_pct)         # as cotas dele(a) voltam para você
+    company_service._post(db, c, ref, kind=FlowKind.EXPENSE, amount=loss, desc=f"Calote do sócio {person.name}", line="FIXED",
+                          key=f"econ:ev:{ev.id}:calote", overdraft=True)
+    ev.description = f"{person.name} retirou {loss} da empresa {c.name} e deixou a sociedade sem avisar. Como reagir?"
+    ev.effects = {**ev.effects, "loss": str(loss), "partner_person_id": person.id}
+    rel = db.scalar(select(Relationship).where(Relationship.user_id == ev.user_id, Relationship.person_id == person.id))
+    if rel is not None:
+        rel.affinity, rel.trust = life_service._clamp(rel.affinity - 30), life_service._clamp(rel.trust - 35)
+    life_service.log(db, ev.user_id, ref, "LEGAL", f"{person.name} deu um calote na sociedade da empresa {c.name} (prejuízo de {loss})", person_id=person.id)
 
 
 def _activate(db: Session, ev: WorldEvent, ref: date) -> None:
@@ -313,9 +357,24 @@ def _activate(db: Session, ev: WorldEvent, ref: date) -> None:
     if co and ev.company_id:
         c = db.get(Company, ev.company_id)
         from backend.services import company_service
-        amt = quantize_money(D(str(co["amount"])) * index_value(db, ev.user_id, ref, co.get("price_cat", "insumos")))
+        if "payroll_mult" in co:                       # valores jurídicos proporcionais ao tamanho da folha da empresa
+            payroll = sum((rules_payroll(e.salary) for e in company_service._employees(db, c)), D("0.00"))
+            amt = max(D("3000"), quantize_money(payroll * D(str(co["payroll_mult"]))))
+        else:
+            amt = quantize_money(D(str(co["amount"])) * index_value(db, ev.user_id, ref, co.get("price_cat", "insumos")))
         company_service._post(db, c, ref, kind=FlowKind.EXPENSE, amount=amt, desc=f"{co['label']} (evento)", line="FIXED",
                               key=f"econ:ev:{ev.id}:company", overdraft=True)
+        if ev.category == "BUSINESS" and ev.key == "processo_trabalhista":
+            life_service.log(db, ev.user_id, ref, "LEGAL", f"Processo trabalhista na empresa {c.name}: {co['label'].lower()} ({amt})")
+    ci = fx.pop("company_income", None)
+    if ci and ev.company_id:                           # ressarcimento de um calote (acordo ou justiça)
+        c = db.get(Company, ev.company_id)
+        from backend.services import company_service
+        loss = D(str((ev.effects or {}).get("loss", "0")))
+        amt = quantize_money(loss * D(str(ci["loss_mult"])))
+        if amt > 0:
+            company_service._post(db, c, ref, kind=FlowKind.INCOME, amount=amt, desc=f"{ci['label']} (evento)", line="REVENUE",
+                                  key=f"econ:ev:{ev.id}:recovery")
     ev.effects = fx
 
 
@@ -369,7 +428,8 @@ def _resolve(db: Session, ev: WorldEvent, option_key: str, month_ref: date, seed
             oneoff.append({"kind": "EXPENSE", "amount": opt.cost, "price_cat": "lazer", "label": f"{opt.label} — {ev.name}"})
     if oneoff:
         fx["oneoff"] = oneoff
-    ev.effects, ev.choice, ev.outcome = fx, opt.key, chosen.text
+    keep = {k: v for k, v in (ev.effects or {}).items() if k in ("loss", "partner_person_id")}
+    ev.effects, ev.choice, ev.outcome = {**fx, **keep}, opt.key, chosen.text
     ev.start_month = min(ev.start_month, month_ref)
     ev.end_month = budget_service.shift_month(month_ref, max(chosen.duration, 1) - 1)
     ev.status = "ACTIVE"

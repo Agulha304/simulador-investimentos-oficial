@@ -22,6 +22,13 @@ class CompanyCreate(BaseModel):
     capital: Decimal = Pos
     owner_share_pct: Decimal = Field(Decimal("100"), gt=0, le=100, max_digits=5, decimal_places=2)
     business_type: str = Field("", max_length=60)
+    partner_invite_ids: list[int] = []
+
+
+class PartnerInviteIn(BaseModel):
+    person_id: int
+    share_pct: Decimal = Field(gt=0, le=100, max_digits=5, decimal_places=2)
+    capital: Decimal = Pos
 
 
 class QuoteIn(BaseModel):
@@ -266,6 +273,7 @@ class CompanyDetailOut(BaseModel):
     months: list[MonthOut]
     events: list[EventOut]
     ledger: list[LedgerLineOut]
+    partners: list[dict] = []
 
 
 class OverviewOut(BaseModel):

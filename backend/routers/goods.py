@@ -9,13 +9,13 @@ from backend.core.money import quantize_money
 from backend.dependencies import CurrentUser, DbSession
 from backend.models import (
     Good, GoodCategory, GoodCost, GoodEvent, GoodStatus, GoodValue, InstallmentStatus, LedgerEntry, Loan,
-    LoanInstallment, RealEstateDetails, RecurringItem, VehicleDetails,
+    LoanInstallment, Occupancy, RealEstateDetails, RecurringItem, ShortStayMonth, VehicleDetails,
 )
 from backend.routers.budget import _run
 from backend.schemas import goods as s
 from backend.services import budget_service as bs
 from backend.services import goods_rules as rules
-from backend.services import economy_service
+from backend.services import economy_service, short_stay
 from backend.services import goods_service as gs
 from backend.services import finance_ledger, wealth_service
 from backend.services.finance_ledger import FinanceError, NotFoundError
@@ -27,11 +27,12 @@ router = APIRouter(prefix="/goods", tags=["goods"])
 
 def _listing_out(db, listing, price, owned) -> s.ListingOut:
     t = rules.FINANCING.get(listing.category)
-    fee = quantize_money(price * rules.PURCHASE_FEE_PCT.get(listing.category, Decimal(0)) / 100)
+    fee, parts = rules.purchase_fee(listing.category, price, listing.location)
+    breakdown = [{"name": n, "rate_pct": str(r), "amount": str(a)} for n, r, a in parts]
     rent = rules.market_rent(listing.category, price) if listing.category in (GoodCategory.RESIDENTIAL, GoodCategory.COMMERCIAL) else None
     return s.ListingOut(
         key=listing.key, category=listing.category, name=listing.name, description=listing.description, price=price,
-        purchase_fee=fee, location=listing.location, condition=listing.condition, property_type=listing.property_type,
+        purchase_fee=fee, fee_breakdown=breakdown, location=listing.location, condition=listing.condition, property_type=listing.property_type,
         address=listing.address, area_m2=listing.area_m2, bedrooms=listing.bedrooms, suggested_rent=rent, owned=owned,
         financing=s.FinancingOut(max_ltv_pct=t.max_ltv_pct, min_down_payment=quantize_money(price * (100 - t.max_ltv_pct) / 100),
                                  annual_rate_pct=t.annual_rate_pct, max_term_months=t.max_term_months) if t else None)
@@ -78,7 +79,13 @@ def _detail(db: Session, user_id: int, g: Good) -> s.GoodDetailOut:
         real_estate=s.RealEstateOut(
             property_type=det.property_type, address=det.address, area_m2=det.area_m2, bedrooms=det.bedrooms,
             occupancy=det.occupancy, monthly_rent=det.monthly_rent, rent_tax_pct=det.rent_tax_pct,
-            market_rent=rules.market_rent(g.category, g.current_value)) if det else None,
+            market_rent=rules.market_rent(g.category, g.current_value),
+            market_nightly=rules.market_nightly(g.category, g.current_value) if g.category == GoodCategory.RESIDENTIAL else None,
+            nightly_rate=det.nightly_rate, management=det.management, str_rating=det.str_rating,
+            management_hours=short_stay.STR_HOURS if det.occupancy == Occupancy.SHORT_STAY and det.management == "SELF" else 0,
+            stay_months=[{"month": r.ref_month.isoformat(), "nights": r.nights, "occupancy_pct": str(r.occupancy_pct), "gross": str(r.gross),
+                          "net": str(r.gross - r.platform_fee - r.manager_fee - r.cleaning - r.iss), "note": r.note}
+                         for r in db.scalars(select(ShortStayMonth).where(ShortStayMonth.good_id == g.id).order_by(ShortStayMonth.ref_month.desc()).limit(12))]) if det else None,
         vehicle_usage_km_month=veh.usage_km_month if veh else None,
         costs=[s.CostOut(id=c.id, kind=c.kind, name=c.name, amount=c.amount, frequency=c.frequency,
                          start_month=c.start_month, active=c.active)
@@ -125,7 +132,7 @@ def simulate(body: s.SimulateIn, user: CurrentUser, db: DbSession):
         price = gs.market_price(listing, month.ref_month, gs.load_rules(db))
         rate, rows = gs.simulate_financing(listing.category, price, body.down_payment, body.term_months, body.system, body.annual_rate_pct,
                                       economy_service.financing_rate_add(db, user.id, month.ref_month))
-        fee = quantize_money(price * rules.PURCHASE_FEE_PCT.get(listing.category, Decimal(0)) / 100)
+        fee, _parts = rules.purchase_fee(listing.category, price, listing.location)
         down = quantize_money(body.down_payment)
         return s.SimulationOut(
             price=price, down_payment=down, financed=price - down, annual_rate_pct=rate, first_payment=rows[0].payment,
@@ -232,7 +239,8 @@ def occupancy(good_id: int, body: s.OccupancyIn, user: CurrentUser, db: DbSessio
     def go():
         month = bs.ensure_setup(db, user.id)
         g = gs.set_occupancy(db, user.id, month, good_id, body.mode, monthly_rent=body.monthly_rent,
-                             end_recurring_item_ids=tuple(body.end_recurring_item_ids))
+                             end_recurring_item_ids=tuple(body.end_recurring_item_ids), nightly_rate=body.nightly_rate,
+                             management=body.management)
         return _detail(db, user.id, g)
     return _run(db, go)
 
@@ -261,4 +269,34 @@ def update_cost(good_id: int, cost_id: int, body: s.CostPatch, user: CurrentUser
         month = bs.ensure_setup(db, user.id)
         gs.update_cost(db, user.id, month, good_id, cost_id, amount=body.amount, active=body.active, frequency=body.frequency)
         return _detail(db, user.id, gs.get_good(db, user.id, good_id))
+    return _run(db, go)
+
+
+@router.get("/taxes/summary")
+def taxes(user: CurrentUser, db: DbSession):
+    """Impostos já pagos sobre os seus bens, por tipo (ITBI, IPTU, IPVA, IR sobre aluguel, ISS, ganho de capital...)."""
+    def go():
+        from backend.models import BudgetCategory
+        names = {c.id: c.name for c in db.scalars(select(BudgetCategory).where(BudgetCategory.user_id == user.id))}
+        cost_kind = {c.id: c.kind for c in db.scalars(select(GoodCost).join(Good, Good.id == GoodCost.good_id).where(Good.user_id == user.id))}
+        label = {"IPTU": "IPTU", "IPVA": "IPVA", "LICENSING": "Licenciamento do veículo"}
+        by: dict[str, Decimal] = {}
+        for e in db.scalars(select(LedgerEntry).where(LedgerEntry.user_id == user.id, LedgerEntry.kind == "EXPENSE",
+                                                        LedgerEntry.company_id.is_(None), LedgerEntry.origin == "ASSET")):
+            ref = e.origin_ref or ""
+            if ref.endswith(":fees"):
+                k = "ITBI, escritura e transferência (compra)"
+            elif ref.endswith(":sale_tax"):
+                k = "IR sobre ganho de capital (venda)"
+            elif ref.endswith(":rent_tax"):
+                k = "IR sobre aluguéis (carnê-leão)"
+            elif ref.endswith(":stay_iss"):
+                k = "ISS da hospedagem de temporada"
+            elif ":cost:" in ref and cost_kind.get(int(ref.rsplit(":", 1)[1])) is not None and cost_kind[int(ref.rsplit(":", 1)[1])].value in label:
+                k = label[cost_kind[int(ref.rsplit(":", 1)[1])].value]
+            else:
+                continue
+            by[k] = by.get(k, Decimal("0.00")) + e.amount
+        total = sum(by.values(), Decimal("0.00"))
+        return {"total": total, "items": [{"tax": k, "amount": v} for k, v in sorted(by.items(), key=lambda kv: -kv[1])]}
     return _run(db, go)

@@ -18,12 +18,12 @@ from sqlalchemy.orm import Session
 from backend.core.money import quantize_money
 from backend.models import (
     AccountKind, AmortizationSystem, Company, CompanyCost, CompanyEvent, CompanyEventType, CompanyLease, CompanyLoan,
-    CompanyLoanInstallment, CompanyMonth, CompanySegment, CompanySize, CompanyStatus, Employee, EmployeeLevel, EmployeeStatus,
+    CompanyLoanInstallment, CompanyMonth, CompanyPartner, CompanySegment, CompanySize, CompanyStatus, Employee, EmployeeLevel, EmployeeStatus,
     EntryOrigin, FinanceAccount, FlowKind, Frequency, Good, GoodCategory, GoodCost, GoodEvent, GoodEventType, GoodStatus,
-    InstallmentStatus, InventoryItem, LeaseKind, LedgerEntry, LoanStatus, Occupancy, RealEstateDetails, SimMonth,
+    InstallmentStatus, InventoryItem, LeaseKind, LedgerEntry, LoanStatus, Occupancy, Person, RealEstateDetails, SimMonth,
 )
 from backend.services import company_rules as rules
-from backend.services import economy_service
+from backend.services import economy_service, partners
 from backend.services import finance_ledger, loan_math, wealth_service
 from backend.services.budget_service import months_between, require_open, shift_month
 from backend.services.finance_ledger import ConflictError, FinanceError, NotFoundError
@@ -114,8 +114,14 @@ def _rent(db: Session, c: Company, seg: rules.Segment) -> Decimal:
 # ------------------------------------------------------------------ criação e capital
 
 def create_company(db: Session, user_id: int, month: SimMonth, *, name: str, segment: CompanySegment, location: str,
-                   size: CompanySize, capital: Decimal, owner_share_pct: Decimal = D(100), business_type: str = "") -> Company:
+                   size: CompanySize, capital: Decimal, owner_share_pct: Decimal = D(100), business_type: str = "",
+                   partner_invite_ids: list[int] | None = None) -> Company:
     require_open(month)
+    invites = partners.usable_invites(db, user_id, month, partner_invite_ids or []) if partner_invite_ids else []
+    if invites:
+        if owner_share_pct != D(100):
+            raise FinanceError("com sócios convidados a participação do dono é calculada: deixe em 100%")
+        owner_share_pct = partners.owner_share(invites)
     name = name.strip()
     if not name:
         raise FinanceError("informe o nome da empresa")
@@ -140,7 +146,24 @@ def create_company(db: Session, user_id: int, month: SimMonth, *, name: str, seg
     db.add(c)
     db.flush()
     _event(db, c, ref, CompanyEventType.CREATED, f"Empresa criada: {seg.label}, {rules.SIZES[size].label}, {rules.LOCATIONS[location].label}")
-    transfer_in(db, c, ref, capital, key=f"company:{c.id}:capital:initial")
+    if invites:
+        parts = partners.contributions(invites, capital)
+        for inv, amount in parts:                                           # aporte de cada sócio sai do patrimônio DELE(A)
+            person = db.get(Person, inv.person_id)
+            if person.assets < amount:
+                raise FinanceError(f"{person.name} não tem {amount} para aportar: reduza o capital ou a participação")
+        own = quantize_money(capital * owner_share_pct / 100)
+        transfer_in(db, c, ref, own, key=f"company:{c.id}:capital:initial")
+        for inv, amount in parts:
+            person = db.get(Person, inv.person_id)
+            person.assets -= amount
+            db.add(CompanyPartner(company_id=c.id, person_id=person.id, share_pct=inv.share_pct, contribution=amount, joined_month=ref))
+            inv.used = True
+            _post(db, c, ref, kind=FlowKind.INCOME, amount=amount, desc=f"Aporte do sócio {person.name}", line="CAPITAL_IN",
+                  key=f"company:{c.id}:capital:partner:{person.id}")
+            _event(db, c, ref, CompanyEventType.CAPITAL, f"Sócio {person.name} entrou com {amount} ({inv.share_pct}%)", amount)
+    else:
+        transfer_in(db, c, ref, capital, key=f"company:{c.id}:capital:initial")
     _event(db, c, ref, CompanyEventType.CAPITAL, "Capital inicial integralizado", capital)
     _post(db, c, ref, kind=FlowKind.EXPENSE, amount=rules.setup_cost(seg, size), desc="Estruturação do negócio (reforma, licenças e abertura)",
           line="SETUP", key=f"co:{c.id}:setup")
