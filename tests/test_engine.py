@@ -448,3 +448,17 @@ def test_economy_params_are_configurable_per_game(client, auth_headers):
     r = client.put("/api/economy/params", headers=h, json={"crisis_severity": 2.0})
     assert r.status_code == 200 and r.json()["crisis_severity"] == 2.0 and r.json()["volatility"] == 1.5
     assert client.put("/api/economy/params", headers=h, json={"volatility": 50}).status_code == 400
+
+
+def test_career_chart_has_real_past_plus_simulated_future(client, auth_headers, assets):
+    g, h = _mk_world(client, auth_headers, seed=5)
+    client.get(f"/api/assets/{assets['PETR4'].id}/quote", headers=h)
+    _advance(client, h, 3)
+    r = client.get(f"/api/assets/{assets['PETR4'].id}/chart?period=max", headers=h)
+    assert r.status_code == 200, r.text
+    times = [c["time"] for c in r.json()["candles"]]
+    assert times == sorted(times) and len(times) > 4
+    from datetime import datetime, timezone
+    anchor = int(datetime(date.today().year, date.today().month, 1, tzinfo=timezone.utc).timestamp())
+    assert any(t < anchor for t in times), "deve incluir os meses anteriores (passado real)"
+    assert sum(1 for t in times if t >= anchor) == 4, "e os meses simulados (âncora + 3)"

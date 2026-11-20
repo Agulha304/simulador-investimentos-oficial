@@ -15,7 +15,7 @@ from sqlalchemy.exc import IntegrityError
 from backend.core.clock import MarketClock
 from backend.database import SessionLocal
 from backend.models import Asset, Currency, EconomyState, GameProfile, SimPrice
-from backend.services import market_data
+from backend.services import historical_market, market_data
 from backend.services.engine import markets as mk
 from backend.services.engine import regimes as rg
 from backend.services.engine.rng import Rng
@@ -130,6 +130,15 @@ class SimWorld:
                                           .order_by(SimPrice.ref_month)) if r.ref_month <= self.ref]
         months = {"1mo": 2, "6mo": 7, "1y": 13, "5y": 61, "max": 10_000}[period]
         out, prev = [], None
+        anchor = next((r.ref_month for r in rows if r.source == "ANCHOR"), None)
+        if anchor is not None:                              # passado REAL até o mês de partida + futuro simulado depois dele
+            try:
+                for m, c in historical_market.monthly(asset.provider_symbol):
+                    if m < anchor:
+                        out.append(c)
+                        prev = c.close
+            except MarketDataUnavailable:
+                pass
         for r in rows:
             o = prev if prev is not None else r.price
             ts = int(datetime(r.ref_month.year, r.ref_month.month, 1, tzinfo=UTC).timestamp())
