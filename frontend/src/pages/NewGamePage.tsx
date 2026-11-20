@@ -25,7 +25,6 @@ export function NewGamePage() {
   const [name, setName] = useState("Minha vida financeira");
   const [charName, setCharName] = useState("");
   const [gender, setGender] = useState<"M" | "F" | "N">("N");
-  const [interestedIn, setInterestedIn] = useState<"ANY" | "M" | "F">("ANY");
   const [field, setField] = useState("comercio");
   const [age, setAge] = useState("");
   const [mode, setMode] = useState<"CAREER" | "FREE" | "RANKED">("CAREER");
@@ -43,7 +42,7 @@ export function NewGamePage() {
       const g = await sim.createGame("LIFE", name.trim() || "Minha partida");
       created = g;
       gameStore.set({ id: g.id, kind: "LIFE", name: g.name });
-      const body: Record<string, unknown> = { mode, name: charName.trim() || "Você", seed: seed ? Number(seed) : undefined, gender, interested_in: interestedIn, career_field: field, age: age ? Number(age) : undefined };
+      const body: Record<string, unknown> = { mode, name: charName.trim() || "Você", seed: seed ? Number(seed) : undefined, gender, interested_in: "ANY", career_field: field, age: age ? Number(age) : undefined };
       if (mode === "CAREER") body.scenario = scenario;
       else if (mode === "FREE") body.free = { cash: cfg.cash, monthly_income: cfg.monthly_income, monthly_expenses: cfg.monthly_expenses, rent: cfg.rent, age: Number(cfg.age) };
       await sim.gameStart(body);
@@ -64,25 +63,9 @@ export function NewGamePage() {
       {err && <div className="alert">{err}</div>}
 
       {step === 1 && (
-        <section className="panel stack">
-          <h2>Como vai se chamar a sua partida?</h2>
-          <input className="xl" value={name} onChange={(e) => setName(e.target.value)} maxLength={60} />
-          <p className="muted">Você pode ter várias partidas salvas e voltar nelas quando quiser.</p>
-          <h2>Quem é o seu personagem?</h2>
-          <label className="stack"><span>🎂 Idade inicial (18 a 80) — vazio = a do cenário</span><input className="xl" value={age} onChange={(e) => setAge(e.target.value.replace(/\D/g, ""))} inputMode="numeric" maxLength={2} placeholder="ex.: 18" style={{ maxWidth: 160 }} /></label>
-          <label className="stack"><span>Nome do personagem</span><input className="xl" value={charName} onChange={(e) => setCharName(e.target.value)} maxLength={60} placeholder="Como você quer ser chamado" /></label>
-          <div><span className="muted small">Sexo</span>
-            <div className="seg compact" style={{ marginTop: 6 }}>
-              {([["M", "👨 Masculino"], ["F", "👩 Feminino"], ["N", "🙂 Prefiro não dizer"]] as const).map(([k, l]) => <button key={k} className={gender === k ? "on" : ""} onClick={() => setGender(k)}>{l}</button>)}</div></div>
-          <div><span className="muted small">Quem você quer conhecer?</span>
-            <div className="seg compact" style={{ marginTop: 6 }}>
-              {([["ANY", "👥 Todos"], ["M", "👨 Homens"], ["F", "👩 Mulheres"]] as const).map(([k, l]) => <button key={k} className={interestedIn === k ? "on" : ""} onClick={() => setInterestedIn(k)}>{l}</button>)}</div></div>
-          <div><button className="btn primary big" onClick={() => setStep(2)}>Próximo →</button></div>
-        </section>)}
-
-      {step === 2 && (
         <section className="stack">
           <h2>Como você quer jogar?</h2>
+          <p className="muted">Escolha primeiro o modo: ele define o que você poderá personalizar a seguir.</p>
           <div className="big-cards three">
             <button className={`big-card pick${mode === "CAREER" ? " on" : ""}`} onClick={() => setMode("CAREER")}>
               <span className="big-emoji">🧭</span><h2>Modo carreira</h2><p>Você começa numa situação pronta (cenário) e recebe objetivos para te guiar. Ótimo para aprender!</p></button>
@@ -91,6 +74,22 @@ export function NewGamePage() {
             <button className={`big-card pick${mode === "RANKED" ? " on" : ""}`} onClick={() => setMode("RANKED")}>
               <span className="big-emoji">🏆</span><h2>Modo ranqueado</h2><p>Todo mundo começa igual: 18 anos, R$ 1.800/mês num subemprego (caixa, repositor, atendente...). Só este modo entra no ranking!</p></button>
           </div>
+          <div><button className="btn primary big" onClick={() => setStep(2)}>Próximo →</button></div>
+        </section>)}
+
+      {step === 2 && (
+        <section className="panel stack">
+          <h2>Como vai se chamar a sua partida?</h2>
+          <input className="xl" value={name} onChange={(e) => setName(e.target.value)} maxLength={60} />
+          <p className="muted">Você pode ter várias partidas salvas e voltar nelas quando quiser.</p>
+          <h2>Quem é o seu personagem?</h2>
+          {mode !== "RANKED" && <label className="stack"><span>🎂 Idade inicial (18 a 80) — vazio = a do cenário</span><input className="xl" value={age} onChange={(e) => setAge(e.target.value.replace(/\D/g, ""))} inputMode="numeric" maxLength={2} placeholder="ex.: 18" style={{ maxWidth: 160 }} /></label>}
+          <label className="stack"><span>Nome do personagem</span><input className="xl" value={charName} onChange={(e) => setCharName(e.target.value)} maxLength={60} placeholder="Como você quer ser chamado" /></label>
+          <div><span className="muted small">Sexo</span>
+            <div className="seg compact" style={{ marginTop: 6 }}>
+              {([["M", "👨 Masculino"], ["F", "👩 Feminino"], ["N", "🙂 Prefiro não dizer"]] as const).map(([k, l]) => <button key={k} className={gender === k ? "on" : ""} onClick={() => setGender(k)}>{l}</button>)}</div></div>
+          <p className="muted small">Você vai conhecer homens e mulheres ao longo da vida.</p>
+          {mode === "RANKED" && <p className="muted small">🏆 No modo ranqueado só nome e sexo são escolhidos: a largada é igual para todos.</p>}
           <div className="row"><button className="btn ghost" onClick={() => setStep(1)}>← Voltar</button><button className="btn primary big" onClick={() => setStep(3)}>Próximo →</button></div>
         </section>)}
 

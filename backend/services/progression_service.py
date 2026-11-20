@@ -447,7 +447,7 @@ def start_game(db: Session, user_id: int, *, mode: str, scenario_key: str | None
                                      planned_amount=D(e.amount), recurring=True)
         if e.index:
             economy_service.set_indexation(db, user_id, bi.recurring_item_id, "MONTHLY", e.index)
-    life_service.create_character(db, user_id, name=name, age_years=age, gender=gender, interested_in=interested_in)
+    life_service.create_character(db, user_id, name=name, age_years=age, gender=gender, interested_in="ANY")
     life_service.set_initial_field(db, user_id, month, career_field)
     if ranked_job:
         from backend.services import career_hub
