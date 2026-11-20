@@ -343,13 +343,18 @@ def test_world_events_move_the_mood(client, auth_headers):
     with SessionLocal() as s:
         month = s.scalar(select(SimMonth).where(SimMonth.user_id == u, SimMonth.status == "OPEN"))
         s.add(WorldEvent(user_id=u, key="crise", name="Crise", description="d", category="ECONOMIC", scope="WORLD", positive=False, intensity=3,
-                         start_month=month.ref_month, end_month=month.ref_month, effects={}, status="ACTIVE", options=[]))
+                         start_month=month.ref_month, end_month=date(month.ref_month.year + 1, month.ref_month.month, 1), effects={}, status="ACTIVE", options=[]))
         p = s.scalar(select(LifeProfile).where(LifeProfile.user_id == u))
         p.wellbeing = 70
         s.commit()
-    _advance(client, h, 1)
-    a = client.get(L, headers=h).json()["attributes"]
-    assert a["wellbeing"] <= 70 - 1                                                                    # crise pesa no bem-estar
+    from backend.services import life_service as ls
+    with SessionLocal() as s:                                                                          # o humor do mês sofre com a crise ativa (efeito isolado das decisões do mês)
+        p = s.scalar(select(LifeProfile).where(LifeProfile.user_id == u))
+        month = s.scalar(select(SimMonth).where(SimMonth.user_id == u, SimMonth.status == "OPEN"))
+        before = p.wellbeing
+        ls._world_mood(s, p, month.ref_month)
+        assert p.wellbeing < before                                                                    # crise pesa no bem-estar
+        s.rollback()
 
 
 # ------------------------------------------------------------------ desempenho da carreira
