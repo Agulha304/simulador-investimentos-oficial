@@ -22,6 +22,7 @@ import { AchievementsPage } from "./pages/AchievementsPage";
 import { HubPage } from "./pages/HubPage";
 import { NewGamePage } from "./pages/NewGamePage";
 import { NewTrainingPage } from "./pages/NewTrainingPage";
+import { SettingsPage } from "./pages/SettingsPage";
 import { PainelPage } from "./pages/PainelPage";
 import { ReportsPage } from "./pages/ReportsPage";
 import { AuthProvider } from "./services/auth";
@@ -48,6 +49,7 @@ export default function App() {
               <Route path="aulas/:id" element={<LessonPage />} />
               <Route path="ranking" element={<RankingPage />} />
               <Route path="conquistas" element={<AchievementsPage />} />
+              <Route path="configuracoes" element={<SettingsPage />} />
             </Route>
             {/* dentro da partida */}
             <Route element={<GameLayout />}>

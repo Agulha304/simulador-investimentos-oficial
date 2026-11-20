@@ -26,6 +26,12 @@ from backend.services import life_rules as R
 from backend.services.finance_ledger import ConflictError, FinanceError, NotFoundError
 
 ZERO = Decimal("0.00")
+
+
+class RelationshipRefused(ConflictError):
+    """A pessoa recusou o convite. O efeito (afinidade menor) PRECISA ser gravado mesmo com a resposta de erro."""
+
+
 OWN_PREFIXES = ("family:", "child:", "life:")
 
 
@@ -234,6 +240,7 @@ def interact(db: Session, user_id: int, month: SimMonth, person_id: int, key: st
     gain = it["gain"] * (0.5 + comp / 100)
     _bump(r, round(gain), trust=1 + (1 if r.interactions_month == 0 else 0))
     r.interactions_month += 1
+    r.last_interaction_month = month.ref_month
     p.social = _clamp(p.social + 1)
     p.wellbeing = _clamp(p.wellbeing + 1)
     db.flush()
@@ -260,8 +267,13 @@ def advance_relationship(db: Session, user_id: int, month: SimMonth, person_id: 
         db.flush()
         return r
 
+    PENALTY = {"befriend": 3, "date": 5, "cohabit": 6, "marry": 8}
+
     def refuse(why: str):
-        raise ConflictError(why)
+        """Ser recusado machuca a relação: a afinidade (e um pouco da confiança) cai e isso fica gravado."""
+        _bump(r, -PENALTY.get(action, 3), trust=-2)
+        db.flush()
+        raise RelationshipRefused(f"{why}. A afinidade com {person.name} diminuiu.")
 
     if action == "end":
         was_household = r.stage in R.HOUSEHOLD_STAGES
@@ -518,7 +530,8 @@ def process_month(db: Session, user_id: int, month: SimMonth) -> None:
         comp = compatibility(p, person)
         drift = 0
         if r.interactions_month == 0:
-            drift -= 3 if r.stage in R.PARTNER_STAGES else 2
+            idle = budget_service.months_between(r.last_interaction_month or r.since_month, ref)       # meses sem fazer nada juntos
+            drift -= (3 if r.stage in R.PARTNER_STAGES else 2) + min(3, max(0, idle - 1) // 2)           # quanto mais tempo, mais esfria
         if comp >= 65 and p.family_time != "LOW" and r.stage in R.PARTNER_STAGES:
             drift += 1
         if comp < 35:

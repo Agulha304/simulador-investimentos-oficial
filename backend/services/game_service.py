@@ -11,7 +11,7 @@ from backend.config import get_settings
 from backend.core.clock import use_clock
 from backend.core.money import quantize_money
 from backend.models import Game, Portfolio, TransactionSource, User
-from backend.services import historical_market, ledger_service
+from backend.services import account_settings, historical_market, ledger_service
 from backend.services.budget_service import shift_month
 from backend.services.finance_ledger import ConflictError, FinanceError, NotFoundError
 
@@ -56,6 +56,7 @@ def create_game(db: Session, account: User, *, kind: str, name: str, start_date:
     portfolio = Portfolio(user_id=world.id)
     db.add(portfolio)
     db.flush()
+    account_settings.seed_world(db, account.id, world.id)          # categorias escolhidas nas configurações da conta
     ledger_service.deposit(db, portfolio.id, get_settings().initial_balance, source=TransactionSource.SYSTEM,
                            idempotency_key=f"initial-deposit:portfolio:{portfolio.id}", note="Saldo virtual inicial")
     game = Game(account_id=account.id, world_user_id=world.id, kind=kind, name=name[:60], config=config)

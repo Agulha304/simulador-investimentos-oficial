@@ -93,6 +93,7 @@ class Relationship(Base):
     finance_mode: Mapped[str] = mapped_column(String(12), default="SEPARATE")   # SEPARATE | SHARED
     contribution_pct: Mapped[Decimal] = mapped_column(Money(), default=Decimal("50"))   # % dos custos compartilhados
     interactions_month: Mapped[int] = mapped_column(Integer, default=0)
+    last_interaction_month: Mapped[date | None] = mapped_column(Date)       # base do esfriamento por falta de convivência
 
 
 class Child(Base):

@@ -346,3 +346,64 @@ def test_life_data_is_isolated_between_users(client, auth_headers):
     client.put(f"{L}/choices", headers=auth_headers, json={"food_level": "PREMIUM"})
     assert life(client, other)["choices"]["food_level"] == "NORMAL"
     assert client.get(L).status_code in (401, 403)
+
+
+# ------------------------------------------------------------------ recusas e esfriamento
+
+def _rel(client, h, pid):
+    return next(x for x in life(client, h)["relationships"] if x["person_id"] == pid)
+
+
+def test_refused_invitation_lowers_affinity_and_the_penalty_is_saved(client, auth_headers):
+    credit(client, auth_headers, "100000")
+    pid = arrange_partner(client, auth_headers, stage="ACQUAINTANCE", affinity=25, trust=30)
+    before = _rel(client, auth_headers, pid)
+    r = client.post(f"{L}/people/{pid}/relationship", headers=auth_headers, json={"action": "befriend"})
+    assert r.status_code == 409 and "diminuiu" in r.text
+    after = _rel(client, auth_headers, pid)
+    assert after["affinity"] == before["affinity"] - 3 and after["trust"] == before["trust"] - 2 and after["stage"] == "ACQUAINTANCE"
+    # amigo recusando namoro: perde mais
+    with SessionLocal() as s:
+        rel = s.scalar(select(Relationship).where(Relationship.person_id == pid))
+        rel.stage, rel.affinity, rel.trust = "FRIEND", 40, 30
+        s.commit()
+    r = client.post(f"{L}/people/{pid}/relationship", headers=auth_headers, json={"action": "date"})
+    assert r.status_code == 409
+    assert _rel(client, auth_headers, pid)["affinity"] == 35
+    # repetir o convite insistente continua custando afinidade, sem nunca passar de 0
+    for _ in range(12):
+        client.post(f"{L}/people/{pid}/relationship", headers=auth_headers, json={"action": "date"})
+    assert _rel(client, auth_headers, pid)["affinity"] == 0
+
+
+def test_accepted_invitation_does_not_cost_affinity(client, auth_headers):
+    credit(client, auth_headers, "100000")
+    pid = arrange_partner(client, auth_headers, stage="ACQUAINTANCE", affinity=60, trust=60)
+    assert client.post(f"{L}/people/{pid}/relationship", headers=auth_headers, json={"action": "befriend"}).status_code == 200
+    assert _rel(client, auth_headers, pid)["affinity"] == 60
+
+
+def test_affinity_falls_faster_the_longer_nothing_is_done_together(client, auth_headers):
+    credit(client, auth_headers, "300000")
+    pid = arrange_partner(client, auth_headers, stage="FRIEND", affinity=95, trust=60)
+    with SessionLocal() as s:
+        rel = s.scalar(select(Relationship).where(Relationship.person_id == pid))
+        rel.since_month = rel.stage_since = rel.stage_since.replace(year=rel.stage_since.year + 1)      # convivência recém-começada
+        s.commit()
+    drops, prev = [], 95
+    for _ in range(8):
+        advance(client, auth_headers)
+        now = _rel(client, auth_headers, pid)["affinity"]
+        drops.append(prev - now)
+        prev = now
+        if now <= 12:
+            break
+    assert drops[0] >= 2 and max(drops) > drops[0], drops          # a queda aumenta com o tempo parado
+    # fazer algo juntos zera a contagem do esfriamento
+    pid2 = arrange_partner(client, auth_headers, stage="FRIEND", affinity=60, trust=60)
+    advance(client, auth_headers, 3)
+    idle = _rel(client, auth_headers, pid2)["affinity"]
+    assert idle < 60
+    client.post(f"{L}/people/{pid2}/interact", headers=auth_headers, json={"key": "chat"})
+    with SessionLocal() as s:
+        assert s.scalar(select(Relationship.last_interaction_month).where(Relationship.person_id == pid2)) is not None

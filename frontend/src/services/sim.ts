@@ -72,7 +72,13 @@ export interface Hub { account: { name: string; email: string }; games: GameSumm
 const put = (body: unknown) => ({ method: "PUT", body: JSON.stringify(body) });
 const post = (body: unknown = {}) => ({ method: "POST", body: JSON.stringify(body) });
 
+export interface AccountCategory { id: number; kind: "INCOME" | "EXPENSE"; name: string; active: boolean }
+
 export const sim = {
+  accountCategories: () => request<AccountCategory[]>("/account/categories"),
+  addAccountCategory: (name: string, kind: string) => request<AccountCategory>("/account/categories", post({ name, kind })),
+  patchAccountCategory: (id: number, body: { name?: string; active?: boolean }) =>
+    request<AccountCategory>(`/account/categories/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
   hub: () => request<Hub>("/games"),
   createGame: (kind: string, name: string, start_date?: string) => request<GameSummary>("/games", post({ kind, name, start_date })),
   game_: (id: number) => request<GameSummary>(`/games/${id}`),

@@ -11,6 +11,7 @@ export function HubLayout() {
         <div className="account">
           <div className="avatar big">{user?.name.slice(0, 1).toUpperCase()}</div>
           <div className="user-meta"><b>{user?.name}</b><small>{user?.email}</small></div>
+          <Link to="/configuracoes" className="btn ghost small" title="Configurações da conta">⚙ Configurações</Link>
           <button className="btn ghost small" onClick={logout}>Sair</button>
         </div>
       </header>

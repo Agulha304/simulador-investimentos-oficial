@@ -26,7 +26,7 @@ export function LifePage() {
   useEffect(() => { sim.life().then(setLife).catch((e) => setError(errMsg(e))); }, []);
   const act = useCallback(async (fn: () => Promise<Life>, ok?: (l: Life) => string | null) => {
     setBusy(true); setError(null); setNote(null);
-    try { const l = await fn(); setLife(l); setNote(ok ? ok(l) : null); } catch (e) { setError(errMsg(e)); } finally { setBusy(false); }
+    try { const l = await fn(); setLife(l); setNote(ok ? ok(l) : null); } catch (e) { setError(errMsg(e)); sim.life().then(setLife).catch(() => undefined); } finally { setBusy(false); }   // recusas mudam a afinidade: recarrega
   }, []);
 
   if (!life) return error ? <div className="alert">{error}</div> : <div className="muted">Carregando vida pessoal…</div>;

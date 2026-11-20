@@ -1,3 +1,4 @@
+import { Link } from "react-router-dom";
 import { Suspense, lazy, useCallback, useEffect, useState } from "react";
 import { CloseModal, EntryModal, ItemModal } from "../components/BudgetModals";
 import { StatCard } from "../components/StatCard";
@@ -96,7 +97,7 @@ export function BudgetPage() {
             <EntriesTable entries={entries} canReverse onReverse={(e) => act(() => api.budgetReverseEntry(e.id), "Estorno registrado.")} />
           </section>
 
-          <CategoriesCard cats={cats} onChange={reload} onError={setError} />
+          <section className="card"><h2>Categorias</h2><p className="muted small">As categorias que você usa (ativar, desativar, criar) ficam nas <Link to="/configuracoes">configurações da conta</Link> e valem para todas as suas partidas.</p></section>
         </>
       )}
 
@@ -202,42 +203,6 @@ function EntriesTable({ entries, canReverse, onReverse }: { entries: LedgerEntry
         })}</tbody>
       </table>
     </div>
-  );
-}
-
-function CategoriesCard({ cats, onChange, onError }: { cats: BudgetCategory[]; onChange: () => void; onError: (m: string | null) => void }) {
-  const [name, setName] = useState("");
-  const [kind, setKind] = useState<FlowKind>("EXPENSE");
-  async function run(fn: () => Promise<unknown>) {
-    try { await fn(); onError(null); onChange(); } catch (e) { onError(errMsg(e)); }
-  }
-  return (
-    <section className="card">
-      <h2>Categorias</h2>
-      <p className="muted small">Renomeie, desative ou crie categorias. Categorias desativadas não aparecem em novos itens, mas o histórico é preservado.</p>
-      {(["EXPENSE", "INCOME"] as FlowKind[]).map((k) => (
-        <div key={k} style={{ marginBottom: 10 }}>
-          <div className="stat-label" style={{ marginBottom: 6 }}>{k === "EXPENSE" ? "Despesas" : "Receitas"}</div>
-          <div className="chips">
-            {cats.filter((c) => c.kind === k).map((c) => (
-              <span key={c.id} className={`chip${c.active ? "" : " off"}`}>
-                <input defaultValue={c.name} aria-label={`Nome da categoria ${c.name}`} maxLength={60}
-                  onBlur={(e) => { const v = e.target.value.trim(); if (v && v !== c.name) void run(() => api.budgetUpdateCategory(c.id, { name: v })); else e.target.value = c.name; }} />
-                <button type="button" className="link-btn" title={c.active ? "Desativar" : "Reativar"}
-                  onClick={() => run(() => api.budgetUpdateCategory(c.id, { active: !c.active }))}>{c.active ? "desativar" : "reativar"}</button>
-              </span>
-            ))}
-          </div>
-        </div>
-      ))}
-      <form className="row-gap" onSubmit={(e) => { e.preventDefault(); if (name.trim()) void run(async () => { await api.budgetCreateCategory(name.trim(), kind); setName(""); }); }}>
-        <input placeholder="Nova categoria" value={name} onChange={(e) => setName(e.target.value)} maxLength={60} />
-        <select value={kind} onChange={(e) => setKind(e.target.value as FlowKind)} aria-label="Tipo da categoria">
-          <option value="EXPENSE">Despesa</option><option value="INCOME">Receita</option>
-        </select>
-        <button className="btn small ghost">Adicionar</button>
-      </form>
-    </section>
   );
 }
 

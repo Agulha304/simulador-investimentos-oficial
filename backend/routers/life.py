@@ -159,7 +159,11 @@ def interact(person_id: int, body: ActivityIn, user: CurrentUser, db: DbSession)
 @router.post("/people/{person_id}/relationship")
 def relationship(person_id: int, body: ActionIn, user: CurrentUser, db: DbSession):
     def go():
-        ls.advance_relationship(db, user.id, bs.ensure_setup(db, user.id), person_id, body.action)
+        try:
+            ls.advance_relationship(db, user.id, bs.ensure_setup(db, user.id), person_id, body.action)
+        except ls.RelationshipRefused:
+            db.commit()                      # grava a queda de afinidade antes de responder o erro
+            raise
         return _overview(db, user.id)
     return _run(db, go)
 

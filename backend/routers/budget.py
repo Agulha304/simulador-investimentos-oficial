@@ -198,6 +198,12 @@ def close_month(body: s.CloseRequest, user: CurrentUser, db: DbSession):
 
 # ------------------------------------------------------------------ categorias
 
+def _categories_belong_to_account(user) -> None:
+    """Dentro de uma partida as categorias são só leitura: quem escolhe é a conta (Configurações da conta)."""
+    if user.is_game_world:
+        raise ConflictError("as categorias são escolhidas nas configurações da conta, não dentro da partida")
+
+
 @router.get("/categories", response_model=list[s.CategoryOut])
 def categories(user: CurrentUser, db: DbSession):
     def go():
@@ -210,6 +216,7 @@ def categories(user: CurrentUser, db: DbSession):
 @router.post("/categories", response_model=s.CategoryOut, status_code=status.HTTP_201_CREATED)
 def create_category(body: s.CategoryCreate, user: CurrentUser, db: DbSession):
     def go():
+        _categories_belong_to_account(user)
         bs.ensure_setup(db, user.id)
         return bs.create_category(db, user.id, body.name, body.kind)
     return _run(db, go)
@@ -217,7 +224,10 @@ def create_category(body: s.CategoryCreate, user: CurrentUser, db: DbSession):
 
 @router.patch("/categories/{category_id}", response_model=s.CategoryOut)
 def update_category(category_id: int, body: s.CategoryPatch, user: CurrentUser, db: DbSession):
-    return _run(db, lambda: bs.update_category(db, user.id, category_id, name=body.name, active=body.active))
+    def go():
+        _categories_belong_to_account(user)
+        return bs.update_category(db, user.id, category_id, name=body.name, active=body.active)
+    return _run(db, go)
 
 
 # ------------------------------------------------------------------ itens planejados / recorrentes
