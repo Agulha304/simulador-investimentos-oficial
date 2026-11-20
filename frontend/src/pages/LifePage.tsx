@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Meter } from "../components/Meter";
+import { Toast } from "../components/Toast";
 import { StatCard } from "../components/StatCard";
 import { fmtBRL, fmtMonth } from "../lib/format";
 import { sim, type Career, type Kid, type Life, type Rel } from "../services/sim";
@@ -38,7 +39,7 @@ export function LifePage() {
         <div><h1>Vida pessoal</h1><p className="muted">{life.character.name}, {life.character.age_years} anos · {fmtMonth(life.month)}. Suas escolhas afetam saúde, tempo, relacionamentos e o orçamento.</p></div>
       </header>
       {error && <div className="alert">{error}</div>}
-      {note && <div className="card small">{note}</div>}
+      {note && <Toast text={note} onClose={() => setNote(null)} />}
       <div className="seg compact tabs">
         <button className={tab === "status" ? "on" : ""} onClick={() => setTab("status")}>Situação</button>
         <button className={tab === "people" ? "on" : ""} onClick={() => setTab("people")}>Relacionamentos ({life.relationships.filter((r) => r.stage !== "ENDED").length})</button>
@@ -72,7 +73,7 @@ export function LifePage() {
             <h2>Atividades sociais</h2>
             <p className="muted small">Atividades gratuitas também funcionam para conhecer pessoas.</p>
             <div className="row">{life.activities.map((x) => (
-              <button key={x.key} className="btn ghost small" disabled={busy} onClick={() => void act(() => sim.lifeActivity(x.key), (l) => l.result?.met ? `Você conheceu ${l.result.met}!` : "Boa atividade — ninguém novo desta vez.")}>
+              <button key={x.key} className="btn ghost small" disabled={busy} onClick={() => void act(() => sim.lifeActivity(x.key), (l) => l.result?.story ?? (l.result?.met ? `Você conheceu ${l.result.met}!` : "Boa atividade — ninguém novo desta vez."))}>
                 {x.label} · {x.cost ? fmtBRL(String(x.cost)) : "grátis"} · {x.hours}h</button>))}</div>
           </section>
           <section className="card stack"><h2>Histórico</h2>
@@ -131,10 +132,11 @@ function PersonCard({ r, life, busy, act }: { r: Rel; life: Life; busy: boolean;
     <div className="card stack" style={ended ? { opacity: 0.6 } : undefined}>
       <div className="row between"><h3 style={{ margin: 0 }}>{r.gender === "F" ? "👩" : "👨"} {r.name}, {r.age}</h3><span className="chip">{STAGE[r.stage]}</span></div>
       <p className="muted small">{r.personality} · {r.occupation} · interesses: {r.interests.join(", ")}</p>
+      <p className="small">💼 Situação financeira: <b>{r.finance_label}</b> <span className="muted">· renda {fmtBRL(r.income)} · patrimônio {fmtBRL(r.assets)} · dívidas {fmtBRL(r.debts)}</span></p>
       <div className="cols-2"><Meter label="Afinidade" value={r.affinity} /><Meter label="Confiança" value={r.trust} /><Meter label={`Compatibilidade${r.compat_bonus ? ` (+${r.compat_bonus} por convivência)` : ""}`} value={r.compatibility} /></div>
       {!ended && (
         <div className="row">
-          {life.interactions.map((i) => <button key={i.key} className="btn ghost small" disabled={busy} onClick={() => void act(() => sim.lifeInteract(r.person_id, i.key))}>{i.label} · {i.cost ? fmtBRL(String(i.cost)) : "grátis"} · {i.hours}h</button>)}
+          {life.interactions.map((i) => <button key={i.key} className="btn ghost small" disabled={busy} onClick={() => void act(() => sim.lifeInteract(r.person_id, i.key), (l) => l.result?.story ?? null)}>{i.label} · {i.cost ? fmtBRL(String(i.cost)) : "grátis"} · {i.hours}h</button>)}
           {nx && <button className="btn primary small" disabled={busy} onClick={() => void act(() => sim.lifeRelationship(r.person_id, nx[0]))}>{nx[1]}</button>}
           {r.stage === "DATING" && <button className="btn primary small" disabled={busy} onClick={() => void act(() => sim.lifeRelationship(r.person_id, "marry"))}>Casar</button>}
           <button className="btn danger small" disabled={busy} onClick={() => window.confirm(`Encerrar o relacionamento com ${r.name}?`) && void act(() => sim.lifeRelationship(r.person_id, "end"))}>Encerrar</button>

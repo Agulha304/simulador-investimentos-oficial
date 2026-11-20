@@ -99,6 +99,13 @@ export function CompanyPage() {
         <div className="grid-2"><RevenueCostChart months={d.months} /><NetResultChart months={d.months} /></div>
       </Suspense>
 
+      {d.partners && d.partners.length > 0 && (
+        <section className="card stack"><h2>🤝 Sócios</h2>
+          <p className="muted small" style={{ margin: 0 }}>Sua participação: <b>{d.company.owner_share_pct}%</b>. Os lucros distribuídos são divididos pelas participações. Sociedade tem riscos: um sócio pode dar calote.</p>
+          <ul className="list-plain">{d.partners.map((p) => (
+            <li key={p.person_id}><span><b>{p.name}</b> <span className="muted small">· situação {p.finance} · entrou com {fmtBRL(p.contribution)}</span></span>
+              <span className={`chip ${p.status === "ACTIVE" ? "up" : "down"}`}>{p.share_pct}% · {p.status === "ACTIVE" ? "sócio(a)" : "deu calote"}</span></li>))}</ul>
+        </section>)}
       <section className="card">
         <div className="row"><h2>Funcionários</h2><button className="btn small ghost" onClick={() => setModal("hire")}>+ Contratar</button></div>
         <div className="table-wrap"><table>

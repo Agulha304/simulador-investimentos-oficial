@@ -183,10 +183,11 @@ export interface ItemInput {
 
 // ------------------------------------------------------------------ bens e patrimônio
 export type GoodCategory = "RESIDENTIAL" | "COMMERCIAL" | "LAND" | "CAR" | "MOTORCYCLE" | "INSTRUMENT" | "EQUIPMENT" | "ANTIQUE" | "COLLECTIBLE" | "OTHER";
-export type Occupancy = "OWNER_OCCUPIED" | "VACANT" | "LISTED_FOR_RENT" | "RENTED";
+export type Occupancy = "OWNER_OCCUPIED" | "VACANT" | "LISTED_FOR_RENT" | "RENTED" | "SHORT_STAY";
 export type AmortSystem = "PRICE" | "SAC";
 export interface Listing {
   key: string; category: GoodCategory; name: string; description: string; price: Decimal; purchase_fee: Decimal;
+  fee_breakdown?: { name: string; rate_pct: string; amount: string }[];
   location: string; condition: string | null; property_type: string | null; address: string | null;
   area_m2: Decimal | null; bedrooms: number | null; suggested_rent: Decimal | null; owned: boolean;
   financing: { max_ltv_pct: Decimal; min_down_payment: Decimal; annual_rate_pct: Decimal; max_term_months: number } | null;
@@ -203,7 +204,9 @@ export interface Installment {
 export interface GoodDetail {
   good: Good; description: string | null;
   real_estate: { property_type: string; address: string; area_m2: Decimal; bedrooms: number | null; occupancy: Occupancy;
-    monthly_rent: Decimal; rent_tax_pct: Decimal; market_rent: Decimal } | null;
+    monthly_rent: Decimal; rent_tax_pct: Decimal; market_rent: Decimal; market_nightly: Decimal | null; nightly_rate: Decimal | null;
+    management: "SELF" | "HIRED" | null; str_rating: number | null; management_hours: number;
+    stay_months: { month: string; nights: number; occupancy_pct: string; gross: string; net: string; note: string }[] } | null;
   vehicle_usage_km_month: number | null;
   costs: { id: number; kind: string; name: string; amount: Decimal; frequency: Frequency; start_month: string; active: boolean }[];
   values: { ref_month: string; value: Decimal; source: string }[];
@@ -220,7 +223,7 @@ export interface Simulation {
   last_payment: Decimal; total_interest: Decimal; total_paid: Decimal; purchase_fee: Decimal; cash_needed_now: Decimal;
   preview: Installment[];
 }
-export interface SaleQuote { sale_price: Decimal; fees: Decimal; loan_payoff: Decimal; net_cash: Decimal; result: Decimal }
+export interface SaleQuote { sale_price: Decimal; fees: Decimal; brokerage?: Decimal | null; capital_gains_tax?: Decimal | null; tax_note?: string | null; loan_payoff: Decimal; net_cash: Decimal; result: Decimal }
 export interface WealthOverview {
   count: number; sold_count: number; total_value: Decimal; total_acquisition_cost: Decimal; debts: Decimal; net_worth: Decimal;
   unrealized_result: Decimal; monthly_income: Decimal; monthly_expense: Decimal; monthly_debt_service: Decimal;
@@ -254,6 +257,7 @@ export interface CoMonth {
   net_result: Decimal; cash_end: Decimal; debts_end: Decimal; equity_end: Decimal; reputation_end: number;
 }
 export interface CompanyDetail {
+  partners?: { person_id: number; name: string; share_pct: string; contribution: string; status: string; joined_month: string; finance: string }[];
   company: Company; distributable_profit: Decimal; runway_months: Decimal | null; monthly_obligations: Decimal; loan_limit: Decimal;
   expected_demand: number; expected_capacity: number; expansion_costs: Record<string, Decimal>; roles: CoRole[];
   employees: { id: number; role: string; role_label: string; level: string; salary: Decimal; total_cost: Decimal; hours_week: number;
@@ -380,7 +384,7 @@ export const api = {
     request<GoodDetail>(`/goods/${id}/sell`, { method: "POST", body: JSON.stringify(body) }),
   writeOffGood: (id: number, reason: string) =>
     request<GoodDetail>(`/goods/${id}/write-off`, { method: "POST", body: JSON.stringify({ reason }) }),
-  setOccupancy: (id: number, body: { mode: Occupancy; monthly_rent?: string; end_recurring_item_ids?: number[] }) =>
+  setOccupancy: (id: number, body: { mode: Occupancy; monthly_rent?: string; end_recurring_item_ids?: number[]; nightly_rate?: string; management?: "SELF" | "HIRED" }) =>
     request<GoodDetail>(`/goods/${id}/occupancy`, { method: "POST", body: JSON.stringify(body) }),
   housingCandidates: () => request<{ id: number; name: string; amount: Decimal | null }[]>("/goods/housing-candidates"),
   goodMaintenance: (id: number, amount: string, description: string) =>
@@ -393,7 +397,9 @@ export const api = {
   coQuote: (segment: string, location: string, size: string) =>
     request<CoQuote>("/companies/quote", { method: "POST", body: JSON.stringify({ segment, location, size }) }),
   coOverview: () => request<CoOverview>("/companies/overview"),
-  coCreate: (body: { name: string; segment: string; location: string; size: string; capital: string; owner_share_pct: string; business_type: string }) =>
+  coInvitePartner: (person_id: number, share_pct: string, capital: string) =>
+    request<{ id: number; person_id: number; accepted: boolean; message: string; share_pct: string }>("/companies/partner-invites", { method: "POST", body: JSON.stringify({ person_id, share_pct, capital }) }),
+  coCreate: (body: { name: string; segment: string; location: string; size: string; capital: string; owner_share_pct: string; business_type: string; partner_invite_ids?: number[] }) =>
     request<CompanyDetail>("/companies", { method: "POST", body: JSON.stringify(body) }),
   company: (id: number) => request<CompanyDetail>(`/companies/${id}`),
   coContribute: (id: number, amount: string) =>
@@ -414,6 +420,7 @@ export const api = {
     request<CompanyDetail>(`/companies/${id}/loans`, { method: "POST", body: JSON.stringify({ amount, term_months }) }),
   coBuyGood: (id: number, listing_key: string) =>
     request<CompanyDetail>(`/companies/${id}/goods/purchase`, { method: "POST", body: JSON.stringify({ listing_key, idempotency_key: crypto.randomUUID() }) }),
+  goodsTaxes: () => request<{ total: Decimal; items: { tax: string; amount: Decimal }[] }>("/goods/taxes/summary"),
   portfolio: () => request<PortfolioSummary>("/portfolio"),
   transactions: (limit = 20) => request<Transaction[]>(`/portfolio/transactions?limit=${limit}`),
 };

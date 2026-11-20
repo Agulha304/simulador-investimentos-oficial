@@ -76,6 +76,15 @@ export function GoodPage() {
             <div><dt>Situação</dt><dd>{OCCUPANCY_LABEL[d.real_estate.occupancy]}</dd></div>
             {Number(d.real_estate.monthly_rent) > 0 && <div><dt>Aluguel</dt><dd className="num">{fmtBRL(d.real_estate.monthly_rent)}/mês · referência de mercado {fmtBRL(d.real_estate.market_rent)}</dd></div>}
           </dl>
+          {d.real_estate.occupancy === "SHORT_STAY" && (
+            <>
+              <div><dt>Diária</dt><dd className="num">{fmtBRL(d.real_estate.nightly_rate ?? "0")}</dd></div>
+              <div><dt>Gestão</dt><dd>{d.real_estate.management === "HIRED" ? "Gestor contratado (20%)" : `Você mesmo (${d.real_estate.management_hours}h/mês)`}</dd></div>
+              <div><dt>Nota dos hóspedes</dt><dd className="num">{d.real_estate.str_rating}/100</dd></div>
+            </>)}
+          {d.real_estate.occupancy === "SHORT_STAY" && d.real_estate.stay_months.length > 0 && (
+            <div className="table-wrap" style={{ gridColumn: "1 / -1" }}><table><thead><tr><th>Mês</th><th className="r">Noites</th><th className="r">Ocupação</th><th className="r">Receita</th><th className="r">Líquido</th><th>Obs.</th></tr></thead>
+              <tbody>{d.real_estate.stay_months.map((m) => <tr key={m.month}><td>{m.month.slice(0, 7)}</td><td className="r num">{m.nights}</td><td className="r num">{m.occupancy_pct}%</td><td className="r num">{fmtBRL(m.gross)}</td><td className="r num">{fmtBRL(m.net)}</td><td className="muted small">{m.note}</td></tr>)}</tbody></table></div>)}
           {d.real_estate.occupancy === "LISTED_FOR_RENT" && <p className="muted small">Vago e anunciado: sem aluguel até aparecer um inquilino (simulado a cada mês).</p>}
         </section>
       )}

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { StatCard } from "../components/StatCard";
+import { sim, type Rel } from "../services/sim";
 import { api, type CoCatalog, type CoOverview, type CoQuote, type CoSegment, type Company } from "../services/api";
 import { fmtBRL, parseMoneyInput, trend } from "../lib/format";
 
@@ -107,6 +108,17 @@ function CreateModal({ segment, catalog, onClose, onCreated }: { segment: CoSegm
   const [quote, setQuote] = useState<CoQuote | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const [friends, setFriends] = useState<Rel[]>([]);
+  const [shares, setShares] = useState<Record<number, string>>({});
+  const [invites, setInvites] = useState<Record<number, { id: number; accepted: boolean; message: string; share: string }>>({});
+  useEffect(() => { sim.life().then((l) => setFriends(l.relationships.filter((r) => r.stage !== "ENDED"))).catch(() => undefined); }, []);
+  const accepted = Object.values(invites).filter((i) => i.accepted);
+  const partnersShare = accepted.reduce((a, i) => a + Number(i.share), 0);
+  async function invite(r: Rel) {
+    setMsg(null);
+    try { const res = await api.coInvitePartner(r.person_id, shares[r.person_id] || "20", parseMoneyInput(capital) || "0"); setInvites((p) => ({ ...p, [r.person_id]: { id: res.id, accepted: res.accepted, message: res.message, share: res.share_pct } })); }
+    catch (err) { setMsg(errMsg(err)); }
+  }
 
   useEffect(() => {
     api.coQuote(segment.key, location, size).then((q) => { setQuote(q); setCapital((c) => (c && Number(c) >= Number(q.required_capital) ? c : String(Math.ceil(Number(q.required_capital) * 1.15)))); }).catch((e) => setMsg(errMsg(e)));
@@ -116,7 +128,7 @@ function CreateModal({ segment, catalog, onClose, onCreated }: { segment: CoSegm
     e.preventDefault();
     setBusy(true); setMsg(null);
     try {
-      const d = await api.coCreate({ name, segment: segment.key, location, size, capital: parseMoneyInput(capital), owner_share_pct: share || "100", business_type: kind });
+      const d = await api.coCreate({ name, segment: segment.key, location, size, capital: parseMoneyInput(capital), owner_share_pct: accepted.length ? "100" : (share || "100"), business_type: kind, partner_invite_ids: accepted.map((i) => i.id) });
       onCreated(d.company.id);
     } catch (err) { setMsg(errMsg(err)); setBusy(false); }
   }
@@ -139,7 +151,19 @@ function CreateModal({ segment, catalog, onClose, onCreated }: { segment: CoSegm
           </dl>
         )}
         <label>Capital a aportar (R$) — sai da sua conta pessoal para a conta da empresa<input inputMode="decimal" value={capital} onChange={(e) => setCapital(e.target.value)} required /></label>
-        <label>Sua participação societária (%)<input inputMode="decimal" value={share} onChange={(e) => setShare(e.target.value)} /></label>
+        {accepted.length === 0 && <label>Sua participação societária (%)<input inputMode="decimal" value={share} onChange={(e) => setShare(e.target.value)} /></label>}
+        <details className="card" open={friends.length > 0}>
+          <summary><b>🤝 Sócios</b> — convide amigos ou parceiros {accepted.length > 0 && <span className="chip up">você fica com {100 - partnersShare}%</span>}</summary>
+          <p className="muted small">Cada pessoa decide se aceita (pela amizade, confiança e pelo que ela pode investir). Quem aceita aporta a sua parte do capital e recebe lucros proporcionais. Sociedade tem riscos: um sócio pode dar calote.</p>
+          {friends.length === 0 && <p className="muted small">Você ainda não conhece ninguém. Conheça pessoas na aba Vida pessoal.</p>}
+          {friends.map((r) => (
+            <div key={r.person_id} className="row" style={{ marginBottom: 8 }}>
+              <span style={{ minWidth: 190 }}>{r.gender === "F" ? "👩" : "👨"} <b>{r.name}</b> <span className="muted small">({r.finance_label}, {r.stage === "FRIEND" ? "amigo(a)" : r.stage === "ACQUAINTANCE" ? "conhecido(a)" : "parceiro(a)"})</span></span>
+              <input style={{ width: 70 }} inputMode="decimal" placeholder="20" value={shares[r.person_id] ?? ""} onChange={(e) => setShares({ ...shares, [r.person_id]: e.target.value })} aria-label={`Participação de ${r.name} (%)`} />%
+              <button type="button" className="btn ghost small" disabled={!!invites[r.person_id]} onClick={() => void invite(r)}>{invites[r.person_id] ? "Respondido" : "Convidar"}</button>
+              {invites[r.person_id] && <span className={`small ${invites[r.person_id].accepted ? "tone-up" : "tone-down"}`}>{invites[r.person_id].accepted ? "✅" : "❌"} {invites[r.person_id].message}</span>}
+            </div>))}
+        </details>
         <p className="muted small" style={{ margin: 0 }}>O aporte não é despesa nem perda: vira o caixa da empresa. Só a estruturação inicial é custo.</p>
         {msg && <div className="alert">{msg}</div>}
         <button className="btn primary" disabled={busy}>{busy ? "Abrindo…" : "Abrir empresa"}</button>

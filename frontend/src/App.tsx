@@ -62,7 +62,9 @@ export default function App() {
               <Route path="ativo/:id" element={<AssetPage />} />
               <Route path="empresas" element={<CompaniesPage />} />
               <Route path="empresas/:id" element={<CompanyPage />} />
-              <Route path="patrimonio" element={<WealthPage />} />
+              <Route path="patrimonio" element={<WealthPage group="goods" />} />
+              <Route path="imoveis" element={<WealthPage group="realty" />} />
+              <Route path="automoveis" element={<WealthPage group="vehicles" />} />
               <Route path="patrimonio/:id" element={<GoodPage />} />
               <Route path="vida" element={<LifePage />} />
               <Route path="economia" element={<EconomyPage />} />

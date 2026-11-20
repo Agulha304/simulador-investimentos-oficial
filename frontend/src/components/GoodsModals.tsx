@@ -60,7 +60,8 @@ export function PurchaseModal({ listing, cash, onClose, onBought }: {
       <p className="muted small" style={{ margin: 0 }}>{listing.description} · {listing.location}</p>
       <dl className="facts">
         <div><dt>Preço</dt><dd className="num"><b>{fmtBRL(listing.price)}</b></dd></div>
-        <div><dt>Taxas e impostos estimados</dt><dd className="num">{fmtBRL(listing.purchase_fee)}</dd></div>
+        <div><dt>Taxas e impostos da compra</dt><dd className="num">{fmtBRL(listing.purchase_fee)}</dd></div>
+        {(listing.fee_breakdown ?? []).map((f) => <div key={f.name}><dt className="muted small">↳ {f.name} ({Number(f.rate_pct)}%)</dt><dd className="num small">{fmtBRL(f.amount)}</dd></div>)}
         <div><dt>Saldo disponível</dt><dd className="num">{fmtBRL(cash)}</dd></div>
       </dl>
       {fin && (
@@ -118,6 +119,9 @@ export function SellModal({ good, onClose, onSold }: { good: GoodDetail; onClose
       {quote && (
         <dl className="facts">
           <div><dt>Taxas e custos da venda</dt><dd className="num">{fmtBRL(quote.fees)}</dd></div>
+          {quote.brokerage != null && <div><dt className="muted small">↳ Corretagem e custos</dt><dd className="num small">{fmtBRL(quote.brokerage)}</dd></div>}
+          {quote.capital_gains_tax != null && <div><dt className="muted small">↳ Imposto de renda sobre o ganho</dt><dd className="num small">{fmtBRL(quote.capital_gains_tax)}</dd></div>}
+          {quote.tax_note && <p className="muted small" style={{ margin: 0 }}>{quote.tax_note}</p>}
           {Number(quote.loan_payoff) > 0 && <div><dt>Quitação do financiamento</dt><dd className="num">{fmtBRL(quote.loan_payoff)}</dd></div>}
           <div><dt>Dinheiro que entra no caixa</dt><dd className="num"><b>{fmtBRL(quote.net_cash)}</b></dd></div>
           <div><dt>Resultado sobre o custo de aquisição</dt><dd className={`num tone-${trend(quote.result)}`}>{fmtBRL(quote.result)}</dd></div>
@@ -136,6 +140,8 @@ export function OccupancyModal({ good, onClose, onDone }: { good: GoodDetail; on
   const residential = good.good.category === "RESIDENTIAL";
   const [mode, setMode] = useState<Occupancy>(residential ? "OWNER_OCCUPIED" : "LISTED_FOR_RENT");
   const [rent, setRent] = useState(Number(re.monthly_rent) > 0 ? re.monthly_rent : re.market_rent);
+  const [nightly, setNightly] = useState(Number(re.nightly_rate) > 0 ? re.nightly_rate! : (re.market_nightly ?? "0"));
+  const [mgmt, setMgmt] = useState<"SELF" | "HIRED">(re.management ?? "SELF");
   const [cands, setCands] = useState<{ id: number; name: string; amount: string | null }[]>([]);
   const [ending, setEnding] = useState<number[]>([]);
   const [busy, setBusy] = useState(false);
@@ -150,6 +156,7 @@ export function OccupancyModal({ good, onClose, onDone }: { good: GoodDetail; on
       onDone(await api.setOccupancy(good.good.id, {
         mode, ...(mode === "LISTED_FOR_RENT" ? { monthly_rent: parseMoneyInput(rent) } : {}),
         ...(mode === "OWNER_OCCUPIED" ? { end_recurring_item_ids: ending } : {}),
+        ...(mode === "SHORT_STAY" ? { nightly_rate: parseMoneyInput(nightly), management: mgmt } : {}),
       }));
     } catch (err) { setMsg(errMsg(err)); setBusy(false); }
   }
@@ -157,7 +164,8 @@ export function OccupancyModal({ good, onClose, onDone }: { good: GoodDetail; on
     <Modal title={`Uso do imóvel: ${good.good.name}`} onClose={onClose} onSubmit={submit}>
       <div className="seg" role="group" aria-label="Uso do imóvel">
         {residential && <button type="button" className={mode === "OWNER_OCCUPIED" ? "on" : ""} onClick={() => setMode("OWNER_OCCUPIED")}>Morar</button>}
-        {good.good.category !== "LAND" && <button type="button" className={mode === "LISTED_FOR_RENT" ? "on" : ""} onClick={() => setMode("LISTED_FOR_RENT")}>Alugar</button>}
+        {good.good.category !== "LAND" && <button type="button" className={mode === "LISTED_FOR_RENT" ? "on" : ""} onClick={() => setMode("LISTED_FOR_RENT")}>Aluguel fixo</button>}
+        {residential && <button type="button" className={mode === "SHORT_STAY" ? "on" : ""} onClick={() => setMode("SHORT_STAY")}>Temporada</button>}
         <button type="button" className={mode === "VACANT" ? "on" : ""} onClick={() => setMode("VACANT")}>Desocupado</button>
       </div>
       {mode === "OWNER_OCCUPIED" && (
@@ -168,6 +176,16 @@ export function OccupancyModal({ good, onClose, onDone }: { good: GoodDetail; on
               onChange={(e) => setEnding(e.target.checked ? [...ending, c.id] : ending.filter((i) => i !== c.id))} />
               Encerrar “{c.name}” {c.amount ? `(${fmtBRL(c.amount)}/mês)` : ""}</label>
           ))}
+        </>
+      )}
+      {mode === "SHORT_STAY" && (
+        <>
+          <p className="muted small" style={{ margin: 0 }}>🏖️ <b>Temporada</b> é o “Airbnb” do jogo: rende mais que o aluguel fixo, mas dá trabalho. Cobram-se taxa da plataforma (3%), limpeza, ISS (3%) e imposto de renda sobre o que você ganha.</p>
+          <label>Diária (R$) — referência {fmtBRL(re.market_nightly ?? "0")}<input inputMode="decimal" value={nightly} onChange={(e) => setNightly(e.target.value)} /></label>
+          <div className="seg" role="group" aria-label="Gestão">
+            <button type="button" className={mgmt === "SELF" ? "on" : ""} onClick={() => setMgmt("SELF")}>Eu cuido (14h/mês)</button>
+            <button type="button" className={mgmt === "HIRED" ? "on" : ""} onClick={() => setMgmt("HIRED")}>Contratar gestor (20%)</button></div>
+          <p className="muted small" style={{ margin: 0 }}>{mgmt === "SELF" ? "Você gasta 14 horas livres por mês e, se não tiver tempo, a nota e as reservas caem." : "O gestor fica com 20% da receita, mas você não gasta tempo."} Diária acima do mercado reduz as reservas.</p>
         </>
       )}
       {mode === "LISTED_FOR_RENT" && (

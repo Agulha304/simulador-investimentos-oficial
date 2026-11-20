@@ -84,7 +84,7 @@ export const CATEGORY_LABEL: Record<string, string> = {
   INSTRUMENT: "Instrumento musical", EQUIPMENT: "Equipamento", ANTIQUE: "Antiguidade", COLLECTIBLE: "Colecionável", OTHER: "Outros",
 };
 export const OCCUPANCY_LABEL: Record<string, string> = {
-  OWNER_OCCUPIED: "Moradia própria", VACANT: "Desocupado", LISTED_FOR_RENT: "Anunciado para alugar (vago)", RENTED: "Alugado",
+  OWNER_OCCUPIED: "Moradia própria", VACANT: "Desocupado", LISTED_FOR_RENT: "Anunciado para alugar (vago)", RENTED: "Alugado", SHORT_STAY: "Hospedagem de temporada",
 };
 export const GOOD_STATUS_LABEL: Record<string, string> = { ACTIVE: "Ativo", SOLD: "Vendido", LOST: "Baixado" };
 export const COST_LABEL: Record<string, string> = {

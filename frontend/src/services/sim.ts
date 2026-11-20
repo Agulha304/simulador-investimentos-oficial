@@ -3,7 +3,7 @@ import { request } from "./api";
 
 export interface Attrs { health: number; wellbeing: number; quality: number; satisfaction: number; social: number; financial_stability: number; free_hours_left: number; free_hours_total: number }
 export interface Rel {
-  gender: "M" | "F"; compat_bonus: number; person_id: number; name: string; age: number; personality: string; interests: string[]; occupation: string; income: string;
+  gender: "M" | "F"; compat_bonus: number; finance_label: string; person_id: number; name: string; age: number; personality: string; interests: string[]; occupation: string; income: string;
   assets: string; debts: string; wants_children: number; stage: string; affinity: number; trust: number; compatibility: number;
   since_month: string; stage_since: string; finance_mode: "SEPARATE" | "SHARED"; contribution_pct: string;
 }
@@ -21,7 +21,7 @@ export interface Life {
   pregnancy_due_month: string | null; relationships: Rel[]; children: Kid[]; expenses: FamExpense[]; family_expense_total: string;
   activities: { key: string; label: string; cost: number; hours: number }[]; interactions: { key: string; label: string; cost: number; hours: number }[];
   history: { month: string; kind: string; text: string }[];
-  result?: { cost: string; met: string | null };
+  result?: { cost?: string; met?: string | null; story?: string; person_id?: number };
 }
 export interface EcoState {
   month: string; inflation: string; interest: string; unemployment: string; growth: string; demand: string; confidence: string;
