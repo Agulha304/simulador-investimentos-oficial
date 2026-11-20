@@ -520,6 +520,7 @@ def advance_to_month(db: Session, user_id: int, new_month: SimMonth) -> None:
     """
     rule_map = load_rules(db)
     ref = new_month.ref_month
+    vacancy = economy_service.vacancy_boost(db, user_id, ref)          # crise imobiliária: mais vacância e menos locação
     for g in db.scalars(select(Good).where(Good.user_id == user_id, Good.status == GoodStatus.ACTIVE)):
         already = db.scalar(select(GoodValue.id).where(
             GoodValue.good_id == g.id, GoodValue.ref_month == ref, GoodValue.source == ValueSource.MONTHLY))
@@ -535,12 +536,12 @@ def advance_to_month(db: Session, user_id: int, new_month: SimMonth) -> None:
         if det and det.occupancy == Occupancy.LISTED_FOR_RENT:
             market = rules.market_rent(g.category, g.current_value)
             ratio = float(market / det.monthly_rent) if det.monthly_rent > 0 else 1.0
-            p = min(0.9, max(0.1, rules.FILL_BASE_PROB * ratio))
+            p = min(0.9, max(0.1, rules.FILL_BASE_PROB * ratio)) * (1 - 0.5 * min(1.0, vacancy))
             if rules.hash01("fill", g.id, ref.isoformat()) < p:
                 det.occupancy = Occupancy.RENTED
                 _event(db, g, ref, GoodEventType.RENTED, f"Imóvel alugado por {det.monthly_rent}/mês", det.monthly_rent)
         elif det and det.occupancy == Occupancy.RENTED:
-            if rules.hash01("vacate", g.id, ref.isoformat()) < rules.VACATE_PROB:
+            if rules.hash01("vacate", g.id, ref.isoformat()) < rules.VACATE_PROB + 0.06 * vacancy:
                 det.occupancy = Occupancy.LISTED_FOR_RENT
                 _event(db, g, ref, GoodEventType.VACATED, "Inquilino saiu: imóvel vago e anunciado")
     db.flush()

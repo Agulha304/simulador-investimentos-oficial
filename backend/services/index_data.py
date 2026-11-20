@@ -190,6 +190,10 @@ def load(db: Session, since_years: int = 7) -> IndexData:
         select(IndexRate.index_name, IndexRate.ref_date, IndexRate.value).where(IndexRate.ref_date >= cutoff)
     ):
         (daily if name in DAILY else monthly).setdefault(name, {})[ref_date] = value
+    from backend.core.clock import get_clock
+    clock = get_clock()
+    if clock is not None and clock.index_fn is not None:        # partida simulada: CDI e IPCA do mundo simulado
+        clock.index_fn(daily, monthly)
     return IndexData(
         daily=daily, monthly=monthly,
         fallback_daily={IndexName.CDI: _daily_from_annual(s.fallback_cdi_annual),

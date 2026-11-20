@@ -54,6 +54,14 @@ function Monthly({ months }: { months: string[] }) {
             <StatCard label="Patrimônio" value={n(r.net_worth)} sub={r.net_worth_change != null ? `${r.net_worth_change >= 0 ? "+" : ""}${n(r.net_worth_change)} no mês` : undefined} tone={r.net_worth_change != null ? trend(String(r.net_worth_change)) : "neutral"} />
             <StatCard label="Dívidas" value={n(r.debts)} />
           </section>
+          {r.real && (
+            <section className="card stack"><h2>🛒 Valores nominais e reais</h2>
+              <p className="muted small">Nominal = o valor em reais da época. Real = o mesmo valor corrigido pelo custo de vida (o que ele realmente compra).</p>
+              <ul className="list-plain">
+                <li><span>Renda (nominal → real)</span><b className="num">{n(r.income)} → {n(r.real.income_real)}</b></li>
+                <li><span>Despesas (nominal → real)</span><b className="num">{n(r.expense)} → {n(r.real.expense_real)}</b></li>
+                <li><span>Poder de compra do real desde o início</span><b className={`num ${r.real.purchasing_power < 1 ? "tone-down" : "tone-up"}`}>{(r.real.purchasing_power * 100).toFixed(1)}%</b></li>
+                <li><span>Custo de vida acumulado</span><b className="num">{((r.real.cpi - 1) * 100).toFixed(1)}%</b></li></ul></section>)}
           <div className="cols-2">
             <section className="card stack"><h2>Empresas</h2>
               {r.companies.length === 0 ? <p className="muted small">Sem empresas neste mês.</p> : <ul className="list-plain">{r.companies.map((c) => <li key={c.company_id}><span>{c.name}<br /><span className="muted small">receita {n(c.revenue)}</span></span><b className={`num ${c.net_result >= 0 ? "tone-up" : "tone-down"}`}>{n(c.net_result)}</b></li>)}</ul>}</section>
@@ -98,6 +106,14 @@ function Annual({ years }: { years: number[] }) {
             <StatCard label="Lucros empresariais" value={n(a.company_profit)} tone={trend(String(a.company_profit))} />
             <StatCard label="Dívidas (início → fim)" value={`${n(a.debts_start)} → ${n(a.debts_end)}`} />
           </section>
+          {a.real && (
+            <section className="card stack"><h2>🛒 Poder de compra no ano</h2>
+              <ul className="list-plain">
+                <li><span>Custo de vida no ano</span><b className="num">{a.real.cost_of_living_change_pct.toFixed(1)}%</b></li>
+                <li><span>Salários do mercado no ano</span><b className="num">{a.real.wage_index_change_pct.toFixed(1)}%</b></li>
+                <li><span>Renda do ano: nominal → real</span><b className="num">{n(a.income)} → {n(a.real.income_real)}</b></li>
+                <li><span>Patrimônio final em valores reais</span><b className="num">{n(a.real.net_worth_real_end)}</b></li></ul>
+              <p className="muted small">Se o custo de vida subiu mais que a sua renda, você perdeu poder de compra mesmo ganhando o mesmo valor.</p></section>)}
           <section className="card stack"><h2>Resultado mês a mês</h2>
             <div className="bars">{a.monthly.map((m) => <div key={m.month} title={`${fmtMonth(m.month)}: ${n(m.result)}`} className={m.result < 0 ? "neg" : ""} style={{ height: `${(Math.abs(m.result) / max) * 100}%` }} />)}</div></section>
           <div className="cols-2">

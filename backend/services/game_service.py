@@ -2,6 +2,7 @@
 import secrets
 import uuid
 from datetime import UTC, date, datetime
+from decimal import Decimal
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -64,18 +65,34 @@ def create_game(db: Session, account: User, *, kind: str, name: str, start_date:
     return game
 
 
-def clock_of(game: Game):
+def clock_of(game: Game, db: Session | None = None):
+    """Relógio da partida: treino = data histórica; vida completa com economia dinâmica = mês simulado."""
     if game.kind == "TRAINING":
         return historical_market.clock_for(date.fromisoformat(game.config["market_date"]))
-    return None
+    if db is None:
+        return None
+    from backend.models import GameProfile, SimMonth
+    prof = db.scalar(select(GameProfile).where(GameProfile.user_id == game.world_user_id))
+    if prof is None or prof.economy_mode != "DYNAMIC":
+        return None
+    month = db.scalar(select(SimMonth.ref_month).where(SimMonth.user_id == game.world_user_id, SimMonth.status == "OPEN"))
+    from backend.models import EconomyState
+    st = db.scalar(select(EconomyState).where(EconomyState.user_id == game.world_user_id, EconomyState.ref_month <= month)
+                   .order_by(EconomyState.ref_month.desc()).limit(1)) if month else None
+    if st is None:
+        return None
+    from backend.services import sim_market
+    fx = Decimal(str(((st.engine or {}).get("macro") or {}).get("fx", 5.2)))
+    clock, _ = sim_market.clock_for(game.world_user_id, month, fx.quantize(Decimal("0.0001")))
+    return clock
 
 
 def _snapshot(db: Session, game: Game) -> None:
     """Foto do patrimônio na data da partida (a série do desempenho usa o tempo da partida)."""
     from backend.services import performance_service, portfolio_service
     pid = db.scalar(select(Portfolio.id).where(Portfolio.user_id == game.world_user_id))
-    clock = clock_of(game)
-    now = datetime.combine(date.fromisoformat(game.config["market_date"]), datetime.min.time(), tzinfo=UTC) if clock else None
+    clock = clock_of(game, db)
+    now = datetime.combine(clock.today, datetime.min.time(), tzinfo=UTC) if clock else None
     try:
         with use_clock(clock):
             performance_service.take_snapshot(db, portfolio_service.load_portfolio(db, pid), now)

@@ -103,6 +103,27 @@ CATALOG: tuple[EventDef, ...] = (
     EventDef("alta_educacao_saude", "Reajuste de mensalidades e planos", "Escolas e planos de saúde reajustam acima da inflação.",
              "ECONOMIC", "WORLD", False, 1, (2, 4), 0.05, _hi_infl,
              {"prices": {"educacao": 0.9, "saude": 0.9}}),
+    EventDef("petroleo", "Descoberta de grande reserva de petróleo", "Mais oferta de energia: combustíveis e energia ficam mais baratos.",
+             "ECONOMIC", "WORLD", True, 2, (6, 12), 0.015, lambda m, c: 1.0,
+             {"prices": {"combustiveis": -0.9, "energia": -0.4}, "growth": 0.6, "confidence": 3, "assets_all_pct": 0.1}),
+    EventDef("avanco_tecnologico", "Avanço tecnológico", "Uma nova tecnologia reduz custos de produção em vários setores.",
+             "ECONOMIC", "WORLD", True, 1, (8, 14), 0.015, lambda m, c: 1.0,
+             {"prices": {"insumos": -0.3, "servicos": -0.1}, "growth": 0.5, "confidence": 2}),
+    EventDef("safra_recorde", "Safra agrícola excepcional", "Boa colheita derruba o preço dos alimentos.",
+             "ECONOMIC", "WORLD", True, 1, (4, 8), 0.025, lambda m, c: 1.0, {"prices": {"alimentacao": -0.7}, "inflation": -0.4}),
+    EventDef("quebra_safra", "Quebra de safra", "Clima adverso destrói parte da colheita e os alimentos sobem.",
+             "ECONOMIC", "WORLD", False, 2, (4, 8), 0.022, lambda m, c: 1.0, {"prices": {"alimentacao": 1.2}, "inflation": 0.6, "confidence": -2}),
+    EventDef("conflito_internacional", "Conflito internacional", "Tensão geopolítica sacode mercados e preços de energia.",
+             "ECONOMIC", "WORLD", False, 2, (4, 9), 0.012, lambda m, c: 1.0,
+             {"prices": {"energia": 0.9, "combustiveis": 1.3}, "confidence": -4, "assets_all_pct": -0.5, "inflation": 0.5}),
+    EventDef("guerra_comercial", "Mudança nas relações comerciais", "Novas tarifas encarecem produtos importados.",
+             "ECONOMIC", "WORLD", False, 1, (6, 12), 0.012, lambda m, c: 1.0,
+             {"prices": {"importados": 0.9, "insumos": 0.3}, "growth": -0.3}),
+    EventDef("infraestrutura", "Grande investimento em infraestrutura", "Obras públicas aquecem a construção e o emprego.",
+             "ECONOMIC", "WORLD", True, 1, (8, 16), 0.012, lambda m, c: 1.0,
+             {"growth": 0.5, "unemployment": -0.5, "prices": {"materiais_construcao": 0.3}, "assets_pct": 0.1}),
+    EventDef("nova_regulamentacao", "Nova regulamentação", "Regras novas elevam custos de conformidade para serviços.",
+             "ECONOMIC", "WORLD", False, 1, (6, 12), 0.015, lambda m, c: 1.0, {"prices": {"servicos": 0.25, "saude": 0.15}}),
     # ------------------------------------------------------------ pessoais
     EventDef("despesa_medica", "Despesa médica inesperada", "Consultas, exames e um tratamento fora do orçamento.",
              "PERSONAL", "USER", False, 2, (1, 1), 0.05, _sick,
@@ -135,6 +156,10 @@ CATALOG: tuple[EventDef, ...] = (
                         (Outcome(1.0, "A ajuda foi bem recebida.", {"life": {"satisfaction": 4, "wellbeing": 2}}, 1),), cost=1500),
                  Option("recusar", "Não poder ajudar agora", "Preserva o caixa.",
                         (Outcome(1.0, "Você explicou a situação; o clima ficou tenso.", {"life": {"satisfaction": -3}}, 1),), default=True))),
+    EventDef("demissao", "Demissão", "A empresa em que você trabalha cortou vagas: a renda do salário some por alguns meses.",
+             "PERSONAL", "USER", False, 3, (3, 6), 0.012,
+             lambda m, c: _employed(m, c) * (4.0 if m["unemployment"] > 11.5 else 2.0 if m["unemployment"] > 9.5 else 0.3),
+             {"income_pct": -100, "life": {"wellbeing": -6, "satisfaction": -4}}),
     EventDef("reajuste_aluguel", "Reajuste de aluguel", "O contrato de locação foi renovado com aumento.",
              "PERSONAL", "USER", False, 1, (6, 12), 0.04, _renting,
              {"prices": {"moradia": 0.4}}),
@@ -169,11 +194,12 @@ CATALOG: tuple[EventDef, ...] = (
 )
 CATALOG_BY_KEY = {e.key: e for e in CATALOG}
 
-PRICE_CATEGORIES = ("alimentacao", "moradia", "transporte", "saude", "educacao", "energia", "insumos",
-                    "materiais_construcao", "lazer", "vestuario")
+PRICE_CATEGORIES = ("alimentacao", "moradia", "energia", "combustiveis", "transporte", "saude", "educacao", "vestuario", "lazer",
+                    "servicos", "importados", "insumos", "materiais_construcao", "salarios")
 CATEGORY_LABEL = {"alimentacao": "Alimentação", "moradia": "Moradia", "transporte": "Transporte", "saude": "Saúde",
-                  "educacao": "Educação", "energia": "Energia", "insumos": "Insumos empresariais",
-                  "materiais_construcao": "Materiais de construção", "lazer": "Lazer", "vestuario": "Vestuário"}
+                  "educacao": "Educação", "energia": "Energia", "insumos": "Insumos empresariais", "combustiveis": "Combustíveis",
+                  "materiais_construcao": "Materiais de construção", "lazer": "Lazer", "vestuario": "Vestuário",
+                  "servicos": "Serviços", "importados": "Produtos importados", "salarios": "Salários (mercado)"}
 # sensibilidade de cada categoria à inflação geral e volatilidade própria
 BETA = {"alimentacao": (1.3, 1.2), "moradia": (0.9, 0.5), "transporte": (1.0, 0.8), "saude": (1.2, 0.5),
         "educacao": (0.9, 0.3), "energia": (1.1, 1.4), "insumos": (1.0, 1.0), "materiais_construcao": (1.1, 0.9),

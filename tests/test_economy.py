@@ -78,7 +78,7 @@ def test_world_starts_with_configurable_initial_conditions(client, auth_headers)
     j = client.get(EC, headers=auth_headers).json()
     assert j["dynamic"] and D(j["state"]["inflation"]) == D("7.0") and D(j["state"]["unemployment"]) == D("11.5")
     assert all(D(str(v)) == 1 for v in j["state"]["indices"].values())
-    assert len(j["categories"]) == 10
+    assert len(j["categories"]) == 14
     with pytest.raises(Exception):
         start_world(client, auth_headers)                                  # só uma vez
     with SessionLocal() as s, pytest.raises(Exception):

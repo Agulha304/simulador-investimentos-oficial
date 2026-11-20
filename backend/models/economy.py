@@ -45,6 +45,7 @@ class EconomyState(Base):
     confidence: Mapped[Decimal] = mapped_column(Numeric(8, 4))       # confiança do consumidor 0..100
     monthly_changes: Mapped[dict] = mapped_column(JSON, default=dict)   # categoria -> variação do mês (%)
     indices: Mapped[dict] = mapped_column(JSON, default=dict)           # categoria -> índice acumulado (base 1)
+    engine: Mapped[dict | None] = mapped_column(JSON)                   # estado completo do motor (macro estendido, regime, crises, fatores)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -76,3 +77,39 @@ class WorldEvent(Base):
     choice: Mapped[str | None] = mapped_column(String(30))
     outcome: Mapped[str | None] = mapped_column(String(300))     # texto do resultado após a decisão
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class EconomicCrisis(Base):
+    """Histórico de crises: início, fase, intensidade mês a mês (`path`), gatilhos e fim."""
+    __tablename__ = "economic_crises"
+    __table_args__ = (UniqueConstraint("user_id", "type", "start_month", name="uq_crisis_user_type_start"),
+                      Index("ix_crises_user", "user_id", "start_month"))
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    type: Mapped[str] = mapped_column(String(16))
+    label: Mapped[str] = mapped_column(String(60))
+    start_month: Mapped[date] = mapped_column(Date)
+    end_month: Mapped[date | None] = mapped_column(Date)
+    status: Mapped[str] = mapped_column(String(10), default="ACTIVE")       # ACTIVE | ENDED
+    phase: Mapped[str] = mapped_column(String(10), default="ONSET")         # ONSET | PEAK | RECOVERY
+    intensity: Mapped[Decimal] = mapped_column(Numeric(6, 3), default=Decimal("0"))
+    peak: Mapped[Decimal] = mapped_column(Numeric(6, 3), default=Decimal("0"))
+    sectors: Mapped[dict] = mapped_column(JSON, default=dict)               # segmento -> % de demanda no pico
+    assets: Mapped[dict] = mapped_column(JSON, default=dict)                # classe de ativo -> %/mês no pico
+    triggers: Mapped[dict] = mapped_column(JSON, default=dict)              # vulnerabilidades que a desencadearam
+    path: Mapped[list] = mapped_column(JSON, default=list)
+
+
+class SimPrice(Base):
+    """Preço simulado de um ativo no mês (moeda do ativo). ANCHOR = cotação real usada como ponto de partida."""
+    __tablename__ = "sim_prices"
+    __table_args__ = (UniqueConstraint("user_id", "asset_id", "ref_month", name="uq_sim_price"),
+                      Index("ix_sim_prices_user_month", "user_id", "ref_month"))
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    asset_id: Mapped[int] = mapped_column(ForeignKey("assets.id", ondelete="CASCADE"))
+    ref_month: Mapped[date] = mapped_column(Date)
+    price: Mapped[Decimal] = mapped_column(Numeric(24, 8))
+    source: Mapped[str] = mapped_column(String(8), default="SIM")           # ANCHOR | SIM

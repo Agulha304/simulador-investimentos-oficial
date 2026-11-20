@@ -247,7 +247,12 @@ def build_month_report(db: Session, user_id: int, closed: SimMonth, nxt: SimMont
     st = economy_service.get_state(db, user_id, ref)
     prof = life_service.get_profile(db, user_id, create=False)
     income, expense = _num(closed.total_income), _num(closed.total_expense)
-    data = {
+    cpi = float(economy_service.index_value(db, user_id, ref, "geral"))                  # custo de vida (base 1 no início)
+    wage_idx = float(economy_service.index_value(db, user_id, ref, "salarios"))
+    real = {"cpi": round(cpi, 6), "purchasing_power": round(1 / cpi, 6) if cpi else 1.0, "income_real": round(income / cpi, 2),
+            "expense_real": round(expense / cpi, 2), "net_worth_real": round(_num(m["net_worth"]) / cpi, 2),
+            "wage_index": round(wage_idx, 6), "cost_of_living_12m": round(_num(st.inflation), 2) if st else None}
+    data = {"real": real,
         "month": ref.isoformat(), "income": income, "expense": expense, "result": round(income - expense, 2),
         "invested": _num(closed.invested), "closing_balance": _num(closed.closing_balance),
         "net_worth": _num(m["net_worth"]), "net_worth_open": _num(baseline) if baseline is not None else None,
@@ -294,11 +299,27 @@ def annual_report(db: Session, user_id: int, year: int) -> dict:
         "achievements": [a for x in d for a in x["achievements"]], "goals_done": [g for x in d for g in x["goals_done"]],
         "monthly": [{"month": x["month"], "income": x["income"], "expense": x["expense"], "result": x["result"],
                      "net_worth": x["net_worth"]} for x in d],
+        "real": ({"income_real": round(sum(x["real"]["income_real"] for x in d), 2), "expense_real": round(sum(x["real"]["expense_real"] for x in d), 2),
+                  "cpi_start": d[0]["real"]["cpi"], "cpi_end": d[-1]["real"]["cpi"],
+                  "cost_of_living_change_pct": round((d[-1]["real"]["cpi"] / d[0]["real"]["cpi"] - 1) * 100, 2),
+                  "purchasing_power_end": d[-1]["real"]["purchasing_power"], "net_worth_real_end": d[-1]["real"]["net_worth_real"],
+                  "wage_index_change_pct": round((d[-1]["real"]["wage_index"] / d[0]["real"]["wage_index"] - 1) * 100, 2)}
+                 if all("real" in x for x in d) else None),
     }
 
 
 def on_month_closed(db: Session, user_id: int, closed: SimMonth, nxt: SimMonth) -> None:
     """Fim do fechamento (mesma transação): metas, conquistas e retrato do mês."""
+    from backend.core.clock import get_clock
+    from datetime import UTC, datetime
+    clock = get_clock()
+    if clock is not None:                      # foto do patrimônio na data simulada (gráfico de desempenho da partida)
+        portfolio = db.scalar(select(Portfolio).where(Portfolio.user_id == user_id))
+        from backend.services import performance_service
+        when = datetime.combine(nxt.ref_month, datetime.min.time(), tzinfo=UTC)
+        if not db.scalar(select(performance_service.PortfolioSnapshot.id).where(
+                performance_service.PortfolioSnapshot.portfolio_id == portfolio.id, performance_service.PortfolioSnapshot.taken_at == when)):
+            performance_service.take_snapshot(db, portfolio_service.load_portfolio(db, portfolio.id), when)
     if db.scalar(select(MonthReport.id).where(MonthReport.user_id == user_id, MonthReport.ref_month == closed.ref_month)):
         return
     m = metrics(db, user_id, closed.ref_month, closed)
@@ -351,7 +372,7 @@ def validate_free_config(cash: Decimal, salary: Decimal, expenses: list[P.Expens
 
 
 def start_game(db: Session, user_id: int, *, mode: str, scenario_key: str | None = None, seed: int | None = None,
-               name: str = "Você", free: dict | None = None, economy: dict | None = None) -> dict:
+               name: str = "Você", free: dict | None = None, economy: dict | None = None, sim: dict | None = None) -> dict:
     if mode not in P.MODES:
         raise FinanceError("modo inválido (use FREE ou CAREER)")
     month = budget_service.ensure_setup(db, user_id)
@@ -400,9 +421,9 @@ def start_game(db: Session, user_id: int, *, mode: str, scenario_key: str | None
         _seed_family(db, user_id, month, sc)
     game = economy_service.get_game(db, user_id)
     game.mode, game.scenario_key, game.started_month = mode, scenario_key, month.ref_month
-    economy_service.start_world(db, user_id, month, seed=seed, initial=init_econ)
+    economy_service.start_world(db, user_id, month, seed=seed, initial=init_econ, sim=sim)
     nw = portfolio_service.build_summary(db, db.scalar(select(Portfolio).where(Portfolio.user_id == user_id))).total_equity_brl
-    game.config = {"initial_net_worth": float(nw), "initial_cash": float(cash), "salary": float(salary),
+    game.config = {**(game.config or {}), "initial_net_worth": float(nw), "initial_cash": float(cash), "salary": float(salary),
                    "expenses": [e.amount for e in expenses]}
     for g in goals:
         _goal_from(db, user_id, month, g, "SCENARIO")

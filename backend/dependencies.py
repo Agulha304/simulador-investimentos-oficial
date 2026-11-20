@@ -59,7 +59,7 @@ def _resolve_clock(token: str, game_id: int):
         game = db.get(Game, game_id)
         if game is None or game.account_id != int(sub) or game.status != "ACTIVE":
             return None
-        return game_service.clock_of(game)
+        return game_service.clock_of(game, db)
 
 
 async def game_clock(request: Request):

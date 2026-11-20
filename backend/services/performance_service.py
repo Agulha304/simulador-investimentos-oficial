@@ -71,6 +71,13 @@ def take_snapshot(db: Session, portfolio: Portfolio, now: datetime | None = None
 
 
 def ensure_recent_snapshot(db: Session, portfolio: Portfolio, max_age: timedelta = timedelta(minutes=10)) -> None:
+    from backend.core.clock import get_clock
+    clock = get_clock()
+    if clock is not None:                      # partida: a série usa o TEMPO DA PARTIDA (uma foto por data)
+        when = datetime.combine(clock.today, datetime.min.time(), tzinfo=UTC)
+        if not db.scalar(select(PortfolioSnapshot.id).where(PortfolioSnapshot.portfolio_id == portfolio.id, PortfolioSnapshot.taken_at == when)):
+            take_snapshot(db, portfolio, when)
+        return
     last = db.scalar(select(func.max(PortfolioSnapshot.taken_at)).where(PortfolioSnapshot.portfolio_id == portfolio.id))
     if last is None or datetime.now(UTC) - last > max_age:
         take_snapshot(db, portfolio)

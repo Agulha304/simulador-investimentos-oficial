@@ -20,11 +20,14 @@ from sqlalchemy.orm import Session
 
 from backend.core.money import quantize_money
 from backend.models import (
-    Company, CompanySegment, CompanyStatus, EconomyState, EntryOrigin, FlowKind, GameProfile, REAL_ESTATE, RecurringItem,
+    Company, CompanySegment, CompanyStatus, EconomicCrisis, EconomyState, EntryOrigin, FlowKind, GameProfile, REAL_ESTATE, RecurringItem,
     RecurringItemVersion, SimMonth, TransactionSource, WorldEvent,
 )
 from backend.services import budget_service, finance_ledger, item_sync
 from backend.services import economy_events as E
+from backend.services.engine import crises as engine_crises
+from backend.services.engine import world as engine_world
+from backend.services.engine.params import SimParams
 from backend.services.finance_ledger import ConflictError, FinanceError, NotFoundError
 from backend.services.life_rules import hash01
 
@@ -33,6 +36,10 @@ D = Decimal
 PREFIX = ("econ:",)
 RANGES = {"inflation": (-2, 40), "interest": (1, 30), "unemployment": (2, 30), "growth": (-10, 10),
           "demand": (50, 150), "confidence": (0, 100)}
+# nomes públicos (colunas) -> nomes do motor
+ENGINE_KEY = {"interest": "policy", "confidence": "consumer_conf"}
+EXTRA_START = {"fx": (2.0, 30.0), "credit": (5, 95), "liquidity": (5, 100), "household_debt": (20, 130), "firm_debt": (20, 160),
+               "business_conf": (0, 100), "commodity": (30, 400), "risk_appetite": (0, 100)}
 CAT_NAME = {"saude": "Saúde", "alimentacao": "Alimentação", "moradia": "Moradia", "transporte": "Transporte",
             "educacao": "Educação", "lazer": "Lazer", "vestuario": "Vestuário"}
 
@@ -90,19 +97,33 @@ def active_events(db: Session, user_id: int, ref: date) -> list[WorldEvent]:
         WorldEvent.end_month >= ref).order_by(WorldEvent.id)))
 
 
+def engine_of(st: EconomyState | None) -> dict:
+    return (st.engine or {}) if st is not None else {}
+
+
 def asset_adjust(db: Session, user_id: int, ref: date, category) -> Decimal:
-    """Variação extra (% no mês) do valor de um bem por economia e eventos."""
+    """Variação extra (% no mês) do valor de um bem: imóveis seguem o índice imobiliário do motor (juros, crescimento,
+    crédito e crises); eventos de valorização/desvalorização entram direto."""
     st = get_state(db, user_id, ref)
     if st is None:
         return D("0")
     pct = 0.0
+    eng = engine_of(st)
     if category in REAL_ESTATE:
-        pct += (float(st.growth) - 2.0) * 0.03 - (float(st.interest) - 10.5) * 0.04
+        if "house_ret" in eng.get("info", {}):
+            pct += eng["info"]["house_ret"]
+        else:                                                    # estado antigo (sem motor): regra simples
+            pct += (float(st.growth) - 2.0) * 0.03 - (float(st.interest) - 10.5) * 0.04
     for ev in active_events(db, user_id, ref):
         pct += ev.effects.get("assets_all_pct", 0)
         if category in REAL_ESTATE:
             pct += ev.effects.get("assets_pct", 0)
     return D(str(round(pct, 4)))
+
+
+def vacancy_boost(db: Session, user_id: int, ref: date) -> float:
+    """Pressão de vacância (crise imobiliária): 0 = normal."""
+    return float(engine_of(get_state(db, user_id, ref)).get("info", {}).get("crisis_effects", {}).get("vacancy", 0.0))
 
 
 def _company_events(db: Session, c: Company, ref: date) -> list[WorldEvent]:
@@ -119,6 +140,8 @@ def company_demand_mult(db: Session, c: Company, ref: date) -> float:
     if st is None:
         return 1.0
     mult = float(st.demand) / 100.0
+    sector = engine_of(st).get("info", {}).get("sector", {}).get(c.segment.value, 0.0)       # efeito das crises no setor
+    mult *= max(0.2, 1 + sector / 100.0)
     for ev in _company_events(db, c, ref):
         mult *= 1 + ev.effects.get("company_demand_pct", 0) / 100.0
     return mult
@@ -141,49 +164,84 @@ def supplier_mult(db: Session, c: Company, ref: date) -> Decimal:
 
 
 # ------------------------------------------------------------------ início do mundo
-def _new_state(db: Session, user_id: int, ref: date, latent: dict, prev: EconomyState | None, offsets: dict,
-               cat_changes: dict | None = None) -> EconomyState:
-    disp = {k: _clamp(latent[k] + offsets.get(k, 0), *RANGES[k]) for k in RANGES}
-    prev_idx = prev.indices if prev else {c: 1.0 for c in E.PRICE_CATEGORIES}
-    changes = cat_changes or {c: 0.0 for c in E.PRICE_CATEGORIES}
-    idx = {c: round(float(prev_idx.get(c, 1.0)) * (1 + changes.get(c, 0.0) / 100), 6) for c in E.PRICE_CATEGORIES}
-    st = EconomyState(user_id=user_id, ref_month=ref, **{k: D(str(round(v, 4))) for k, v in disp.items()},
-                      monthly_changes={**{c: round(v, 4) for c, v in changes.items()}, "_latent": latent}, indices=idx)
+def sim_params(db: Session, user_id: int) -> SimParams:
+    g = get_game(db, user_id, create=False)
+    return SimParams.from_dict((g.config or {}).get("sim") if g else None)
+
+
+def _persist_state(db: Session, user_id: int, ref: date, ws, info) -> EconomyState:
+    m = ws.macro
+    eng = ws.to_dict()
+    eng["info"] = {"factors": info.factors if info else {}, "class_ret": info.crisis_effects.get("class_ret", {}) if info else {},
+                   "sector": info.crisis_effects.get("sector", {}) if info else {}, "house_ret": info.house_ret if info else 0.0,
+                   "crisis_effects": {k: v for k, v in (info.crisis_effects if info else {}).items() if k not in ("class_ret", "sector")}}
+    st = EconomyState(user_id=user_id, ref_month=ref, inflation=D(str(round(m["inflation"], 4))), interest=D(str(round(m["policy"], 4))),
+                      unemployment=D(str(round(m["unemployment"], 4))), growth=D(str(round(m["growth"], 4))),
+                      demand=D(str(round(m["demand"], 4))), confidence=D(str(round(m["consumer_conf"], 4))),
+                      monthly_changes={k: round(v, 4) for k, v in ws.changes.items()}, indices=ws.indices, engine=eng)
+    eng["regime"] = ws.regime
     db.add(st)
     db.flush()
     return st
 
 
-def start_world(db: Session, user_id: int, month: SimMonth, *, seed: int, initial: dict | None = None) -> GameProfile:
-    """Liga a economia dinâmica (uma vez) com semente e condições iniciais configuráveis."""
+def _persist_crises(db: Session, user_id: int, ws, ref: date) -> None:
+    for d in ws.crises:
+        c = engine_crises.Crisis.from_dict(d)
+        start = date.fromisoformat(c.start + "-01")
+        row = db.scalar(select(EconomicCrisis).where(EconomicCrisis.user_id == user_id, EconomicCrisis.type == c.type,
+                                                     EconomicCrisis.start_month == start))
+        label, _, _, _, sectors, classes = engine_crises.TYPES[c.type]
+        if row is None:
+            row = EconomicCrisis(user_id=user_id, type=c.type, label=label, start_month=start, sectors=sectors, assets=classes,
+                                 triggers=c.triggers)
+            db.add(row)
+        row.phase, row.intensity, row.peak, row.path = c.phase, D(str(round(c.intensity, 3))), D(str(round(c.peak, 3))), c.path
+        if c.ended:
+            row.status, row.end_month = "ENDED", date.fromisoformat(c.ended + "-01")
+    db.flush()
+
+
+def start_world(db: Session, user_id: int, month: SimMonth, *, seed: int, initial: dict | None = None,
+                sim: dict | None = None) -> GameProfile:
+    """Liga a economia dinâmica (uma vez) com semente, condições iniciais e parâmetros de simulação configuráveis."""
     g = get_game(db, user_id)
     if db.scalar(select(EconomyState.id).where(EconomyState.user_id == user_id).limit(1)):
         raise ConflictError("a economia desta partida já foi iniciada")
-    latent = dict(E.INITIAL)
+    over: dict = {}
     for k, v in (initial or {}).items():
-        if k not in RANGES:
+        if k in RANGES:
+            lo, hi = RANGES[k]
+        elif k in EXTRA_START:
+            lo, hi = EXTRA_START[k]
+        else:
             raise FinanceError(f"condição econômica desconhecida: {k}")
-        lo, hi = RANGES[k]
         if not lo <= float(v) <= hi:
             raise FinanceError(f"{k} deve estar entre {lo} e {hi}")
-        latent[k] = float(v)
+        over[ENGINE_KEY.get(k, k)] = float(v)
+    if "growth" in over:                                         # crescimento inicial vira hiato do produto equivalente
+        over["gap"] = (over.pop("growth") - 2.0) / 0.8
     g.economy_mode, g.seed = "DYNAMIC", seed
-    _new_state(db, user_id, month.ref_month, latent, None, {})
+    g.config = {**(g.config or {}), "sim": SimParams.from_dict(sim).__dict__}
+    ws = engine_world.initial_world(over)
+    ws.macro["growth"] = float(initial["growth"]) if initial and "growth" in initial else ws.macro["growth"]
+    _persist_state(db, user_id, month.ref_month, ws, None)
     return g
 
 
+def ws_of(st: EconomyState) -> engine_world.WorldState:
+    """Estado do motor guardado no mês (ou conversão de um estado antigo, anterior ao motor)."""
+    if st.engine and "macro" in st.engine:
+        return engine_world.WorldState.from_dict({k: v for k, v in st.engine.items() if k not in ("info",)})
+    over = {"inflation": float(st.inflation), "policy": float(st.interest), "unemployment": float(st.unemployment),
+            "consumer_conf": float(st.confidence), "demand": float(st.demand), "gap": (float(st.growth) - 2.0) / 0.8}
+    ws = engine_world.initial_world(over)
+    for c, v in (st.indices or {}).items():
+        ws.indices[c] = v
+    return ws
+
+
 # ------------------------------------------------------------------ eventos
-def _offsets(events: list[WorldEvent]) -> tuple[dict, dict]:
-    macro = {k: 0.0 for k in RANGES}
-    prices = {c: 0.0 for c in E.PRICE_CATEGORIES}
-    for ev in events:
-        for k in macro:
-            macro[k] += ev.effects.get(k, 0)
-        for c, v in ev.effects.get("prices", {}).items():
-            prices[c] = prices.get(c, 0.0) + v
-    return macro, prices
-
-
 def _context(db: Session, user_id: int, ref: date) -> dict:
     from backend.services import life_service
     g = get_game(db, user_id)
@@ -254,7 +312,7 @@ def _activate(db: Session, ev: WorldEvent, ref: date) -> None:
     ev.effects = fx
 
 
-def _spawn(db: Session, user_id: int, ref: date, seed: int, macro: dict) -> list[WorldEvent]:
+def _spawn(db: Session, user_id: int, ref: date, seed: int, macro: dict, freq: float = 1.0) -> list[WorldEvent]:
     ctx = _context(db, user_id, ref)
     new: list[WorldEvent] = []
     cap = {"world": 2, "user": 1}
@@ -263,7 +321,7 @@ def _spawn(db: Session, user_id: int, ref: date, seed: int, macro: dict) -> list
         bucket = "world" if d.scope in ("WORLD", "SECTOR") else "user"
         if count[bucket] >= cap[bucket]:
             continue
-        p = d.prob * d.cond(macro, ctx)
+        p = d.prob * d.cond(macro, ctx) * freq
         if p <= 0:
             continue
         busy = db.scalar(select(WorldEvent.id).where(
@@ -393,6 +451,30 @@ def _apply_indexation(db: Session, user_id: int, ref: date) -> None:
 
 
 # ------------------------------------------------------------------ avanço mensal
+def _event_shocks(events: list[WorldEvent]) -> dict:
+    """Efeitos dos eventos de MUNDO viram choques nas equações do motor (não deslocamentos da tela): persistem pela dinâmica."""
+    sh: dict = {"price_pp": {}}
+    for ev in events:
+        if ev.scope != "WORLD":
+            continue
+        fx = ev.effects
+        sh["demand"] = sh.get("demand", 0.0) + 0.25 * fx.get("growth", 0) + 0.05 * fx.get("demand", 0)
+        sh["conf"] = sh.get("conf", 0.0) + 0.4 * fx.get("confidence", 0)
+        sh["unemp"] = sh.get("unemp", 0.0) + 0.08 * fx.get("unemployment", 0)
+        sh["policy"] = sh.get("policy", 0.0) + 0.25 * fx.get("interest", 0)
+        sh["supply"] = sh.get("supply", 0.0) + 0.5 * fx.get("inflation", 0)
+        sh["assets_all"] = sh.get("assets_all", 0.0) + fx.get("assets_all_pct", 0)
+        for c, v in fx.get("prices", {}).items():
+            sh["price_pp"][c] = sh["price_pp"].get(c, 0.0) + v
+    return sh
+
+
+def _macro_view(ws) -> dict:
+    m = ws.macro
+    return {"inflation": m["inflation"], "interest": m["policy"], "unemployment": m["unemployment"], "growth": m["growth"],
+            "demand": m["demand"], "confidence": m["consumer_conf"]}
+
+
 def advance_to_month(db: Session, user_id: int, new_month: SimMonth) -> None:
     g = get_game(db, user_id, create=False)
     if g is None or g.economy_mode != "DYNAMIC":
@@ -403,8 +485,8 @@ def advance_to_month(db: Session, user_id: int, new_month: SimMonth) -> None:
         return
     prev = db.scalar(select(EconomyState).where(
         EconomyState.user_id == user_id, EconomyState.ref_month < ref).order_by(EconomyState.ref_month.desc()).limit(1))
-    seed = g.seed
-    # 2) fim de eventos e decisão automática dos pendentes
+    seed, params = g.seed, sim_params(db, user_id)
+    # 1) fim de eventos e decisão automática dos pendentes
     for ev in db.scalars(select(WorldEvent).where(WorldEvent.user_id == user_id, WorldEvent.status != "ENDED")):
         if ev.status == "PENDING" and ev.start_month < ref:
             default = next(o for o in E.CATALOG_BY_KEY[ev.key].options if o.default)
@@ -412,30 +494,21 @@ def advance_to_month(db: Session, user_id: int, new_month: SimMonth) -> None:
         if ev.status == "ACTIVE" and ev.end_month < ref:
             ev.status = "ENDED"
     db.flush()
-    # 1) condições (processo latente)
-    lat = dict(prev.monthly_changes["_latent"]) if prev else dict(E.INITIAL)
-    n = lambda name: hash01(seed, name, ref.isoformat()) * 2 - 1                  # noqa: E731
-    lat["growth"] = 0.85 * lat["growth"] + 0.15 * 2.0 + 0.6 * n("g")
-    lat["inflation"] = 0.88 * lat["inflation"] + 0.12 * 4.5 + 0.25 * n("i") + 0.03 * (lat["demand"] - 100)
-    lat["unemployment"] = lat["unemployment"] - 0.12 * (lat["growth"] - 2) + 0.05 * (8 - lat["unemployment"]) + 0.15 * n("u")
-    lat["interest"] = 0.9 * lat["interest"] + 0.1 * (10.5 + (lat["inflation"] - 4.5)) + 0.1 * n("r")
-    lat["confidence"] = _clamp(0.7 * lat["confidence"] + 0.3 * (55 + 6 * (lat["growth"] - 2) - 3 * (lat["unemployment"] - 8)
-                                                                  - 2 * (lat["inflation"] - 4.5)) + 2 * n("c"), 0, 100)
-    lat["demand"] = 100 + 4 * (lat["growth"] - 2) - 1.5 * (lat["unemployment"] - 8) + 0.1 * (lat["confidence"] - 55)
-    for k, (lo, hi) in RANGES.items():
-        lat[k] = _clamp(lat[k], lo, hi)
-    # 3) novos eventos (condições usam o estado já com os eventos ainda ativos)
-    macro_now = {k: _clamp(lat[k] + _offsets(active_events(db, user_id, ref))[0][k], *RANGES[k]) for k in RANGES}
-    _spawn(db, user_id, ref, seed, macro_now)
-    # 4) índices de preços
-    offs, price_pp = _offsets(active_events(db, user_id, ref))
-    infl = _clamp(lat["inflation"] + offs["inflation"], *RANGES["inflation"])
-    changes = {}
-    for cat in E.PRICE_CATEGORIES:
-        beta, vol = E.BETA[cat]
-        noise = hash01(seed, "cat", cat, ref.isoformat()) * 2 - 1
-        changes[cat] = infl / 12 * beta + 0.25 * vol * noise + price_pp.get(cat, 0.0)
-    _new_state(db, user_id, ref, lat, prev, offs, changes)
-    # 5) recorrências indexadas  6) itens gerados por eventos
+    ws = ws_of(prev) if prev else engine_world.initial_world()
+    # 2) novos eventos aleatórios (probabilidade condicionada ao estado econômico atual)
+    _spawn(db, user_id, ref, seed, _macro_view(ws), params.event_frequency)
+    shocks = _event_shocks(active_events(db, user_id, ref))
+    # 3) motor: crises, regimes, macro, inflação por categoria, câmbio, crédito e fatores de mercado
+    ws2, info = engine_world.step(ws, seed, f"{ref.year:04d}-{ref.month:02d}", params, shocks)
+    st = _persist_state(db, user_id, ref, ws2, info)
+    _persist_crises(db, user_id, ws2, ref)
+    # 4) preços dos ativos já em uso e relógio da requisição
+    from backend.core.clock import get_clock
+    from backend.services import sim_market
+    sim_market.roll_forward(db, user_id, st, seed)
+    clock = get_clock()
+    if clock is not None and clock.kind == "SIMULATED" and getattr(clock, "world", None) is not None:
+        clock.world.advance(ref, D(str(round(ws2.macro["fx"], 4))))
+    # 5) recorrências indexadas e itens do orçamento gerados por eventos
     _apply_indexation(db, user_id, ref)
     sync_month(db, user_id, new_month)

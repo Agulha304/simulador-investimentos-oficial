@@ -19,6 +19,8 @@ class MarketClock:
     quote_fn: Callable                          # asset -> Quote (moeda do ativo)
     fx_fn: Callable | None = None               # Currency -> Decimal (taxa para BRL)
     history_fn: Callable | None = None          # (asset, period) -> list[Candle]
+    index_fn: Callable | None = None            # (daily, monthly) -> injeta CDI/IPCA simulados nos índices
+    world: object | None = None                 # estado mutável do mundo simulado (avança dentro da requisição)
 
 
 _clock: ContextVar[MarketClock | None] = ContextVar("market_clock", default=None)
