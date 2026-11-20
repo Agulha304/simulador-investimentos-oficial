@@ -2,13 +2,14 @@
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
+from backend.dependencies import game_clock
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.config import get_settings
 from backend.core.logging import setup_logging
 from backend.database import SessionLocal, check_connection
-from backend.routers import assets, auth, budget, companies, distributions, economy, engagement, fixed_income, goods, health, life, media, portfolio, progress, trades
+from backend.routers import assets, auth, budget, companies, distributions, economy, engagement, fixed_income, games, goods, health, life, media, portfolio, progress, trades
 from backend.core.dates import today_br
 from backend.services import fixed_income_catalog, index_data
 from backend.services.asset_catalog import seed_assets
@@ -41,6 +42,7 @@ app = FastAPI(
     description="Simulador educacional — nenhuma operação envolve dinheiro real.",
     version="0.9.0",
     lifespan=lifespan,
+    dependencies=[Depends(game_clock)],
 )
 app.add_middleware(
     CORSMiddleware,
@@ -63,6 +65,7 @@ app.include_router(budget.router, prefix=API_PREFIX)
 app.include_router(goods.router, prefix=API_PREFIX)
 app.include_router(companies.router, prefix=API_PREFIX)
 app.include_router(life.router, prefix=API_PREFIX)
+app.include_router(games.router, prefix=API_PREFIX)
 app.include_router(economy.router, prefix=API_PREFIX)
 app.include_router(progress.game_router, prefix=API_PREFIX)
 app.include_router(progress.router, prefix=API_PREFIX)

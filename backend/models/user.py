@@ -15,6 +15,7 @@ class User(Base):
     password_hash: Mapped[str] = mapped_column(String(255))
     ranking_nickname: Mapped[str | None] = mapped_column(String(24))          # apelido público no ranking
     show_in_ranking: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    is_game_world: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")   # usuário-sombra de uma partida
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     portfolio: Mapped["Portfolio"] = relationship(back_populates="user", uselist=False)  # noqa: F821

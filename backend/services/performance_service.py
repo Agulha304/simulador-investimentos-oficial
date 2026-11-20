@@ -78,7 +78,8 @@ def ensure_recent_snapshot(db: Session, portfolio: Portfolio, max_age: timedelta
 
 def snapshot_all(db: Session) -> int:
     n = 0
-    for pid in db.scalars(select(Portfolio.id)).all():
+    from backend.models import User
+    for pid in db.scalars(select(Portfolio.id).join(User, User.id == Portfolio.user_id).where(User.is_game_world.is_(False))).all():
         try:
             if take_snapshot(db, portfolio_service.load_portfolio(db, pid)):
                 n += 1
@@ -345,6 +346,18 @@ def insights(stats: dict, tstats: dict, series_n: int, allocation: list[dict], t
 
 # ------------------------------------------------------------------ resposta completa
 
+def _recommended(db: Session, user_id: int, alloc, positions, tstats, sstats, discipline, insights_list) -> list[dict]:
+    from backend.models import LessonProgress, Game
+    from backend.services import lesson_recommender
+    # aulas são da CONTA: dentro de uma partida, o progresso vem da conta dona do mundo
+    account_id = db.scalar(select(Game.account_id).where(Game.world_user_id == user_id)) or user_id
+    done = set(db.scalars(select(LessonProgress.lesson_id).where(
+        LessonProgress.user_id == account_id, LessonProgress.completed_at.is_not(None))))
+    return lesson_recommender.recommend(allocation=alloc, positions=positions, tstats=tstats, stats=sstats,
+                                        max_dd=sstats["max_drawdown_pct"], discipline_pct=discipline,
+                                        insights=insights_list, completed=done)
+
+
 def build_performance(db: Session, user_id: int, portfolio_id: int, range_key: str, now: datetime | None = None) -> dict:
     now = now or datetime.now(UTC)
     portfolio = portfolio_service.load_portfolio(db, portfolio_id)
@@ -374,6 +387,7 @@ def build_performance(db: Session, user_id: int, portfolio_id: int, range_key: s
 
     market = [p for p in positions if p["market"]]
     discipline = _pct(D(sum(1 for p in market if p["protected"])), D(len(market))) if market else None
+    insights_list = insights(sstats, tstats, len(series), alloc, top, positions, sstats["max_drawdown_pct"])
     return {
         "range": range_key, "series": series, "series_stats": sstats,
         "summary": {
@@ -386,4 +400,5 @@ def build_performance(db: Session, user_id: int, portfolio_id: int, range_key: s
         "achievements": achievements(db, user_id, portfolio, txs, positions,
                                      sum(1 for x in alloc if x["label"] != "Caixa"), total_return, beat),
         "insights": insights(sstats, tstats, len(series), alloc, top, positions, sstats["max_drawdown_pct"]),
+        "recommended_lessons": _recommended(db, user_id, alloc, positions, tstats, sstats, discipline, insights_list),
     }

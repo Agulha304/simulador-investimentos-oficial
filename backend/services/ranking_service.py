@@ -10,7 +10,7 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from backend.models import Portfolio, PortfolioSnapshot, User
+from backend.models import Game, Portfolio, PortfolioSnapshot, User
 
 D = Decimal
 PERIOD_DAYS = {"all": None, "30d": 30, "7d": 7}
@@ -64,15 +64,35 @@ def compute(db: Session, board: str, period: str, me_user_id: int, limit: int = 
     days = PERIOD_DAYS[period]
     baseline = _baseline(db, now - timedelta(days=days)) if days else {}
     users = {p.id: u for p, u in db.execute(select(Portfolio, User).join(User, User.id == Portfolio.user_id)).all()}
+    # mundos de partida contam para a CONTA dona: vida completa no ranking de patrimônio, treino no de rentabilidade
+    worlds = {g.world_user_id: g for g in db.scalars(select(Game).where(Game.status == "ACTIVE"))}
+    owners = {u.id: u for u in db.scalars(select(User).where(User.id.in_({g.account_id for g in worlds.values()})))} if worlds else {}
+    has_games = {g.account_id for g in worlds.values()}
+    want = "LIFE" if board == "wealth" else "TRAINING"
 
     rows: list[Row] = []
     for pid, snap in latest.items():
         user = users.get(pid)
         if user is None:
             continue
+        if user.is_game_world:
+            g = worlds.get(user.id)
+            if g is None or g.kind != want:
+                continue
+            owner = owners[g.account_id]
+        else:
+            if user.id in has_games:          # quem joga partidas é ranqueado por elas, não pela carteira antiga
+                continue
+            owner = user
         start = baseline.get(pid, snap.initial_brl) if days else snap.initial_brl
         gain = snap.wealth_brl - start
-        rows.append(Row(user, snap.wealth_brl, gain, (gain / start * 100).quantize(D("0.01")) if start else D("0.00")))
+        rows.append(Row(owner, snap.wealth_brl, gain, (gain / start * 100).quantize(D("0.01")) if start else D("0.00")))
+    best: dict[int, Row] = {}                  # um resultado por conta: o melhor
+    for r in rows:
+        cur = best.get(r.user.id)
+        if cur is None or (r.wealth if board == "wealth" else r.ret) > (cur.wealth if board == "wealth" else cur.ret):
+            best[r.user.id] = r
+    rows = list(best.values())
 
     visible = [r for r in rows if r.user.show_in_ranking]
     key = (lambda r: (-r.wealth, r.user.id)) if board == "wealth" else (lambda r: (-r.ret, -r.wealth, r.user.id))

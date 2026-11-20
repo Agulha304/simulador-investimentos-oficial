@@ -13,6 +13,7 @@ from typing import Protocol
 
 import httpx
 
+from backend.core.clock import get_clock
 from backend.core.money import quantize_price, to_decimal
 from backend.models import Asset, Currency
 
@@ -217,6 +218,9 @@ def _cached_quote(provider_symbol: str, ttl: float) -> Quote:
 
 
 def get_quote(asset: Asset) -> Quote:
+    clock = get_clock()
+    if clock is not None:                       # partida: preço da data simulada/histórica
+        return clock.quote_fn(asset)
     return _cached_quote(asset.provider_symbol, QUOTE_TTL)
 
 
@@ -224,6 +228,9 @@ def get_fx_rate(currency: Currency) -> Decimal:
     """Taxa moeda -> BRL."""
     if currency == Currency.BRL:
         return Decimal("1")
+    clock = get_clock()
+    if clock is not None and clock.fx_fn is not None:
+        return clock.fx_fn(currency)
     symbol = FX_SYMBOLS.get(currency)
     if symbol is None:
         raise MarketDataUnavailable(f"sem câmbio para {currency}")
@@ -253,6 +260,9 @@ def get_history(asset: Asset, period: str) -> list[Candle]:
     """Candles OHLCV na moeda do ativo. Cache curto (intraday) ou longo (diário+)."""
     if period not in HISTORY_RANGES:
         raise ValueError(f"período inválido: {period}")
+    clock = get_clock()
+    if clock is not None and clock.history_fn is not None:
+        return clock.history_fn(asset, period)
     ttl = 60.0 if period in INTRADAY_RANGES else 900.0
     key, now = (asset.provider_symbol, period), time.monotonic()
     with _lock:

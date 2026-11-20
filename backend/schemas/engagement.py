@@ -100,6 +100,13 @@ class Insight(BaseModel):
     lesson_id: str | None = None
 
 
+class LessonTip(BaseModel):
+    lesson_id: str
+    title: str
+    reason: str
+    review: bool = False
+
+
 class PerformanceOut(BaseModel):
     range: str
     series: list[SeriesPoint]
@@ -111,6 +118,7 @@ class PerformanceOut(BaseModel):
     realized_cumulative: list[CumulativePoint]
     achievements: list[Achievement]
     insights: list[Insight]
+    recommended_lessons: list[LessonTip] = []
 
 
 # ------------------------------------------------------------------ ranking
