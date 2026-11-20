@@ -371,16 +371,34 @@ def validate_free_config(cash: Decimal, salary: Decimal, expenses: list[P.Expens
         raise FinanceError("o aluguel consome mais de 70% da renda sem caixa para sustentá-lo: reduza o aluguel ou aumente o caixa")
 
 
+def R_hash(*parts):
+    from backend.services.life_rules import hash01
+    return hash01(*parts)
+
+
 def start_game(db: Session, user_id: int, *, mode: str, scenario_key: str | None = None, seed: int | None = None,
                name: str = "Você", free: dict | None = None, economy: dict | None = None, sim: dict | None = None,
                gender: str | None = None, interested_in: str | None = None, career_field: str | None = None, age_override: int | None = None) -> dict:
     if mode not in P.MODES:
-        raise FinanceError("modo inválido (use FREE ou CAREER)")
+        raise FinanceError("modo inválido (use FREE, CAREER ou RANKED)")
     month = budget_service.ensure_setup(db, user_id)
     if not _fresh(db, user_id, month):
         raise ConflictError("esta conta já tem movimentação: só é possível iniciar uma partida em uma conta nova")
     free = free or {}
-    if mode == "CAREER":
+    ranked_job = None
+    if mode == "RANKED":
+        # modo ranqueado: 18 anos, R$ 1.800/mês num subemprego, o mesmo ponto de partida para todos
+        from backend.services import career_hub_rules as H0
+        scenario_key, sc = None, None
+        cash, salary, age = D("1500"), D("1800"), 18
+        expenses = [P.Expense("Alimentação", "Alimentação", 420, "alimentacao"), P.Expense("Transporte", "Transporte", 180, "transporte"),
+                    P.Expense("Contas domésticas", "Contas domésticas", 120, "energia"), P.Expense("Outros", "Outras despesas", 180),
+                    P.Expense("Moradia", "Aluguel", 550)]
+        goals = []
+        init_econ = dict(economy or {})
+        age_override = None
+        ranked_job = (career_field or "comercio", H0.LADDER)
+    elif mode == "CAREER":
         sc = P.SCENARIOS.get(scenario_key or "")
         if sc is None:
             raise FinanceError("escolha um cenário válido")
@@ -431,6 +449,10 @@ def start_game(db: Session, user_id: int, *, mode: str, scenario_key: str | None
             economy_service.set_indexation(db, user_id, bi.recurring_item_id, "MONTHLY", e.index)
     life_service.create_character(db, user_id, name=name, age_years=age, gender=gender, interested_in=interested_in)
     life_service.set_initial_field(db, user_id, month, career_field)
+    if ranked_job:
+        from backend.services import career_hub
+        titles = ranked_job[1][career_field][0]
+        career_hub.ensure_jobs(db, user_id, month, title=titles[int(R_hash("ranked-job", user_id, seed) * len(titles))])
     rent_amount = next((D(e.amount) for e in expenses if e.category == "Moradia" and e.name == "Aluguel"), None)
     if rent_amount:
         prof0 = life_service.get_profile(db, user_id)

@@ -10,7 +10,7 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from backend.models import Game, Portfolio, PortfolioSnapshot, User
+from backend.models import Game, GameProfile, Portfolio, PortfolioSnapshot, User
 
 D = Decimal
 PERIOD_DAYS = {"all": None, "30d": 30, "7d": 7}
@@ -69,6 +69,7 @@ def compute(db: Session, board: str, period: str, me_user_id: int, limit: int = 
     owners = {u.id: u for u in db.scalars(select(User).where(User.id.in_({g.account_id for g in worlds.values()})))} if worlds else {}
     has_games = {g.account_id for g in worlds.values()}
     want = "LIFE" if board == "wealth" else "TRAINING"
+    ranked = {gp.user_id for gp in db.scalars(select(GameProfile).where(GameProfile.mode == "RANKED"))}      # só o modo ranqueado entra no ranking de patrimônio
 
     rows: list[Row] = []
     for pid, snap in latest.items():
@@ -77,7 +78,7 @@ def compute(db: Session, board: str, period: str, me_user_id: int, limit: int = 
             continue
         if user.is_game_world:
             g = worlds.get(user.id)
-            if g is None or g.kind != want:
+            if g is None or g.kind != want or (want == "LIFE" and user.id not in ranked):
                 continue
             owner = owners[g.account_id]
         else:

@@ -205,8 +205,23 @@ def reputation_factor(reputation: int) -> float:
     return 0.6 + 0.8 * (reputation / 100)
 
 
+PRICE_CEILING = {"REAL_ESTATE_AGENCY": 1.6, "CONSTRUCTION": 1.8, "SUPERMARKET": 1.8, "CAFE": 2.2, "RESTAURANT": 2.4}     # acima disto ninguém compra
+DEFAULT_CEILING = 3.0
+
+
+def price_ceiling(seg: Segment) -> float:
+    return PRICE_CEILING.get(seg.key.value, DEFAULT_CEILING)
+
+
 def price_factor(seg: Segment, price: Decimal) -> float:
-    return min(3.0, max(0.2, (float(seg.price) / float(price)) ** seg.elasticity))
+    """Preço barato vende mais; acima do preço de mercado a demanda despenca e, passando do teto do setor, ninguém compra."""
+    r = float(price) / float(seg.price)
+    if r <= 1:
+        return min(3.0, r ** -seg.elasticity)
+    ceil = price_ceiling(seg)
+    if r >= ceil:
+        return 0.0
+    return (r ** -(seg.elasticity * 1.6)) * (ceil - r) / (ceil - 1)
 
 
 def season_factor(seg: Segment, company_id: int, ref) -> float:

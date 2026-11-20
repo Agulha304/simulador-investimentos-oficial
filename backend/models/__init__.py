@@ -3,6 +3,7 @@ from backend.models.asset import Asset
 from backend.models.budget import (
     BudgetCategory, BudgetItem, FinanceAccount, LedgerEntry, RecurringItem, RecurringItemVersion, SimMonth,
 )
+from backend.models.career import CareerJob, Education, Gig, JobApplication
 from backend.models.chart_layout import ChartLayout
 from backend.models.company import (
     CompanyPartner, PartnerInvite,
@@ -33,7 +34,7 @@ from backend.models.transaction import Transaction
 from backend.models.user import User
 
 __all__ = [
-    "InvestorProfile",    "PersonalLoan", "PersonalLoanInstallment",    "CompanyPartner", "PartnerInvite",    "ShortStayMonth",    "AccountCategory", "Game",
+    "CareerJob", "Education", "Gig", "JobApplication",    "InvestorProfile",    "PersonalLoan", "PersonalLoanInstallment",    "CompanyPartner", "PartnerInvite",    "ShortStayMonth",    "AccountCategory", "Game",
     "Achievement", "Goal", "MonthReport",
     "EconomicCrisis", "EconomyState", "GameProfile", "SimPrice", "WorldEvent",
     "Child", "LifeLog", "LifeProfile", "Person", "Relationship",

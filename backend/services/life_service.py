@@ -107,7 +107,7 @@ def free_hours(p: LifeProfile) -> int:
 def raw_free_hours(p: LifeProfile) -> int:
     """Horas livres do mês SEM cortar em zero: negativo = você assumiu mais compromissos do que o seu tempo permite."""
     studying = career_rules.FIELDS[p.degree_field]["hours"] if p.degree_field else 0
-    return R.FREE_HOURS[p.work_level] - R.FAMILY_TIME_HOURS[p.family_time] - studying - p.hours_committed
+    return R.FREE_HOURS[p.work_level] - R.FAMILY_TIME_HOURS[p.family_time] - studying - p.hours_committed - (p.career_hours or 0)
 
 
 def set_choices(db: Session, user_id: int, month: SimMonth, **choices: str) -> LifeProfile:
@@ -239,6 +239,10 @@ def _spend(db: Session, user_id: int, month: SimMonth, p: LifeProfile, *, amount
         db, user_id, kind=FlowKind.EXPENSE, amount=amount, description=description, ref_month=month.ref_month,
         entry_date=month.ref_month, category_id=cat.id, origin=EntryOrigin.FAMILY, origin_ref=key_part,
         idempotency_key=f"life:{key_part}:{month.ref_month:%Y-%m}:{p.activity_seq}", source=TransactionSource.USER)
+
+
+def spend_hours(p: LifeProfile, hours: int) -> None:
+    _use_hours(p, hours)
 
 
 def _use_hours(p: LifeProfile, hours: int) -> None:
@@ -697,6 +701,8 @@ def enroll_degree(db: Session, user_id: int, month: SimMonth, field: str) -> Lif
     if len(p.degrees or []) >= career_rules.MAX_DEGREES:
         raise ConflictError("limite de formações atingido")
     p.degree_field, p.degree_progress, p.degree_total = field, 0, f["months"]
+    from backend.services import career_hub
+    career_hub.on_degree_start(db, p, field, month.ref_month)
     log(db, user_id, month.ref_month, "DEGREE_START", f"Você começou a faculdade de {f['degree']} ({f['months']} meses)")
     db.flush()
     sync_month(db, user_id, month)
@@ -708,6 +714,8 @@ def drop_degree(db: Session, user_id: int, month: SimMonth) -> LifeProfile:
     p = get_profile(db, user_id, lock=True)
     if not p.degree_field:
         raise ConflictError("você não está cursando faculdade")
+    from backend.services import career_hub
+    career_hub.on_degree_end(db, p, p.degree_field, month.ref_month, False)
     log(db, user_id, month.ref_month, "DEGREE_DROP", f"Você trancou a faculdade de {career_rules.FIELDS[p.degree_field]['degree']}")
     p.degree_field, p.degree_progress, p.degree_total = None, 0, 0
     db.flush()
@@ -849,6 +857,10 @@ def sync_month(db: Session, user_id: int, month: SimMonth) -> None:
         elif salary > 0:
             want("life:work_adjust", "Renda a menos (jornada reduzida)", FlowKind.EXPENSE, "Outros", salary * abs(pct) / 100)
 
+    from backend.services import career_hub
+    career_hub.ensure_jobs(db, user_id, month)
+    career_hub.desired_items(db, user_id, ref, want)
+
     shared_total = ZERO
     if p.housing_kind != "EXISTING" and p.housing_cost > 0:
         amt = scale("moradia", p.housing_cost)
@@ -962,9 +974,13 @@ def process_month(db: Session, user_id: int, month: SimMonth) -> None:
         if p.degree_progress >= p.degree_total:
             f = career_rules.FIELDS[p.degree_field]
             p.degrees = list(p.degrees or []) + [p.degree_field]
+            from backend.services import career_hub
+            career_hub.on_degree_end(db, p, p.degree_field, ref, True)
             p.satisfaction = _clamp(p.satisfaction + 8)
             log(db, user_id, ref, "GRADUATED", f"Você se formou em {f['degree']}! Agora pode mudar de área e ganhar mais.")
             p.degree_field, p.degree_progress, p.degree_total = None, 0, 0
+    from backend.services import career_hub
+    career_hub.process_month(db, p, ref)
     _world_mood(db, p, ref)
     if p.degree_field and R.hash01("classmate", p.user_id, ref.isoformat()) < 0.30:           # na faculdade você conhece gente nova
         meet_person(db, p, ref, where=f"na faculdade de {career_rules.FIELDS[p.degree_field]['degree']}", interest="estudos")

@@ -6,7 +6,7 @@ Valores em R$ de referência. `index` em despesas = categoria de preços para re
 """
 from dataclasses import dataclass, field
 
-MODES = ("FREE", "CAREER")
+MODES = ("FREE", "CAREER", "RANKED")
 
 
 @dataclass(frozen=True)
