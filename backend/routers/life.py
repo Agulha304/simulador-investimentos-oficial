@@ -231,6 +231,12 @@ def housing_search(body: HousingSearchIn, user: CurrentUser, db: DbSession):
     return _run(db, lambda: ls.search_housing(db, user.id, bs.ensure_setup(db, user.id), body.budget))
 
 
+@router.get("/budget-impact")
+def budget_impact(user: CurrentUser, db: DbSession):
+    """Prévia ao vivo: como o orçamento do mês afeta saúde, bem-estar, satisfação e qualidade de vida."""
+    return _run(db, lambda: ls.budget_impact(db, user.id, bs.ensure_setup(db, user.id)))
+
+
 @router.post("/move")
 def move(body: MoveIn, user: CurrentUser, db: DbSession):
     def go():

@@ -223,3 +223,26 @@ STORIES = {
 
 FAMILY_LABEL = {"MOTHER": "Mãe", "FATHER": "Pai", "BROTHER": "Irmão", "SISTER": "Irmã"}
 SIBLING_COUNT_WEIGHTS = ((0, 20), (1, 40), (2, 28), (3, 12))        # ter irmãos ou não é sorteado
+
+
+# ---------------------------------------------------------------- o orçamento do mês muda quem você é
+# categoria: (alvo = % da renda considerada "adequada", faixas {baixo: <X do alvo, bom: >=X, ótimo: >=X}, efeitos por faixa, texto)
+BUDGET_RULES = {
+    "Saúde": dict(target=0.06, low=0.5, good=1.0, great=1.8, text="plano de saúde, consultas e remédios",
+                  fx={"low": dict(health=-1), "good": dict(health=+1), "great": dict(health=+2, wellbeing=+1)}),
+    "Alimentação": dict(target=0.18, low=0.6, good=1.0, great=1.5, text="comida de qualidade",
+                        fx={"low": dict(health=-1, wellbeing=-1), "good": dict(health=+1), "great": dict(health=+1, wellbeing=+1)}),
+    "Lazer": dict(target=0.06, low=0.3, good=1.0, great=2.0, text="diversão, passeios e descanso",
+                  fx={"low": dict(wellbeing=-1, satisfaction=-1), "good": dict(wellbeing=+1, satisfaction=+1), "great": dict(wellbeing=+2, satisfaction=+1)}),
+    "Educação": dict(target=0.03, low=0.0, good=1.0, great=2.0, text="cursos e estudos",
+                     fx={"good": dict(quality=+1), "great": dict(quality=+1, satisfaction=+1)}),
+    "Vestuário": dict(target=0.04, low=0.3, good=99, great=99, text="roupas e cuidados pessoais",
+                      fx={"low": dict(satisfaction=-1)}),
+    "Transporte": dict(target=0.10, low=0.4, good=99, great=99, text="deslocamento confortável",
+                       fx={"low": dict(wellbeing=-1)}),
+}
+EXCESS_RULES = {   # categorias que, em excesso, apertam a vida: (limite % da renda, nível 2, efeito)
+    "Moradia": (0.40, 0.55, "a moradia consome boa parte da renda"),
+    "Dívidas": (0.20, 0.35, "parcelas de dívidas pesam no orçamento"),
+}
+LEVEL_TEXT = {"low": "abaixo do que seria adequado", "good": "num nível adequado", "great": "bem acima do mínimo (ótimo)"}

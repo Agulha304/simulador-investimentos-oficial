@@ -105,7 +105,13 @@ const post = (body: unknown = {}) => ({ method: "POST", body: JSON.stringify(bod
 
 export interface AccountCategory { id: number; kind: "INCOME" | "EXPENSE"; name: string; active: boolean }
 
+export interface BudgetImpact {
+  income: string; savings_rate: number; totals: { health: number; wellbeing: number; satisfaction: number; quality: number };
+  effects: { label: string; text: string; spend: string | null; level: string | null; health: number; wellbeing: number; satisfaction: number; quality: number }[];
+}
+
 export const sim = {
+  budgetImpact: () => request<BudgetImpact>("/life/budget-impact"),
   searchHousing: (budget: string) => request<HousingOffer>("/life/housing/search", post({ budget })),
   investPlan: () => request<InvestPlan>("/invest-plan"),
   investSettings: (b: { profile?: string; wanted?: string[]; alloc?: Record<string, number>; goal_total?: string }) => request<InvestPlan>("/invest-plan", put(b)),

@@ -164,7 +164,7 @@ export interface MonthSummary {
 }
 export interface ClosePreview {
   ref_month: string; next_month: string; income: Decimal; expense: Decimal; invested: Decimal; result: Decimal;
-  carried_balance: Decimal; pending: string[]; shortfall: Decimal; can_close: boolean;
+  carried_balance: Decimal; pending: string[]; shortfall: Decimal; can_close: boolean; overdraft_needed?: Decimal; bankruptcy_risk?: boolean; overdraft_limit?: Decimal;
 }
 export interface BudgetOverview { account: { id: number; name: string; kind: string; balance: Decimal }; month: MonthSummary; close: ClosePreview }
 export interface MonthRow {

@@ -183,10 +183,16 @@ export function CloseModal({ preview, onClose, onClosed }: { preview: ClosePrevi
       {!preview.can_close && (
         <div className="alert">Saldo insuficiente para as despesas recorrentes: faltam {fmtBRL(preview.shortfall)}. Ajuste o orçamento ou adicione saldo antes de fechar.</div>
       )}
+      {preview.can_close && Number(preview.overdraft_needed ?? 0) > 0 && (
+        <div className={preview.bankruptcy_risk ? "alert" : "notice"}>
+          {preview.bankruptcy_risk ? "🚨 " : "💳 "}<b>Você vai fechar o mês no negativo.</b> Faltam {fmtBRL(preview.shortfall)} para pagar as contas: o <b>cheque especial</b> cobre a diferença, com juros altos.
+          {preview.bankruptcy_risk ? <> Isso passa do limite de {fmtBRL(preview.overdraft_limit ?? "100000")} de saldo negativo e leva à <b>FALÊNCIA</b> (fim de jogo).</> : <> Se o saldo negativo passar de {fmtBRL(preview.overdraft_limit ?? "100000")}, você vai à falência. O dinheiro que sobrar nos próximos meses paga o cheque especial primeiro.</>}
+        </div>
+      )}
       {msg && <div className="alert">{msg}</div>}
       <div className="row-gap">
         <button type="button" className="btn ghost" onClick={onClose}>Cancelar</button>
-        <button className="btn primary" disabled={busy || !preview.can_close}>{busy ? "Fechando…" : "Confirmar e avançar o mês"}</button>
+        <button className={`btn ${preview.bankruptcy_risk ? "danger" : "primary"}`} disabled={busy || !preview.can_close}>{busy ? "Fechando…" : Number(preview.overdraft_needed ?? 0) > 0 ? (preview.bankruptcy_risk ? "Avançar mesmo assim (falência)" : "Avançar no negativo") : "Confirmar e avançar o mês"}</button>
       </div>
     </Modal>
   );

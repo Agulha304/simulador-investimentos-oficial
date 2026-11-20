@@ -109,7 +109,7 @@ def _close_out(user_id: int, db: Session, month: SimMonth) -> s.ClosePreviewOut:
         result=quantize_money((sm.realized_income + sm.pending_income - sm.pending_capital_in)
                               - (sm.realized_expense + sm.pending_expense - sm.pending_capital_out)),
         carried_balance=p.carried_balance, pending=[b.name for b in p.pending], shortfall=p.shortfall,
-        can_close=p.can_close)
+        can_close=p.can_close, overdraft_needed=p.overdraft_needed, bankruptcy_risk=p.bankruptcy_risk)
 
 
 def _account_out(db: Session, user_id: int) -> s.AccountOut:

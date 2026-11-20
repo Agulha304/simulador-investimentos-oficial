@@ -37,10 +37,20 @@ class ClosePreview:
     carried_balance: Decimal
     pending: list[BudgetItem]
     shortfall: Decimal            # quanto falta de caixa para pagar as recorrentes pendentes (0 = ok)
+    allow_overdraft: bool = False  # partidas: o saldo negativo (cheque especial) cobre o que faltar, até o limite
+    overdraft_balance: Decimal = Decimal("0.00")
 
     @property
     def can_close(self) -> bool:
-        return self.shortfall == 0
+        return self.shortfall == 0 or self.allow_overdraft
+
+    @property
+    def overdraft_needed(self) -> Decimal:
+        return self.shortfall if self.allow_overdraft else Decimal("0.00")
+
+    @property
+    def bankruptcy_risk(self) -> bool:
+        return self.allow_overdraft and self.overdraft_balance + self.shortfall > debt_service.OVERDRAFT_LIMIT
 
 
 def _origin_of(source_key: str) -> EntryOrigin:
@@ -73,8 +83,10 @@ def preview_close(db: Session, user_id: int, month: SimMonth) -> ClosePreview:
     # Receitas entram antes das despesas; o pior ponto do caixa é depois de todas as despesas.
     cash = summary.balance + summary.pending_income
     shortfall = max(Decimal("0.00"), quantize_money(summary.pending_expense - cash))
+    allow = debt_service.is_world(db, user_id) and debt_service.ended(db, user_id) is None
+    od = debt_service.get_overdraft(db, user_id, month.ref_month, create=False) if allow else None
     return ClosePreview(summary, budget_service.shift_month(month.ref_month, 1),
-                        summary.projected_closing_balance, pending, shortfall)
+                        summary.projected_closing_balance, pending, shortfall, allow, od.balance if od else Decimal("0.00"))
 
 
 def close_month(db: Session, user_id: int, ref_month: date) -> SimMonth:

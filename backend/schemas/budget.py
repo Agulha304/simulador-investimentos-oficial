@@ -141,6 +141,9 @@ class ClosePreviewOut(BaseModel):
     pending: list[str]               # nomes dos itens que serão lançados no fechamento
     shortfall: Decimal
     can_close: bool
+    overdraft_needed: Decimal = Decimal("0.00")      # partidas: quanto vai para o saldo negativo (cheque especial)
+    bankruptcy_risk: bool = False                  # o saldo negativo passaria do limite: falência
+    overdraft_limit: Decimal = Decimal("100000.00")
 
 
 class OverviewOut(BaseModel):

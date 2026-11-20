@@ -465,3 +465,67 @@ def test_extra_purchase_costs_are_gone(client, auth_headers):
     assert r.status_code == 201
     d = client.get(f"/api/goods/{r.json()['good']['id']}", headers=auth_headers).json()
     assert D(d["good"]["acquisition_cost"]) == D(d["good"]["purchase_price"])                      # sem custos inventados (violão: só o preço)
+
+
+# ------------------------------------------------------------------ fechar o mês no negativo e o orçamento que muda os atributos
+
+def test_month_can_be_closed_in_the_red_in_a_game_but_warns(client, auth_headers):
+    g, h = _free_world(client, auth_headers, cash=1000, income=2000, expenses=1500, rent=0, name="No vermelho")
+    client.post(f"{B}/items", headers=h, json={"name": "Conta grande", "kind": "EXPENSE", "category_id": cat_id(client, h, "Outros"),
+                                               "planned_amount": "9000", "recurring": True, "end_month": _cur(client, h)})
+    pv = client.get(f"{B}/overview", headers=h).json()["close"]
+    assert D(pv["shortfall"]) > 0 and pv["can_close"] is True and D(pv["overdraft_needed"]) == D(pv["shortfall"]) and pv["bankruptcy_risk"] is False
+    assert _advance_ok(client, h)
+    assert D(client.get(DEBT, headers=h).json()["overdraft"]) > 0 and _game(client, h)["ended"] is None
+    client.post(f"{B}/items", headers=h, json={"name": "Conta gigante", "kind": "EXPENSE", "category_id": cat_id(client, h, "Outros"),
+                                               "planned_amount": "250000", "recurring": True, "end_month": _cur(client, h)})
+    pv2 = client.get(f"{B}/overview", headers=h).json()["close"]
+    assert pv2["can_close"] is True and pv2["bankruptcy_risk"] is True                               # a tela avisa da falência
+
+
+def test_old_accounts_still_cannot_close_without_money(client, auth_headers):
+    cid = cat_id(client, auth_headers, "Moradia")
+    client.post(f"{B}/items", headers=auth_headers, json={"name": "Aluguel", "kind": "EXPENSE", "category_id": cid, "planned_amount": "500000", "recurring": True})
+    pv = client.get(f"{B}/overview", headers=auth_headers).json()["close"]
+    assert pv["can_close"] is False and D(pv["overdraft_needed"]) == 0
+
+
+def _attrs(client, h):
+    return client.get(L, headers=h).json()["attributes"]
+
+
+def test_budget_choices_change_the_attributes(client, auth_headers):
+    credit(client, auth_headers, "900000")
+    caring = _free_world(client, auth_headers, cash=40000, income=6000, expenses=0, rent=0, name="Cuida", seed=3)[1]
+    stingy = _free_world(client, auth_headers, cash=40000, income=6000, expenses=0, rent=0, name="Mão de vaca", seed=3)[1]
+    for h, vals in ((caring, {"Saúde": 500, "Alimentação": 1300, "Lazer": 500, "Educação": 250}), (stingy, {"Saúde": 10, "Alimentação": 150, "Lazer": 10, "Outros": 3000})):
+        for cat, v in vals.items():
+            client.post(f"{B}/items", headers=h, json={"name": cat, "kind": "EXPENSE", "category_id": cat_id(client, h, cat), "planned_amount": str(v), "recurring": True})
+    a = client.get(f"{L}/budget-impact", headers=caring).json()
+    b = client.get(f"{L}/budget-impact", headers=stingy).json()
+    assert a["totals"]["health"] > b["totals"]["health"] and a["totals"]["wellbeing"] > b["totals"]["wellbeing"] and a["totals"]["satisfaction"] > b["totals"]["satisfaction"]
+    assert a["totals"]["quality"] >= 1                                                             # estudo melhora a qualidade de vida
+    labels_b = {e["label"] for e in b["effects"]}
+    assert {"Saúde", "Alimentação", "Lazer"} <= labels_b and all(e["level"] == "low" for e in b["effects"] if e["label"] in ("Saúde", "Alimentação", "Lazer"))
+    start = (_attrs(client, caring), _attrs(client, stingy))
+    for h in (caring, stingy):
+        _advance(client, h, 4)
+    end = (_attrs(client, caring), _attrs(client, stingy))
+    dh = (end[0]["health"] - start[0]["health"], end[1]["health"] - start[1]["health"])
+    dw = (end[0]["wellbeing"] - start[0]["wellbeing"], end[1]["wellbeing"] - start[1]["wellbeing"])
+    assert dh[0] > dh[1] and dw[0] > dw[1]                                                         # o orçamento mudou quem a pessoa é
+
+
+def test_changing_the_budget_changes_the_preview_right_away(client, auth_headers):
+    g, h = _free_world(client, auth_headers, cash=40000, income=6000, expenses=0, rent=0, name="Prévia", seed=4)
+    assert client.get(f"{L}/budget-impact", headers=h).json()["effects"] == []                     # sem orçamento, sem efeito
+    r = client.post(f"{B}/items", headers=h, json={"name": "Lazer", "kind": "EXPENSE", "category_id": cat_id(client, h, "Lazer"), "planned_amount": "600", "recurring": True})
+    j = client.get(f"{L}/budget-impact", headers=h).json()
+    lazer = next(e for e in j["effects"] if e["label"] == "Lazer")
+    assert lazer["level"] in ("good", "great") and lazer["wellbeing"] > 0
+    item = next(i for i in r.json()["items"] if i["name"] == "Lazer")
+    client.patch(f"{B}/items/{item['id']}", headers=h, json={"planned_amount": "5"})
+    j2 = client.get(f"{L}/budget-impact", headers=h).json()
+    assert next(e for e in j2["effects"] if e["label"] == "Lazer")["wellbeing"] < 0                 # cortar o lazer pesa no bem-estar
+    client.post(f"{B}/items", headers=h, json={"name": "Dívida", "kind": "EXPENSE", "category_id": cat_id(client, h, "Dívidas"), "planned_amount": "2500", "recurring": True})
+    assert any(e["label"] == "Dívidas" and e["wellbeing"] < 0 for e in client.get(f"{L}/budget-impact", headers=h).json()["effects"])

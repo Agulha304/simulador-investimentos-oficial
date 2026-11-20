@@ -28,6 +28,7 @@ from backend.services.finance_ledger import ConflictError, FinanceError, NotFoun
 
 ZERO = Decimal("0.00")
 D_ = Decimal
+D1 = Decimal("1.00")
 
 
 class RelationshipRefused(ConflictError):
@@ -599,6 +600,56 @@ def _world_mood(db: Session, p: LifeProfile, ref: date) -> None:
     _hit_mood(p, int(round(max(-3, min(3, w)))), int(round(max(-2, min(2, sat)))))
 
 
+# ------------------------------------------------------------------ o orçamento do mês muda os atributos
+def budget_impact(db: Session, user_id: int, month: SimMonth) -> dict:
+    """Como as escolhas do orçamento (quanto vai para saúde, lazer, comida, estudo, dívidas, poupança...) afetam quem você é.
+    É o MESMO cálculo aplicado no fechamento do mês; aqui serve de prévia ao vivo."""
+    from backend.models import BudgetCategory, LedgerEntry
+    s = budget_service.summarize(db, user_id, month)
+    cats = {c.id: c.name for c in db.scalars(select(BudgetCategory).where(BudgetCategory.user_id == user_id))}
+    planned: dict[str, Decimal] = {}
+    for bi in db.scalars(select(BudgetItem).where(BudgetItem.month_id == month.id, BudgetItem.kind == FlowKind.EXPENSE, BudgetItem.capital.is_(False))):
+        planned[cats.get(bi.category_id, "Outros")] = planned.get(cats.get(bi.category_id, "Outros"), ZERO) + bi.planned_amount
+    real: dict[str, Decimal] = {}
+    for cid, tot in db.execute(select(LedgerEntry.category_id, func.sum(LedgerEntry.amount)).where(
+            LedgerEntry.user_id == user_id, LedgerEntry.ref_month == month.ref_month, LedgerEntry.kind == FlowKind.EXPENSE,
+            LedgerEntry.capital.is_(False), LedgerEntry.company_id.is_(None)).group_by(LedgerEntry.category_id)):
+        real[cats.get(cid, "Outros")] = tot
+    total_exp = sum((max(planned.get(n, ZERO), real.get(n, ZERO)) for n in set(planned) | set(real)), ZERO)
+    income = max(s.planned_income, s.realized_income, total_exp, D1)           # base de comparação (sem renda, usa o total gasto)
+    out, total = [], {"health": 0, "wellbeing": 0, "satisfaction": 0, "quality": 0}
+    if total_exp <= 0:                                                          # sem orçamento montado, sem efeitos
+        return {"income": str(income), "effects": out, "totals": total, "savings_rate": 0.0}
+
+    def add(label, text, fx, spend=None, level=None):
+        out.append({"label": label, "text": text, "spend": str(spend) if spend is not None else None, "level": level, **{k: fx.get(k, 0) for k in total}})
+        for k in total:
+            total[k] += fx.get(k, 0)
+
+    for name, rule in R.BUDGET_RULES.items():
+        spend = max(planned.get(name, ZERO), real.get(name, ZERO))
+        ratio = float(spend / income) / rule["target"]
+        level = "great" if ratio >= rule["great"] else "good" if ratio >= rule["good"] else "low" if ratio < rule["low"] else None
+        if level and level in rule["fx"]:
+            add(name, f"{name}: {R.LEVEL_TEXT[level]} ({rule['text']}).", rule["fx"][level], spend, level)
+    for name, (lim1, lim2, why) in R.EXCESS_RULES.items():
+        spend = max(planned.get(name, ZERO), real.get(name, ZERO))
+        share = float(spend / income)
+        if share > lim1:
+            add(name, f"{name} ocupa {share * 100:.0f}% da renda: {why}.", dict(wellbeing=-2 if share > lim2 else -1), spend, "high")
+    has_income = max(s.planned_income, s.realized_income) > 0
+    savings = float((s.planned_income - s.planned_expense) / income) if has_income else 0.0
+    if not has_income:
+        pass
+    elif savings >= 0.20:
+        add("Poupança", f"Você poupa {savings * 100:.0f}% da renda: segurança e tranquilidade.", dict(satisfaction=+1, wellbeing=+1))
+    elif savings < 0:
+        add("Poupança", "As despesas passam da renda do mês: o estresse com dinheiro pesa.", dict(satisfaction=-1, wellbeing=-1))
+    if has_income and float(month.planned_investment / income) >= 0.10:
+        add("Investimentos", "Você separa 10% ou mais da renda para investir: confiança no futuro.", dict(satisfaction=+1))
+    return {"income": str(income), "effects": out, "totals": total, "savings_rate": round(savings * 100, 1)}
+
+
 # ------------------------------------------------------------------ carreira e faculdade
 def _field(key: str) -> dict:
     f = career_rules.FIELDS.get(key)
@@ -850,6 +901,9 @@ def process_month(db: Session, user_id: int, month: SimMonth) -> None:
     for fld in R.LEVELS:
         for k in d:
             d[k] += R.LEVELS[fld][getattr(p, fld)].get(k, 0)
+    bud = budget_impact(db, user_id, month)                  # cada escolha do orçamento mexe com os atributos
+    for k in d:
+        d[k] += bud["totals"][k]
     hq, _ = housing_quality(db, p)
     hw, hs, hh = housing_service.monthly_effect(hq)          # onde você mora muda saúde, bem-estar e satisfação
     d["wellbeing"] += hw
