@@ -26,7 +26,6 @@ export function PurchaseModal({ listing, cash, onClose, onBought }: {
   const [down, setDown] = useState(fin ? fin.min_down_payment : "");
   const [term, setTerm] = useState(fin ? String(Math.min(fin.max_term_months, 120)) : "");
   const [system, setSystem] = useState<AmortSystem>("PRICE");
-  const [extra, setExtra] = useState("0");
   const [key] = useState(() => crypto.randomUUID());
   const [sim, setSim] = useState<Simulation | null>(null);
   const [busy, setBusy] = useState(false);
@@ -42,13 +41,13 @@ export function PurchaseModal({ listing, cash, onClose, onBought }: {
     return () => window.clearTimeout(t);
   }, [financed, down, term, system, listing.key, fin]);
 
-  const needed = Number(sim ? sim.cash_needed_now : listing.price) + (sim ? 0 : Number(listing.purchase_fee)) + Number(parseMoneyInput(extra) || 0);
+  const needed = Number(sim ? sim.cash_needed_now : listing.price) + (sim ? 0 : Number(listing.purchase_fee));
   async function submit(e: FormEvent) {
     e.preventDefault();
     setBusy(true); setMsg(null);
     try {
       const g = await api.buyGood({
-        listing_key: listing.key, idempotency_key: key, financed, extra_costs: parseMoneyInput(extra) || "0",
+        listing_key: listing.key, idempotency_key: key, financed,
         ...(financed ? { down_payment: parseMoneyInput(down), term_months: Number(term), system } : {}),
       });
       onBought(g);
@@ -90,7 +89,6 @@ export function PurchaseModal({ listing, cash, onClose, onBought }: {
           )}
         </>
       )}
-      <label>Custos adicionais (R$, opcional)<input inputMode="decimal" value={extra} onChange={(e) => setExtra(e.target.value)} /></label>
       <div className="row"><span className="muted small">Saem do caixa agora</span><b className="num">{fmtBRL(needed.toFixed(2))}</b></div>
       {msg && <div className="alert">{msg}</div>}
       <button className="btn primary" disabled={busy || (financed && !sim)}>{busy ? "Comprando…" : "Confirmar compra"}</button>

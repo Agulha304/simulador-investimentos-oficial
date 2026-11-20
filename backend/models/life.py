@@ -52,6 +52,10 @@ class LifeProfile(Base):
     # moradia: EXISTING = já tratada pelo orçamento/bens; RENT/SHARED/FAMILY_HOME geram o item `family:housing`
     housing_kind: Mapped[str] = mapped_column(String(16), default="EXISTING")
     housing_cost: Mapped[Decimal] = mapped_column(Money(), default=Decimal("0"))
+    housing_quality: Mapped[int] = mapped_column(Integer, default=0, server_default="0")        # -3..+3: condição da moradia atual
+    housing_desc: Mapped[str | None] = mapped_column(String(160))
+    pending_housing_quality: Mapped[int | None] = mapped_column(Integer)
+    pending_housing_desc: Mapped[str | None] = mapped_column(String(160))
     pending_housing_kind: Mapped[str | None] = mapped_column(String(16))
     pending_housing_cost: Mapped[Decimal | None] = mapped_column(Money())
     pending_housing_month: Mapped[date | None] = mapped_column(Date)

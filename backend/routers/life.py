@@ -129,7 +129,7 @@ def _overview(db: Session, user_id: int) -> dict:
                        "free_hours_total": ls.free_hours(p)},
         "choices": {k: getattr(p, k) for k in R.LEVELS},
         "options": {k: list(v) for k, v in R.LEVELS.items()},
-        "housing": {"kind": p.housing_kind, "monthly_cost": str(p.housing_cost),
+        "housing": {"kind": p.housing_kind, "monthly_cost": str(p.housing_cost), "quality": ls.housing_quality(db, p)[0], "description": ls.housing_quality(db, p)[1],
                     "pending": ({"kind": p.pending_housing_kind, "monthly_cost": str(p.pending_housing_cost),
                                  "effective_month": p.pending_housing_month.isoformat()} if p.pending_housing_month else None)},
         "pregnancy_due_month": p.pregnancy_due_month.isoformat() if p.pregnancy_due_month else None,
@@ -219,6 +219,16 @@ def patch_child(child_id: int, body: ChildIn, user: CurrentUser, db: DbSession):
         ls.update_child(db, user.id, bs.ensure_setup(db, user.id), child_id, **body.model_dump())
         return _overview(db, user.id)
     return _run(db, go)
+
+
+class HousingSearchIn(BaseModel):
+    budget: Decimal = Field(gt=0, max_digits=20, decimal_places=2)
+
+
+@router.post("/housing/search")
+def housing_search(body: HousingSearchIn, user: CurrentUser, db: DbSession):
+    """Procura um aluguel pelo valor que você quer pagar: o jogo diz se há oferta e em que condição."""
+    return _run(db, lambda: ls.search_housing(db, user.id, bs.ensure_setup(db, user.id), body.budget))
 
 
 @router.post("/move")

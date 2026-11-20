@@ -23,7 +23,6 @@ class PurchaseIn(BaseModel):
     term_months: int = Field(0, ge=0, le=480)
     system: AmortizationSystem = AmortizationSystem.PRICE
     annual_rate_pct: Decimal | None = Field(None, ge=0, le=100, max_digits=8, decimal_places=4)
-    extra_costs: Decimal = Field(Decimal("0"), ge=0, max_digits=20, decimal_places=2)
     usage_km_month: int | None = Field(None, ge=0, le=20000)
 
 

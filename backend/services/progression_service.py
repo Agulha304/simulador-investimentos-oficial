@@ -16,7 +16,7 @@ from backend.models import (
     LoanStatus, MonthReport, MonthStatus, Person, Portfolio, REAL_ESTATE, Relationship, SimMonth, Transaction,
     TransactionSource, TransactionType, WorldEvent,
 )
-from backend.services import budget_service, debt_service, economy_service, finance_ledger, ledger_service, life_service, portfolio_service, wealth_service
+from backend.services import budget_service, debt_service, economy_service, housing_service, finance_ledger, ledger_service, life_service, portfolio_service, wealth_service
 from backend.services import progression_rules as P
 from backend.services.finance_ledger import ConflictError, FinanceError, NotFoundError
 
@@ -400,6 +400,8 @@ def start_game(db: Session, user_id: int, *, mode: str, scenario_key: str | None
                         P.Expense("Outros", "Outras despesas", int(base_exp * D("0.3")))]
         if rent > 0:
             expenses.append(P.Expense("Moradia", "Aluguel", int(rent)))
+        if 0 < rent < housing_service.MIN_RENT:
+            raise FinanceError(f"não existe imóvel para alugar por R$ {rent}: o aluguel mais barato da região é de cerca de R$ {housing_service.MIN_RENT}")
         validate_free_config(cash, salary, [e for e in expenses if e.category != "Moradia"], rent)
         goals, age = [], int(free.get("age", 28))
         init_econ = dict(economy or {})
@@ -425,6 +427,10 @@ def start_game(db: Session, user_id: int, *, mode: str, scenario_key: str | None
             economy_service.set_indexation(db, user_id, bi.recurring_item_id, "MONTHLY", e.index)
     life_service.create_character(db, user_id, name=name, age_years=age, gender=gender, interested_in=interested_in)
     life_service.set_initial_field(db, user_id, month, career_field)
+    rent_amount = next((D(e.amount) for e in expenses if e.category == "Moradia" and e.name == "Aluguel"), None)
+    if rent_amount:
+        prof0 = life_service.get_profile(db, user_id)
+        prof0.housing_quality, prof0.housing_desc = housing_service.quality_of_rent(rent_amount)
     life_service.create_family(db, user_id, month.ref_month, seed)           # pai, mãe e (por sorteio) irmãos
     if sc and sc.partner:
         _seed_family(db, user_id, month, sc)

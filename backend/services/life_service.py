@@ -22,11 +22,12 @@ from backend.models import (
     BudgetCategory, BudgetItem, Child, EntryOrigin, FlowKind, LedgerEntry, LifeLog, LifeProfile, Person, Portfolio,
     Relationship, SimMonth, TransactionSource,
 )
-from backend.services import budget_service, career_rules, finance_ledger, item_sync, pricing
+from backend.services import budget_service, career_rules, finance_ledger, housing_service, item_sync, pricing
 from backend.services import life_rules as R
 from backend.services.finance_ledger import ConflictError, FinanceError, NotFoundError
 
 ZERO = Decimal("0.00")
+D_ = Decimal
 
 
 class RelationshipRefused(ConflictError):
@@ -708,20 +709,50 @@ def apply_career_changes(db: Session, user_id: int, new_month: SimMonth) -> None
 
 
 # ------------------------------------------------------------------ moradia
+def search_housing(db: Session, user_id: int, month: SimMonth, budget: Decimal) -> dict:
+    """O jogo decide se existe oferta de aluguel para o valor que o jogador quer pagar."""
+    g = economy_service_game(db, user_id)
+    return housing_service.search(g.seed if g else user_id, user_id, month.ref_month, budget)
+
+
+def housing_quality(db: Session, p: LifeProfile) -> tuple[int, str]:
+    """Condição da moradia: imóvel próprio em que você mora (pelo estado e valor) ou a do aluguel escolhido."""
+    from backend.models import Good, GoodStatus, Occupancy, RealEstateDetails
+    row = db.execute(select(Good, RealEstateDetails).join(RealEstateDetails, RealEstateDetails.good_id == Good.id).where(
+        Good.user_id == p.user_id, Good.status == GoodStatus.ACTIVE, RealEstateDetails.occupancy == Occupancy.OWNER_OCCUPIED).limit(1)).first()
+    if row is not None:
+        good, det = row
+        base = {"NEW": 2, "EXCELLENT": 2, "GOOD": 1, "FAIR": 0, "POOR": -1}.get(good.condition.value if good.condition else "GOOD", 1)
+        base += 1 if good.current_value >= Decimal("1500000") else 0
+        base -= 1 if det.area_m2 and det.area_m2 < 30 else 0
+        return max(-3, min(3, base)), f"Seu imóvel próprio: {good.name}"
+    return p.housing_quality, p.housing_desc or ""
+
+
 def move(db: Session, user_id: int, month: SimMonth, *, kind: str, monthly_cost: Decimal) -> LifeProfile:
-    """Agenda a mudança para o PRÓXIMO mês: os custos antigos terminam e os novos começam lá."""
+    """Agenda a mudança para o PRÓXIMO mês: os custos antigos terminam e os novos começam lá.
+    Aluguel (RENT/SHARED): o valor é o que você ESTÁ DISPOSTO a pagar; só existe mudança se o jogo achar uma oferta nessa faixa."""
     budget_service.require_open(month)
     if kind not in R.HOUSING_KINDS:
         raise FinanceError("tipo de moradia inválido")
     monthly_cost = quantize_money(monthly_cost)
+    quality, desc = None, None
     if kind == "EXISTING":
         monthly_cost = ZERO
-    elif monthly_cost <= 0 and kind != "FAMILY_HOME":
-        raise FinanceError("informe o custo mensal da nova moradia")
+    elif kind == "FAMILY_HOME":
+        monthly_cost, quality, desc = (monthly_cost if monthly_cost > 0 else ZERO), 0, "Você mora na casa de familiares."
+    else:
+        if monthly_cost <= 0:
+            raise FinanceError("informe quanto você quer pagar de aluguel")
+        offer = search_housing(db, user_id, month, monthly_cost)
+        if not offer["available"]:
+            raise ConflictError(offer["message"])
+        monthly_cost, quality, desc = D_(offer["rent"]), offer["quality"], f"{offer['title']}: {offer['description']}"
     p = get_profile(db, user_id, lock=True)
     p.pending_housing_kind, p.pending_housing_cost = kind, monthly_cost
+    p.pending_housing_quality, p.pending_housing_desc = quality, (desc[:160] if desc else None)
     p.pending_housing_month = budget_service.shift_month(month.ref_month, 1)
-    log(db, user_id, month.ref_month, "MOVE_PLANNED", f"Mudança de residência agendada para {p.pending_housing_month:%m/%Y}")
+    log(db, user_id, month.ref_month, "MOVE_PLANNED", f"Mudança de residência agendada para {p.pending_housing_month:%m/%Y}" + (f": {desc}" if desc else ""))
     db.flush()
     return p
 
@@ -819,6 +850,11 @@ def process_month(db: Session, user_id: int, month: SimMonth) -> None:
     for fld in R.LEVELS:
         for k in d:
             d[k] += R.LEVELS[fld][getattr(p, fld)].get(k, 0)
+    hq, _ = housing_quality(db, p)
+    hw, hs, hh = housing_service.monthly_effect(hq)          # onde você mora muda saúde, bem-estar e satisfação
+    d["wellbeing"] += hw
+    d["satisfaction"] += hs
+    d["health"] += hh
     if stability < 30:
         d["wellbeing"] -= 2
         d["satisfaction"] -= 1
@@ -832,7 +868,7 @@ def process_month(db: Session, user_id: int, month: SimMonth) -> None:
     p.wellbeing = _clamp(p.wellbeing + d["wellbeing"])
     social_gain = -1 if p.hours_used == 0 else 0
     p.social = _clamp(p.social + social_gain)
-    target_quality = 0.4 * p.wellbeing + 0.3 * p.health + 0.15 * stability + 0.15 * p.social
+    target_quality = 0.4 * p.wellbeing + 0.3 * p.health + 0.15 * stability + 0.15 * p.social + 2 * hq
     p.quality = _clamp(p.quality + max(-3, min(3, target_quality - p.quality)) + d["quality"])
     target_sat = (p.wellbeing + p.quality) / 2
     p.satisfaction = _clamp(p.satisfaction + max(-3, min(3, target_sat - p.satisfaction)) + d["satisfaction"])
@@ -893,6 +929,8 @@ def advance_to_month(db: Session, user_id: int, new_month: SimMonth) -> None:
     ref = new_month.ref_month
     if p.pending_housing_month is not None and p.pending_housing_month <= ref:
         p.housing_kind, p.housing_cost = p.pending_housing_kind, p.pending_housing_cost
+        if p.pending_housing_quality is not None:
+            p.housing_quality, p.housing_desc = p.pending_housing_quality, p.pending_housing_desc
         log(db, user_id, ref, "MOVED", f"Você mudou de residência ({p.housing_kind.lower()}, custo mensal {p.housing_cost})")
         # o custo único da mudança (life:move:<mês>) é gerado em sync_month neste mesmo mês
     if p.pregnancy_due_month is not None and p.pregnancy_due_month <= ref:
@@ -922,7 +960,7 @@ def advance_to_month(db: Session, user_id: int, new_month: SimMonth) -> None:
         _anniversary(db, p, ref)
     sync_month(db, user_id, new_month)
     if p.pending_housing_month is not None and p.pending_housing_month <= ref:
-        p.pending_housing_kind = p.pending_housing_cost = p.pending_housing_month = None
+        p.pending_housing_kind = p.pending_housing_cost = p.pending_housing_month = p.pending_housing_quality = p.pending_housing_desc = None
     db.flush()
 
 

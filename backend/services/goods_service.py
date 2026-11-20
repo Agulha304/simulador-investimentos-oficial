@@ -139,7 +139,7 @@ def simulate_financing(category: GoodCategory, price: Decimal, down_payment: Dec
 def purchase(db: Session, user_id: int, month: SimMonth, *, listing_key: str, purchase_key: str, financed: bool = False,
              down_payment: Decimal | None = None, term_months: int = 0,
              system: AmortizationSystem = AmortizationSystem.PRICE, annual_rate_pct: Decimal | None = None,
-             extra_costs: Decimal = ZERO, usage_km_month: int | None = None, company: Company | None = None) -> Good:
+             usage_km_month: int | None = None, company: Company | None = None) -> Good:
     require_open(month)
     if company is not None and financed:
         raise FinanceError("bens de empresa só podem ser comprados à vista nesta versão (use o empréstimo da empresa)")
@@ -152,13 +152,11 @@ def purchase(db: Session, user_id: int, month: SimMonth, *, listing_key: str, pu
     if db.scalar(select(Good.id).where(Good.user_id == user_id, Good.listing_key == listing_key,
                                        Good.status == GoodStatus.ACTIVE)):
         raise ConflictError("você já possui este bem")
-    if extra_costs < 0:
-        raise FinanceError("custos adicionais não podem ser negativos")
     cat = listing.category
     rule_map = load_rules(db)
     price = market_price(listing, month.ref_month, rule_map)
     tax_total, tax_parts = rules.purchase_fee(cat, price, listing.location)        # ITBI, registro, transferência...
-    fee = tax_total + quantize_money(extra_costs)
+    fee = tax_total                                              # só impostos e taxas oficiais (sem "custos adicionais" inventados)
 
     rate, rows = None, []
     if financed:

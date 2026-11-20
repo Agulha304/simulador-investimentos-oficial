@@ -150,7 +150,7 @@ def purchase(body: s.PurchaseIn, user: CurrentUser, db: DbSession):
         month = bs.ensure_setup(db, user.id)
         g = gs.purchase(db, user.id, month, listing_key=body.listing_key, purchase_key=body.idempotency_key,
                         financed=body.financed, down_payment=body.down_payment, term_months=body.term_months,
-                        system=body.system, annual_rate_pct=body.annual_rate_pct, extra_costs=body.extra_costs,
+                        system=body.system, annual_rate_pct=body.annual_rate_pct,
                         usage_km_month=body.usage_km_month)
         return _detail(db, user.id, g)
     return _run(db, go)

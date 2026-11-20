@@ -46,6 +46,16 @@ def arrange_partner(client, h, stage="MARRIED", affinity=80, trust=70, income="8
         return p.id
 
 
+def move_ok(client, h, kind, budget):
+    """O jogo decide se há oferta para o valor desejado: tenta valores próximos até achar e devolve o aluguel REAL da oferta."""
+    for i in range(40):
+        r = client.post(f"{L}/move", headers=h, json={"kind": kind, "monthly_cost": str(budget + 10 * i)})
+        if r.status_code == 200:
+            return D(r.json()["housing"]["pending"]["monthly_cost"])
+        assert r.status_code == 409, r.text
+    raise AssertionError("nenhuma oferta encontrada")
+
+
 def family_items(client, h):
     u = uid(client, h)
     with SessionLocal() as s:
@@ -218,22 +228,22 @@ def test_marriage_requires_commitment_stage(client, auth_headers):
 def test_partner_contribution_shared_vs_separate(client, auth_headers):
     credit(client, auth_headers, "100000")
     pid = arrange_partner(client, auth_headers, stage="MARRIED")
-    client.post(f"{L}/move", headers=auth_headers, json={"kind": "SHARED", "monthly_cost": "3000"})
+    rent = move_ok(client, auth_headers, "SHARED", 3000)
     advance(client, auth_headers)
     items = family_items(client, auth_headers)
-    assert items["family:housing"].planned_amount == D("3000.00")
+    assert items["family:housing"].planned_amount == rent
     assert "family:partner:contribution" not in items                # separado por padrão
     r = client.put(f"{L}/people/{pid}/finances", headers=auth_headers, json={"mode": "SHARED", "contribution_pct": "40"})
     assert r.status_code == 200, r.text
     c = family_items(client, auth_headers)["family:partner:contribution"]
-    assert c.kind.value == "INCOME" and c.planned_amount == D("1200.00")
+    assert c.kind.value == "INCOME" and c.planned_amount == (rent * D("0.4")).quantize(D("0.01"))
     client.put(f"{L}/people/{pid}/finances", headers=auth_headers, json={"mode": "SEPARATE"})
     assert "family:partner:contribution" not in family_items(client, auth_headers)
 
 
 def test_partner_debts_and_income_cap_contribution(client, auth_headers):
     pid = arrange_partner(client, auth_headers, stage="MARRIED", income="2000", debts="50000")   # teto = 2000*0.5 - 500
-    client.post(f"{L}/move", headers=auth_headers, json={"kind": "SHARED", "monthly_cost": "6000"})
+    move_ok(client, auth_headers, "SHARED", 6000)
     credit(client, auth_headers, "100000")
     advance(client, auth_headers)
     client.put(f"{L}/people/{pid}/finances", headers=auth_headers, json={"mode": "SHARED", "contribution_pct": "100"})
@@ -306,24 +316,24 @@ def test_children_needs_change_with_age_and_school(client, auth_headers):
 
 def test_move_ends_old_costs_and_starts_new_in_correct_month(client, auth_headers):
     credit(client, auth_headers, "300000")
-    r = client.post(f"{L}/move", headers=auth_headers, json={"kind": "RENT", "monthly_cost": "2500"})
-    assert r.status_code == 200 and r.json()["housing"]["pending"]["kind"] == "RENT"
+    rent1 = move_ok(client, auth_headers, "RENT", 2500)
+    assert life(client, auth_headers)["housing"]["pending"]["kind"] == "RENT"
     assert "family:housing" not in family_items(client, auth_headers)                      # ainda não: só no mês que vem
     advance(client, auth_headers)
     items = family_items(client, auth_headers)
-    assert items["family:housing"].planned_amount == D("2500.00")
+    assert items["family:housing"].planned_amount == rent1
     assert any(k.startswith("life:move:") for k in items)                                  # custo único da mudança
     j = life(client, auth_headers)
     assert j["housing"]["kind"] == "RENT" and j["housing"]["pending"] is None
-    client.post(f"{L}/move", headers=auth_headers, json={"kind": "SHARED", "monthly_cost": "1800"})
+    rent2 = move_ok(client, auth_headers, "SHARED", 1800)
     advance(client, auth_headers)
     items = family_items(client, auth_headers)
-    assert items["family:housing"].planned_amount == D("1800.00")
+    assert items["family:housing"].planned_amount == rent2
     # mês anterior continua com o custo antigo no histórico
     u = uid(client, auth_headers)
     with SessionLocal() as s:
         e = list(s.scalars(select(LedgerEntry).where(LedgerEntry.user_id == u, LedgerEntry.origin_ref == "family:housing")))
-        assert [x.amount for x in sorted(e, key=lambda x: x.ref_month)] == [D("2500.00")]
+        assert [x.amount for x in sorted(e, key=lambda x: x.ref_month)] == [rent1]
 
 
 def test_closing_month_is_idempotent_for_life_processing(client, auth_headers):

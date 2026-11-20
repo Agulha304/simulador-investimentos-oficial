@@ -374,7 +374,7 @@ export const api = {
   simulateFinancing: (body: { listing_key: string; down_payment: string; term_months: number; system: AmortSystem }) =>
     request<Simulation>("/goods/market/simulate", { method: "POST", body: JSON.stringify(body) }),
   buyGood: (body: { listing_key: string; idempotency_key: string; financed: boolean; down_payment?: string; term_months?: number;
-    system?: AmortSystem; extra_costs?: string; usage_km_month?: number }) =>
+    system?: AmortSystem; usage_km_month?: number }) =>
     request<GoodDetail>("/goods/purchase", { method: "POST", body: JSON.stringify(body) }),
   myGoods: (p: Record<string, string> = {}) => request<Good[]>(`/goods?${new URLSearchParams(p)}`),
   good: (id: number) => request<GoodDetail>(`/goods/${id}`),

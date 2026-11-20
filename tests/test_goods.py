@@ -140,7 +140,6 @@ def test_purchase_validations(client, auth_headers):
     assert buy(client, auth_headers, HOUSE, financed=True, down_payment="1000", term_months=360).status_code == 400   # entrada mínima
     assert buy(client, auth_headers, HOUSE, financed=True, down_payment="200000", term_months=999).status_code == 422
     assert buy(client, auth_headers, CAR, financed=True, down_payment="20000", term_months=120).status_code == 400    # acima do prazo máximo do carro (60)
-    assert buy(client, auth_headers, CAR, extra_costs="-1").status_code == 422
 
 
 # ------------------------------------------------------------------ 2/12/13. financiamento

@@ -226,7 +226,7 @@ def buy_good(company_id: int, body: s.CompanyGoodIn, user: CurrentUser, db: DbSe
         c = cs.get_company(db, user.id, company_id, lock=True)
         cs._active(c)
         goods_service.purchase(db, user.id, month, listing_key=body.listing_key, purchase_key=body.idempotency_key,
-                               extra_costs=body.extra_costs, company=c)
+                               company=c)
     return _run(db, lambda: _act(db, user.id, company_id, fn))
 
 

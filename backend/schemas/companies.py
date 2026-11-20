@@ -79,7 +79,6 @@ class LoanIn(BaseModel):
 class CompanyGoodIn(BaseModel):
     listing_key: str
     idempotency_key: str = Field(min_length=8, max_length=100)
-    extra_costs: Decimal = Field(Decimal("0"), ge=0, max_digits=20, decimal_places=2)
 
 
 # ------------------------------------------------------------------ saída

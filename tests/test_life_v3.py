@@ -405,3 +405,63 @@ def test_two_games_closing_the_same_month_do_not_collide_on_idempotency_keys(cli
     import re
     norm = lambda rows: {re.sub(r"child:\d+:", "child:N:", e["key"]) for e in rows}          # noqa: E731
     assert norm(a) == norm(b) and "family:housing" in norm(a)
+
+
+# ------------------------------------------------------------------ aluguel: o jogo decide se existe oferta
+
+def test_rent_below_market_does_not_exist_and_offers_describe_the_place(client, auth_headers):
+    credit(client, auth_headers, "300000")
+    client.get(L, headers=auth_headers)
+    r = client.post(f"{L}/housing/search", headers=auth_headers, json={"budget": "50"})
+    assert r.status_code == 200 and r.json()["available"] is False and "mais barato" in r.json()["message"]
+    assert client.post(f"{L}/move", headers=auth_headers, json={"kind": "RENT", "monthly_cost": "50"}).status_code == 409      # não dá para pagar R$ 50
+    seen = {}
+    for budget in range(500, 12000, 40):
+        j = client.post(f"{L}/housing/search", headers=auth_headers, json={"budget": str(budget)}).json()
+        if j["available"]:
+            assert D(j["rent"]) <= D(budget) and j["description"] and j["effect"] and -3 <= j["quality"] <= 3
+            seen[j["quality"]] = j
+    assert set(seen) == {-3, -2, -1, 0, 1, 2, 3}                                                  # cada faixa tem a sua condição
+    assert "infiltração" in seen[-2]["description"] or "úmida" in seen[-2]["description"]
+    unavailable = [b for b in range(500, 3000, 20) if not client.post(f"{L}/housing/search", headers=auth_headers, json={"budget": str(b)}).json()["available"]]
+    assert unavailable, "em algumas faixas o jogo diz que não há oferta no momento"
+    again = client.post(f"{L}/housing/search", headers=auth_headers, json={"budget": "1500"}).json()
+    assert again == client.post(f"{L}/housing/search", headers=auth_headers, json={"budget": "1500"}).json()      # a resposta do mês é estável
+
+
+def test_where_you_live_changes_health_wellbeing_and_satisfaction(client, auth_headers):
+    credit(client, auth_headers, "900000")
+    results = {}
+    for name, rent in (("pior", 520), ("melhor", 9500)):
+        g, h = _mk_world(client, auth_headers, seed=9)
+        u = uid(client, h)
+        with SessionLocal() as s:
+            p = s.scalar(select(LifeProfile).where(LifeProfile.user_id == u))
+            from backend.services import housing_service
+            p.housing_quality, p.housing_desc = housing_service.quality_of_rent(D(rent))
+            p.wellbeing = p.satisfaction = 60
+            p.health = 70
+            s.commit()
+        _advance(client, h, 6)
+        a = client.get(L, headers=h).json()["attributes"]
+        results[name] = (a["wellbeing"], a["satisfaction"], a["health"])
+        assert client.get(L, headers=h).json()["housing"]["quality"] == (-3 if name == "pior" else 3)
+    assert results["melhor"][0] > results["pior"][0] and results["melhor"][1] > results["pior"][1] and results["melhor"][2] >= results["pior"][2]
+
+
+def test_free_mode_rent_must_exist_in_the_market(client, auth_headers):
+    g = client.post("/api/games", headers=auth_headers, json={"kind": "LIFE", "name": "x"}).json()
+    h = {**auth_headers, "X-Game-Id": str(g["id"])}
+    r = client.post("/api/game/start", headers=h, json={"mode": "FREE", "free": {"cash": 20000, "monthly_income": 3000, "monthly_expenses": 1000, "rent": 50}})
+    assert r.status_code == 400 and "mais barato" in r.text
+    ok = client.post("/api/game/start", headers=h, json={"mode": "FREE", "free": {"cash": 20000, "monthly_income": 3000, "monthly_expenses": 1000, "rent": 900}})
+    assert ok.status_code == 200
+    assert client.get(L, headers=h).json()["housing"]["quality"] == -2                              # kitnet antiga numa faixa de R$ 900
+
+
+def test_extra_purchase_costs_are_gone(client, auth_headers):
+    credit(client, auth_headers, "300000")
+    r = client.post("/api/goods/purchase", headers=auth_headers, json={"listing_key": "violao-aco", "idempotency_key": "abcdefgh1234", "extra_costs": "5000"})
+    assert r.status_code == 201
+    d = client.get(f"/api/goods/{r.json()['good']['id']}", headers=auth_headers).json()
+    assert D(d["good"]["acquisition_cost"]) == D(d["good"]["purchase_price"])                      # sem custos inventados (violão: só o preço)
