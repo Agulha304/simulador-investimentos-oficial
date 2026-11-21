@@ -122,3 +122,74 @@ def test_career_can_start_at_eighteen(client, auth_headers):
     assert fam["MOTHER"]["age"] >= 18 + 22 and fam["FATHER"]["age"] >= 18 + 24                                      # pais coerentes com a idade
     g2 = client.post("/api/games", headers=auth_headers, json={"kind": "LIFE", "name": "Inválido"}).json()
     assert client.post("/api/game/start", headers={**auth_headers, "X-Game-Id": str(g2["id"])}, json={"mode": "CAREER", "scenario": "investor", "age": 17}).status_code == 422
+
+
+# ---------------------------------------------------------------- renda passiva desejada e acompanhamento do mês
+def _buy(client, db, h, symbol, qty):
+    from sqlalchemy import select
+
+    from backend.models import Asset
+    a = db.scalar(select(Asset).where(Asset.symbol == symbol))
+    r = client.post("/api/trades/buy", headers=h, json={"asset_id": a.id, "quantity": str(qty)})
+    assert r.status_code == 201, r.text
+
+
+def test_passive_income_goal_defines_the_capital_needed_and_an_estimate(client, auth_headers):
+    g, h = _mk_world(client, auth_headers, scenario="young_pro")
+    base = plan(client, h)
+    assert base["goal_from_passive"] is False and base["passive"]["required_capital"] is None
+    j = client.put(P, headers=h, json={"passive_goal": "1000"}).json()
+    # carteira moderada: 40% renda fixa (10%), 15% FII (9%), 15% ETF (4%), 25% ações (5%), 5% cripto (0%) = 7,2% a.a. de renda
+    assert j["passive"]["yield_pct"] == pytest.approx(7.2) and j["goal_from_passive"] is True
+    assert D(j["passive"]["required_capital"]) == D("166666.67") == D(j["goal_total"])
+    assert j["passive"]["months_to_goal"] is None or j["passive"]["months_to_goal"] > 0
+    assert D(j["passive"]["income_now"]) >= 0
+    assert client.put(P, headers=h, json={"passive_goal": "0"}).json()["goal_from_passive"] is False     # 0 limpa
+    assert client.put(P, headers=h, json={"passive_goal": "-5"}).status_code == 422
+
+
+def test_conservative_profile_needs_more_capital_than_aggressive_for_the_same_income(client, auth_headers):
+    g, h = _mk_world(client, auth_headers)
+    # a renda por classe é a mesma premissa; o que muda é a carteira-alvo do perfil
+    cons = client.put(P, headers=h, json={"profile": "CONSERVATIVE", "passive_goal": "1000"}).json()["passive"]
+    aggr = client.put(P, headers=h, json={"profile": "AGGRESSIVE", "passive_goal": "1000"}).json()["passive"]
+    assert cons["yield_pct"] > aggr["yield_pct"] and D(cons["required_capital"]) < D(aggr["required_capital"])
+
+
+def test_monthly_nudge_shrinks_as_you_invest_and_the_budget_adapts(client, auth_headers, db):
+    g, h = _mk_world(client, auth_headers, scenario="young_pro")
+    assert client.patch(f"{B}/months/current", headers=h, json={"planned_investment": "1000.00"}).status_code == 200
+    n = plan(client, h)["nudge"]
+    assert n["active"] is True and n["done"] is False and D(n["remaining"]) == D("1000.00") and D(n["invested"]) == 0
+    m0 = client.get(f"{B}/overview", headers=h).json()["month"]
+    assert D(m0["invest_remaining"]) == D("1000.00") and m0["invest_done"] is False
+    assert D(m0["free_after_investment"]) == D(m0["projected_closing_balance"]) - D("1000.00")
+
+    _buy(client, db, h, "PETR4", 10)                                   # R$ 400 em ações
+    n = plan(client, h)["nudge"]
+    assert D(n["invested"]) == D("400.00") and D(n["remaining"]) == D("600.00") and n["active"] is True
+    m1 = client.get(f"{B}/overview", headers=h).json()["month"]
+    assert D(m1["invest_remaining"]) == D("600.00")
+    assert D(m1["free_after_investment"]) == D(m1["projected_closing_balance"]) - D("600.00")    # só desconta o que falta
+
+    client.patch(f"{B}/months/current", headers=h, json={"planned_investment": "300.00"})          # já passou do planejado
+    n = plan(client, h)["nudge"]
+    assert n["done"] is True and n["active"] is False and D(n["remaining"]) == 0
+    m2 = client.get(f"{B}/overview", headers=h).json()["month"]
+    assert m2["invest_done"] is True and D(m2["invest_remaining"]) == 0
+    assert D(m2["free_after_investment"]) == D(m2["projected_closing_balance"])
+
+
+def test_nudge_splits_the_month_by_class(client, auth_headers, db):
+    g, h = _mk_world(client, auth_headers, scenario="young_pro")
+    client.put(P, headers=h, json={"profile": "AGGRESSIVE"})
+    client.patch(f"{B}/months/current", headers=h, json={"planned_investment": "2000.00"})
+    n = plan(client, h)["nudge"]
+    rows = {r["key"]: r for r in n["rows"]}
+    assert sum(D(r["target"]) for r in n["rows"]) == pytest.approx(2000.0, abs=0.06)
+    if not n["reserve_mode"]:
+        _buy(client, db, h, "PETR4", 10)
+        after = {r["key"]: r for r in plan(client, h)["nudge"]["rows"]}
+        assert D(after["STOCKS"]["invested"]) == D("400.00")
+        assert D(after["STOCKS"]["remaining"]) == max(D(rows["STOCKS"]["target"]) - D("400.00"), D(0))
+        assert D(after["FIXED"]["invested"]) == 0

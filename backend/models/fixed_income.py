@@ -130,7 +130,8 @@ class IndexRate(Base):
     IPCA/IGP-M: % ao mês, com ref_date = 1º dia do mês."""
 
     __tablename__ = "index_rates"
-    __table_args__ = (UniqueConstraint("index_name", "ref_date", name="uq_index_rate"),)
+    __table_args__ = (UniqueConstraint("index_name", "ref_date", name="uq_index_rate"),
+                      Index("ix_index_rates_ref_date", "ref_date"))   # filtros só por data (a unique começa por index_name)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     index_name: Mapped[IndexName] = mapped_column(StrEnumType(IndexName, "index_name"))

@@ -5,6 +5,7 @@ import { gameStore, useActiveGame } from "../services/gameStore";
 import { useApi } from "../services/dataCache";
 import { sim, type GameSummary } from "../services/sim";
 import { EndScreen } from "./EndScreen";
+import { InvestNudge } from "./InvestNudge";
 import { SearchBar } from "./SearchBar";
 
 const INVEST = ["/mercado", "/renda-fixa", "/carteira", "/historico", "/ativo"];
@@ -59,7 +60,7 @@ export function GameLayout() {
     <div className="game-shell">
       <header className="game-top">
         <button className="btn ghost small exit" onClick={() => { gameStore.set(null); nav("/"); }}>⬅ Sair da partida</button>
-        <div className="game-title"><span className={`tag ${training ? "train" : "life"}`}>{training ? "🧪 Treino" : "🎮 Vida"}</span><b>{active.name}</b></div>
+        <div className="game-title"><span className={`tag ${training ? "train" : "life"}`}>{training ? "🧪 Treino" : "🎮 Vida"}</span>{!training && g?.mode === "RANKED" && <span className="tag ranked">🏆 Ranqueado</span>}<b>{active.name}</b></div>
         <div className="game-date">
           {training && g?.market_date && <><span className="chip">📅 {fmtMonth(g.market_date)} · dados reais</span>
             <button className="btn primary small" disabled={busy || g.at_present} onClick={() => void advance()}>⏭ Avançar 1 mês</button></>}
@@ -85,6 +86,7 @@ export function GameLayout() {
               {INVEST_TABS.map((t) => <NavLink key={t.to} to={t.to} className={({ isActive }) => `itab${isActive ? " on" : ""}`}>{t.label}</NavLink>)}
               <div className="grow" /><SearchBar />
             </div>)}
+          {inInvest && !training && <InvestNudge gameId={active.id} path={loc.pathname} />}
           <Fragment key={version}><Suspense fallback={<div className="muted">Carregando…</div>}><Outlet /></Suspense></Fragment>
         </main>
       </div>

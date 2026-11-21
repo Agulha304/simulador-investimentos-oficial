@@ -1,34 +1,72 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
-import { fmtBRL } from "../lib/format";
+import { fmtBRL, parseMoneyInput } from "../lib/format";
+import { useApi } from "../services/dataCache";
 import { sim, type InvestPlan } from "../services/sim";
 
 const COLORS: Record<string, string> = { FIXED: "#3ee59a", STOCKS: "#ffd23f", ETF: "#4cc9f0", FII: "#c13cff", CRYPTO: "#ff6482" };
+const years = (m: number) => { const y = Math.floor(m / 12), r = m % 12; return [y ? `${y} ${y === 1 ? "ano" : "anos"}` : "", r ? `${r} ${r === 1 ? "mês" : "meses"}` : ""].filter(Boolean).join(" e "); };
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : "Erro inesperado");
 
 /** Orçamento da carteira de investimentos: quanto investir (recomendado), em quê (gráfico de pizza) e quanto falta por tipo. */
 export function InvestPlanCard({ onChange }: { onChange?: () => void }) {
-  const [p, setP] = useState<InvestPlan | null>(null);
+  const { data } = useApi<InvestPlan>("/invest-plan");
+  const [local, setLocal] = useState<InvestPlan | null>(null);
+  const p = local ?? data ?? null;
+  const setP = setLocal;
+  useEffect(() => { setLocal(null); }, [data]);
+  const [passiveIn, setPassiveIn] = useState("");
   const [view, setView] = useState<"month" | "target">("month");
   const [edit, setEdit] = useState<Record<string, string> | null>(null);
   const [goal, setGoal] = useState("");
   const [quiz, setQuiz] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const load = useCallback(() => { sim.investPlan().then((x) => { setP(x); setGoal(x.goal_is_custom ? x.goal_total : ""); }).catch((e) => setErr(errMsg(e))); }, []);
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { if (data) { setGoal(data.goal_is_custom && !data.goal_from_passive ? data.goal_total : ""); setPassiveIn(data.passive?.goal ? String(Number(data.passive.goal)) : ""); } }, [data]);
   const run = async (fn: () => Promise<InvestPlan>) => { setBusy(true); setErr(null); try { setP(await fn()); setEdit(null); onChange?.(); } catch (e) { setErr(errMsg(e)); } finally { setBusy(false); } };
   const slices = useMemo(() => (p?.rows ?? []).map((r) => ({ name: r.label, key: r.key, value: view === "month" ? Number(r.month_amount) : r.target_pct })).filter((s) => s.value > 0), [p, view]);
   if (!p) return err ? <div className="alert">{err}</div> : null;
   const sum = edit ? Object.values(edit).reduce((a, v) => a + (Number(v) || 0), 0) : 100;
   const rec = p.recommended;
+  const ps = p.passive;
   return (
     <section className="card stack">
       <div className="row between"><h2>📊 Carteira de investimentos do mês</h2><span className="chip">Perfil: <b>{p.profile_label}</b></span></div>
-      <div className="notice" style={{ margin: 0 }}>💡 <b>Recomendação:</b> investir <b>{fmtBRL(rec.amount)}</b> neste mês (sobra do orçamento: {fmtBRL(rec.surplus)}). <span className="muted">{rec.reason}</span>
-        <div className="row" style={{ marginTop: 8 }}>
-          <span>Você planejou: <b>{fmtBRL(p.planned_investment)}</b></span>
-          <button className="btn primary small" disabled={busy || Number(p.planned_investment) === Number(rec.amount)} onClick={() => void run(sim.investApply)}>Usar o valor recomendado</button></div></div>
+      <div className="stack">
+        <h3 style={{ margin: 0 }}>1. Perfil de investidor</h3>
+        <div className="row"><span>Seu perfil atual: <b>{p.profile_label}</b></span>
+          <button className="btn primary small" onClick={() => setQuiz(true)}>🧪 Fazer o teste de perfil</button>
+          <span className="muted small">ou troque manualmente em “Em que eu quero investir”, abaixo.</span></div>
+
+        <h3 style={{ margin: "8px 0 0" }}>2. Renda passiva desejada</h3>
+        <div className="row"><label className="row small">Quanto você quer receber de renda passiva por mês (R$)
+          <input style={{ width: 140 }} inputMode="decimal" value={passiveIn} placeholder="ex.: 3000" onChange={(e) => setPassiveIn(e.target.value)} /></label>
+          <button className="btn ghost small" disabled={busy} onClick={() => void run(() => sim.investSettings({ passive_goal: passiveIn.trim() ? parseMoneyInput(passiveIn) || "0" : "0" }))}>Salvar renda passiva</button></div>
+        {ps?.goal && Number(ps.goal) > 0 && (
+          <div className="passive-box">
+            <div>Para receber <b>{fmtBRL(ps.goal)}</b> por mês você precisa de um patrimônio de <b>{fmtBRL(ps.required_capital)}</b>.</div>
+            <div className="muted small">com a carteira-alvo do seu perfil, que rende em média {ps.yield_pct}% ao ano em renda.</div>
+            <div>Você já tem investido <b>{fmtBRL(p.invested_now)}</b> e faltam <b>{fmtBRL(ps.missing_capital)}</b>.</div>
+            <div>Renda passiva estimada hoje: <b>{fmtBRL(ps.income_now)}</b> por mês.</div>
+            <div>{ps.months_to_goal == null
+              ? <>Com o aporte atual ({fmtBRL(ps.monthly_contribution)}/mês) esse objetivo não é alcançável. Aumente o aporte mensal no passo 3.</>
+              : ps.months_to_goal === 0 ? <>Você já atingiu esse objetivo!</>
+              : <>Com {fmtBRL(ps.monthly_contribution)}/mês você chega lá em ~{years(ps.months_to_goal)}.</>}</div>
+            <div className="muted small">Estimativa simplificada; não é promessa de retorno.</div>
+            <details><summary className="small">Premissas de rendimento (renda por classe, % ao ano)</summary>
+              <ul className="list-plain">{Object.entries(ps.assumptions).map(([k, v]) => <li key={k}><span>{p.rows.find((r) => r.key === k)?.label ?? k}</span><b className="num">{v}%</b></li>)}</ul></details>
+          </div>)}
+
+        <h3 style={{ margin: "8px 0 0" }}>3. Valor a investir por mês</h3>
+        <div className="notice" style={{ margin: 0 }}>💡 <b>Recomendação:</b> investir <b>{fmtBRL(rec.amount)}</b> neste mês (sobra do orçamento: {fmtBRL(rec.surplus)}). <span className="muted">{rec.reason}</span>
+          <div className="row" style={{ marginTop: 8 }}>
+            <span>Você planejou: <b>{fmtBRL(p.planned_investment)}</b> por mês</span>
+            <button className="btn primary small" disabled={busy || Number(p.planned_investment) === Number(rec.amount)} onClick={() => void run(sim.investApply)}>Usar o valor recomendado</button></div>
+          <div className="muted small" style={{ marginTop: 6 }}>Esse valor vira o seu aporte planejado de todos os meses. Para aumentar ou diminuir, edite “Quanto pretende investir neste mês” logo acima e salve o plano.</div></div>
+        {p.nudge && Number(p.nudge.planned) > 0 && (
+          <div><div className="row between small"><span>Progresso do mês</span><span><b>{fmtBRL(p.nudge.invested)}</b> de {fmtBRL(p.nudge.planned)}</span></div>
+            <div className="meter-bar"><i style={{ width: `${Math.min(100, (Number(p.nudge.invested) / Number(p.nudge.planned)) * 100)}%` }} /></div></div>)}
+      </div>
       {err && <div className="alert">{err}</div>}
       <div className="seg compact"><button className={view === "month" ? "on" : ""} onClick={() => setView("month")}>Divisão deste mês</button><button className={view === "target" ? "on" : ""} onClick={() => setView("target")}>Carteira-alvo</button></div>
       <div className="cols-2">

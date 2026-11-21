@@ -164,7 +164,7 @@ export interface MonthSummary {
   planned_investment: Decimal; balance: Decimal; planned_income: Decimal; planned_expense: Decimal;
   realized_income: Decimal; realized_expense: Decimal; forecast_income: Decimal; forecast_expense: Decimal;
   remaining_income: Decimal; remaining_expense: Decimal; invested: Decimal; result: Decimal;
-  projected_closing_balance: Decimal; free_after_investment: Decimal; capital_in: Decimal; capital_out: Decimal;
+  projected_closing_balance: Decimal; free_after_investment: Decimal; invest_remaining: Decimal; invest_done: boolean; capital_in: Decimal; capital_out: Decimal;
   items: BudgetItem[]; by_category: CategoryTotal[];
 }
 export interface ClosePreview {

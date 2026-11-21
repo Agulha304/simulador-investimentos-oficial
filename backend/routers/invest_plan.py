@@ -17,6 +17,7 @@ class SettingsIn(BaseModel):
     wanted: list[str] | None = None
     alloc: dict[str, float] | None = None
     goal_total: Decimal | None = Field(default=None, ge=0, max_digits=20, decimal_places=2)
+    passive_goal: Decimal | None = Field(default=None, ge=0, max_digits=20, decimal_places=2)   # renda passiva desejada (R$/mês); 0 limpa
 
 
 class QuizIn(BaseModel):
@@ -32,7 +33,7 @@ def get_plan(user: CurrentUser, db: DbSession):
 def put_settings(body: SettingsIn, user: CurrentUser, db: DbSession):
     def go():
         month = bs.ensure_setup(db, user.id)
-        ips.update_settings(db, user.id, profile=body.profile, wanted=body.wanted, alloc=body.alloc, goal_total=body.goal_total)
+        ips.update_settings(db, user.id, profile=body.profile, wanted=body.wanted, alloc=body.alloc, goal_total=body.goal_total, passive_goal=body.passive_goal)
         return ips.plan(db, user.id, month)
     return _run(db, go)
 

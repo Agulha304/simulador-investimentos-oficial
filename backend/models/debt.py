@@ -49,5 +49,6 @@ class InvestorProfile(Base):
     wanted: Mapped[list] = mapped_column(JSON, default=list)                    # classes em que o jogador quer investir
     target_alloc: Mapped[dict] = mapped_column(JSON, default=dict)              # classe -> % da carteira-alvo (soma 100)
     goal_total: Mapped[Decimal | None] = mapped_column(Money())                 # objetivo de dinheiro investido (R$)
+    passive_goal: Mapped[Decimal | None] = mapped_column(Money())               # renda passiva mensal desejada (R$/mês)
     quiz_score: Mapped[int | None] = mapped_column(Integer)
     customized: Mapped[bool] = mapped_column(default=False)                     # o jogador editou a carteira à mão

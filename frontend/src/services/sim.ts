@@ -68,6 +68,15 @@ export interface InvestPlan {
   profile: string; profile_label: string; profile_text: string; quiz_score: number | null; wanted: string[]; customized: boolean; goal_total: string; goal_is_custom: boolean;
   invested_now: string; recommended: { amount: string; surplus: string; share_pct: number; reserve_mode: boolean; reason: string }; planned_investment: string;
   rows: PlanRow[]; classes: { key: string; label: string }[]; profiles: { key: string; label: string; text: string; alloc: Record<string, number> }[];
+  passive: PassivePlan; goal_from_passive: boolean; nudge: InvestNudgeData;
+}
+export interface PassivePlan {
+  goal: string | null; yield_pct: number; required_capital: string | null; income_now: string; missing_capital: string | null;
+  months_to_goal: number | null; monthly_contribution: string; assumptions: Record<string, number>;
+}
+export interface InvestNudgeData {
+  planned: string; invested: string; remaining: string; done: boolean; active: boolean; reserve_mode: boolean; month: string;
+  rows: { key: "FIXED" | "STOCKS" | "ETF" | "FII" | "CRYPTO"; label: string; target: string; invested: string; remaining: string }[];
 }
 export interface CareerPerf {
   series: { month: string; net_worth: number; net_worth_real: number; income: number; expense: number; result: number; debts: number; savings_rate: number | null;
@@ -152,7 +161,7 @@ export const sim = {
   budgetImpact: () => request<BudgetImpact>("/life/budget-impact"),
   searchHousing: (budget: string) => request<HousingOffer>("/life/housing/search", post({ budget })),
   investPlan: () => request<InvestPlan>("/invest-plan"),
-  investSettings: (b: { profile?: string; wanted?: string[]; alloc?: Record<string, number>; goal_total?: string }) => request<InvestPlan>("/invest-plan", put(b)),
+  investSettings: (b: { profile?: string; wanted?: string[]; alloc?: Record<string, number>; goal_total?: string; passive_goal?: string }) => request<InvestPlan>("/invest-plan", put(b)),
   investQuiz: () => request<{ questions: { text: string; options: string[] }[] }>("/invest-plan/quiz"),
   investQuizSubmit: (answers: number[]) => request<InvestPlan>("/invest-plan/quiz", post({ answers })),
   investApply: () => request<InvestPlan>("/invest-plan/apply", post()),

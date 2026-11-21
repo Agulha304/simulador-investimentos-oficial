@@ -123,7 +123,9 @@ class MonthSummaryOut(BaseModel):
     invested: Decimal
     result: Decimal                  # receitas − despesas realizadas
     projected_closing_balance: Decimal
-    free_after_investment: Decimal   # saldo projetado − investimento planejado
+    free_after_investment: Decimal   # saldo projetado − o que AINDA falta investir do planejado
+    invest_remaining: Decimal = Decimal("0.00")   # planejado − já investido no mês (mês aberto)
+    invest_done: bool = False                       # já investiu o planejado
     capital_in: Decimal = Decimal("0.00")     # movimentações patrimoniais (compra/venda de bens, amortizações)
     capital_out: Decimal = Decimal("0.00")
     items: list[ItemOut]

@@ -64,12 +64,13 @@ export function HubPage() {
           <p className="muted">Você ainda não tem partidas salvas. Que tal começar uma agora? 👆</p>
         ) : (
           <div className="save-grid">{hub.games.map((g) => (
-            <div key={g.id} className="save-card">
+            <div key={g.id} className={`save-card${g.kind === "LIFE" && g.mode === "RANKED" ? " ranked" : ""}`}>
+              {g.kind === "LIFE" && g.mode === "RANKED" && <div className="ranked-ribbon">🏆 Ranqueado</div>}
               <div className="row between"><span className={`tag ${g.kind === "TRAINING" ? "train" : "life"}`}>{g.kind === "TRAINING" ? "🧪 Treino" : "🎮 Vida"}</span>
                 <button className="icon-btn" title="Arquivar" onClick={() => void archive(g)}>🗑</button></div>
               <h3>{g.name}</h3>
               {g.ended && <span className="chip down">{g.ended === "DEAD" ? "🕊️ personagem faleceu" : "📉 falência"}</span>}
-              <p className="muted small">{g.kind === "TRAINING" ? `Mercado em ${g.market_date?.slice(0, 7).split("-").reverse().join("/")}` : g.started ? `${g.mode === "CAREER" ? "Carreira" : "Livre"} · mês ${g.month?.slice(0, 7).split("-").reverse().join("/")}` : "Ainda não começou"}</p>
+              <p className="muted small">{g.kind === "TRAINING" ? `Mercado em ${g.market_date?.slice(0, 7).split("-").reverse().join("/")}` : g.started ? `${g.mode === "CAREER" ? "Carreira" : g.mode === "RANKED" ? "Ranqueado" : "Livre"} · mês ${g.month?.slice(0, 7).split("-").reverse().join("/")}` : "Ainda não começou"}</p>
               <p className="num save-money">{g.equity_brl ? fmtBRL(g.equity_brl) : "—"}</p>
               <p className="muted small">Jogou em {fmtDay(g.last_played_at.slice(0, 10))}</p>
               <button className="btn primary" onClick={() => void open(g)}>{g.ended ? "👁 Ver" : "▶ Continuar"}</button>

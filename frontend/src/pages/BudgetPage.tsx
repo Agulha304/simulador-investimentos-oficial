@@ -82,7 +82,7 @@ export function BudgetPage() {
             <StatCard label="Despesas do mês" value={fmtBRL(m.realized_expense)} sub={`previsto ${fmtBRL(m.forecast_expense)}`} />
             <StatCard label="Investimentos" value={fmtBRL(m.invested)} sub={`planejado ${fmtBRL(m.planned_investment)}`} />
             <StatCard label="Saldo restante (projeção)" value={fmtBRL(m.projected_closing_balance)}
-              sub={`após investir: ${fmtBRL(m.free_after_investment)}`} tone={trend(m.free_after_investment) === "down" ? "down" : "neutral"} />
+              sub={m.invest_done ? "✓ já investiu o planejado" : `após investir: ${fmtBRL(m.free_after_investment)}`} tone={trend(m.free_after_investment) === "down" ? "down" : "neutral"} />
           </section>
 
           <InvestmentPlan month={m} onSave={(v) => act(() => api.budgetSetInvestment(v), "Investimento planejado atualizado.")} />
@@ -135,7 +135,7 @@ function InvestmentPlan({ month, onSave }: { month: MonthSummary; onSave: (v: st
   useEffect(() => setV(month.planned_investment), [month.planned_investment]);
   return (
     <form className="card inline-form" onSubmit={(e) => { e.preventDefault(); onSave(parseMoneyInput(v)); }}>
-      <p className="muted small">Quanto pretende investir neste mês (apenas um plano: os investimentos reais continuam sendo feitos em Mercado e Renda Fixa).</p>
+      <p className="muted small">Quanto pretende investir neste mês (apenas um plano: os investimentos reais continuam sendo feitos em Mercado e Renda Fixa). Este valor vira o seu aporte planejado de todos os meses.</p>
       <div className="row-gap">
         <input inputMode="decimal" value={v} onChange={(e) => setV(e.target.value)} aria-label="Investimento planejado (R$)" />
         <button className="btn small ghost">Salvar plano</button>

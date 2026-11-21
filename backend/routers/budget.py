@@ -83,6 +83,8 @@ def _summary_out(db: Session, user_id: int, summary: bs.MonthSummary) -> s.Month
                            realized=quantize_money(t[2]), remaining=quantize_money(t[1] - t[2]))
         for (kind, cid), t in sorted(totals.items(), key=lambda kv: (kv[0][0] != FlowKind.INCOME, -kv[1][2]))
     ]
+    open_month = m.status == MonthStatus.OPEN
+    invest_remaining = quantize_money(max(m.planned_investment - summary.invested, bs.ZERO)) if open_month else m.planned_investment
     return s.MonthSummaryOut(
         ref_month=m.ref_month, status=m.status, opening_balance=m.opening_balance, closing_balance=m.closing_balance,
         planned_investment=m.planned_investment, balance=summary.balance,
@@ -93,7 +95,8 @@ def _summary_out(db: Session, user_id: int, summary: bs.MonthSummary) -> s.Month
         remaining_expense=quantize_money(max(summary.planned_expense - summary.realized_expense, bs.ZERO)),
         invested=summary.invested, result=quantize_money(summary.realized_income - summary.realized_expense),
         projected_closing_balance=summary.projected_closing_balance,
-        free_after_investment=quantize_money(summary.projected_closing_balance - m.planned_investment),
+        free_after_investment=quantize_money(summary.projected_closing_balance - invest_remaining),
+        invest_remaining=invest_remaining, invest_done=bool(open_month and m.planned_investment > 0 and invest_remaining == 0),
         capital_in=summary.realized_capital_in, capital_out=summary.realized_capital_out,
         items=items, by_category=by_category,
     )

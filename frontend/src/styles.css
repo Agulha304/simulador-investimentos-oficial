@@ -401,3 +401,10 @@ input.xl, select.xl { font-size: 1.15rem; padding: 14px 16px; }
 .toast-emoji { font-size: 1.4rem; }
 @keyframes pop { from { transform: translateY(-14px) scale(.96); opacity: 0; } to { transform: none; opacity: 1; } }
 @media (max-width: 860px) { .toast { left: 12px; right: 12px; top: 64px; max-width: none; } }
+
+.save-card { position: relative; } .save-card.ranked { border-color: #ffd23f; }
+.ranked-ribbon { margin: -14px -16px 6px; padding: 6px 16px; border-radius: 14px 14px 0 0; background: #ffd23f; color: #3a2a00; font-weight: 900; text-align: center; letter-spacing: .02em; }
+.tag.ranked { background: #ffd23f; color: #3a2a00; margin-left: 6px; }
+.invest-nudge { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; padding: 10px 14px; border-radius: 14px; background: color-mix(in srgb, var(--accent) 16%, transparent); border: 2px solid var(--accent); }
+.invest-nudge .grow { flex: 1; min-width: 200px; }
+.passive-box { display: grid; gap: 6px; padding: 12px 14px; border-radius: 14px; background: var(--surface-2); border: 2px solid var(--border); }
