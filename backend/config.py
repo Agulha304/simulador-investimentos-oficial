@@ -15,8 +15,8 @@ class Settings(BaseSettings):
     # "production" liga as checagens de segurança de check_production() (segredo JWT forte etc.)
     environment: str = "development"
 
-    database_url: str = "postgresql+psycopg://simulador@localhost:5433/simulador"
-    test_database_url: str = "postgresql+psycopg://simulador@localhost:5433/simulador_test"
+    database_url: str = "postgresql://postgres.kqvpqbdupafpbasrytqw:-Simulainvest2205@aws-0-us-east-2.pooler.supabase.com:5432/postgres"
+    test_database_url: str = "postgresql://postgres.kqvpqbdupafpbasrytqw:-Simulainvest2205@aws-0-us-east-2.pooler.supabase.com:5432/postgres/simulador_test"
 
     jwt_secret: str = "dev-secret-change-me"
     jwt_algorithm: str = "HS256"
@@ -36,7 +36,7 @@ class Settings(BaseSettings):
     # MEDIA_BASE_URL=https://seu-bucket.r2.dev  (enviando o conteúdo de media/ para a raiz do bucket)
     media_base_url: str = "/api/media"
 
-    cors_origins: str = "http://localhost:5173"
+    cors_origins: str = "http://localhost:5173,https://wealthy-simulator.giuliapeluzzos.workers.dev"
     log_level: str = "INFO"
 
     @field_validator("database_url", "test_database_url", mode="before")
@@ -58,7 +58,7 @@ class Settings(BaseSettings):
             raise RuntimeError("JWT_SECRET fraco ou padrão: defina um segredo aleatório com 32+ caracteres "
                                "(python -c \"import secrets; print(secrets.token_urlsafe(48))\").")
         if "localhost" in self.database_url or "127.0.0.1" in self.database_url:
-            raise RuntimeError("DATABASE_URL aponta para localhost em produção.")
+            raise RuntimeError("DATABASE_URL não foi definida (está no padrão, localhost). No Render: Environment > adicione DATABASE_URL com a URL do Supabase (Session pooler) e JWT_SECRET.")
 
     @property
     def media_dir(self) -> Path:

@@ -11,16 +11,8 @@
     // só /api/* passa pelo Worker; o resto é servido direto dos arquivos estáticos
     "run_worker_first": ["/api/*"]
   },
-  // Backend FastAPI como Cloudflare Container (Dockerfile da raiz). Exige o plano Workers Paid.
-  // Uma instância só: os workers em segundo plano (stop loss, proventos, renda fixa, snapshots) vivem dentro do app.
-  "containers": [
-    { "class_name": "Backend", "image": "./Dockerfile", "max_instances": 1, "instance_type": "basic" }
-  ],
-  "durable_objects": { "bindings": [{ "name": "BACKEND", "class_name": "Backend" }] },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Backend"] }],
   // Mantém as variáveis definidas no painel (BACKEND_URL) quando o deploy roda pelo Git.
   "keep_vars": true
-  // SEGREDOS (painel: Workers & Pages > wealthy-simulator > Settings > Variables and Secrets, tipo "Secret"):
-  //   DATABASE_URL  (Supabase, Session pooler)  e  JWT_SECRET.
-  // BACKEND_URL é opcional: se definida, o Worker usa esse backend externo em vez do container.
+  // BACKEND_URL (ex.: https://simulador-api.onrender.com) é configurada no painel:
+  // Workers & Pages > simulador-investimentos > Settings > Variables and Secrets.
 }

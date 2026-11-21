@@ -17,4 +17,4 @@ COPY backend backend
 COPY media/manifest.json media/manifest.json
 
 # a maioria dos hosts define $PORT; as migrations rodam antes de abrir a porta
-CMD ["sh", "-c", "alembic upgrade head && exec uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+CMD ["sh", "-c", "python -c \"from backend.config import get_settings; get_settings().check_production()\" && alembic upgrade head && exec uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
