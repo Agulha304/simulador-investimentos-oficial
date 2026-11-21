@@ -1,11 +1,10 @@
-import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { fmtMonth } from "../lib/format";
-import { sim, type Hub } from "../services/sim";
+import { useApi } from "../services/dataCache";
+import { type Hub } from "../services/sim";
 
 export function AchievementsPage() {
-  const [hub, setHub] = useState<Hub | null>(null);
-  useEffect(() => { sim.hub().then(setHub).catch(() => undefined); }, []);
+  const { data: hub } = useApi<Hub>("/games");
   if (!hub) return <div className="muted">Carregando…</div>;
   const got = hub.achievements.filter((a) => a.unlocked).length;
   return (

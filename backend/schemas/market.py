@@ -27,6 +27,8 @@ class QuoteOut(BaseModel):
     price_brl: Decimal
     change_pct: Decimal | None
     as_of: datetime
+    fetched_at: datetime | None = None   # quando o servidor buscou a cotação
+    stale: bool = False                  # além do TTL, atualizando em segundo plano
 
 
 class BuyRequest(BaseModel):
@@ -126,3 +128,6 @@ class QuoteBrief(BaseModel):
     currency: Currency
     price_brl: Decimal
     change_pct: Decimal | None
+    as_of: datetime | None = None
+    fetched_at: datetime | None = None
+    stale: bool = False

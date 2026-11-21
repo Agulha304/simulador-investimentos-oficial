@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { StatCard } from "../components/StatCard";
-import { sim, type Rel } from "../services/sim";
+import { type Life, type Rel } from "../services/sim";
+import { useApi } from "../services/dataCache";
 import { api, type CoCatalog, type CoOverview, type CoQuote, type CoSegment, type Company } from "../services/api";
 import { fmtBRL, parseMoneyInput, trend } from "../lib/format";
 
@@ -11,16 +12,10 @@ type Tab = "overview" | "mine" | "market";
 export function CompaniesPage() {
   const nav = useNavigate();
   const [tab, setTab] = useState<Tab>("overview");
-  const [ov, setOv] = useState<CoOverview | null>(null);
-  const [catalog, setCatalog] = useState<CoCatalog | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState<CoSegment | null>(null);
-
-  const reload = useCallback(async () => {
-    try { const [o, c] = await Promise.all([api.coOverview(), api.coCatalog()]); setOv(o); setCatalog(c); setError(null); }
-    catch (e) { setError(errMsg(e)); }
-  }, []);
-  useEffect(() => { void reload(); }, [reload]);
+  const { data: ov, error: ovErr } = useApi<CoOverview>("/companies/overview");
+  const { data: catalog, error: catErr } = useApi<CoCatalog>("/companies/catalog");
+  const error = ovErr ?? catErr;
 
   if (error && !ov) return <div className="alert">Não foi possível carregar as empresas: {error}</div>;
   if (!ov || !catalog) return <div className="muted">Carregando empresas…</div>;
@@ -111,7 +106,8 @@ function CreateModal({ segment, catalog, onClose, onCreated }: { segment: CoSegm
   const [friends, setFriends] = useState<Rel[]>([]);
   const [shares, setShares] = useState<Record<number, string>>({});
   const [invites, setInvites] = useState<Record<number, { id: number; accepted: boolean; message: string; share: string }>>({});
-  useEffect(() => { sim.life().then((l) => setFriends(l.relationships.filter((r) => r.stage !== "ENDED"))).catch(() => undefined); }, []);
+  const { data: life } = useApi<Life>("/life"); // mesmo /life da tela Vida (cache compartilhado)
+  useEffect(() => { if (life) setFriends(life.relationships.filter((r) => r.stage !== "ENDED")); }, [life]);
   const accepted = Object.values(invites).filter((i) => i.accepted);
   const partnersShare = accepted.reduce((a, i) => a + Number(i.share), 0);
   async function invite(r: Rel) {

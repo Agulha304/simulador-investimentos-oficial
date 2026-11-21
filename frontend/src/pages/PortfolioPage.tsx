@@ -1,17 +1,16 @@
-import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import { QuoteStamp, quoteIsOld } from "../components/QuoteStamp";
 import { StatCard } from "../components/StatCard";
-import { api, type PortfolioSummary } from "../services/api";
+import { type PortfolioSummary } from "../services/api";
+import { useApi } from "../services/dataCache";
 import { CLASS_LABEL, fmtBRL, fmtMoney, fmtPct, fmtQty, trend } from "../lib/format";
 
 export function PortfolioPage() {
-  const [data, setData] = useState<PortfolioSummary | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  const load = useCallback(() => { api.portfolio().then(setData).catch((e: Error) => setError(e.message)); }, []);
-  useEffect(load, [load]);
+  const { data, error } = useApi<PortfolioSummary>("/portfolio");
 
   if (!data) return error ? <div className="alert">{error}</div> : <div className="muted">Carregando…</div>;
+  const times = data.holdings.map((h) => h.quote_fetched_at).filter((t): t is string => !!t).sort();
+  const anyStale = data.holdings.some((h) => quoteIsOld(h.quote_fetched_at, h.quote_stale));
 
   return (
     <div className="page">
@@ -34,7 +33,7 @@ export function PortfolioPage() {
                 <td><Link to={`/ativo/${h.asset.id}`}><b>{h.asset.symbol}</b></Link> <span className="tag">{CLASS_LABEL[h.asset.asset_class]}</span></td>
                 <td className="r num">{fmtQty(h.quantity)}</td>
                 <td className="r num">{fmtBRL(h.avg_price_brl)}</td>
-                <td className="r num">{h.current_price_brl ? fmtBRL(h.current_price_brl) : <span className="tone-warn">indisp.</span>}</td>
+                <td className="r num">{h.current_price_brl ? fmtBRL(h.current_price_brl) : <span className="tone-warn">indisp.</span>}{h.current_price_brl && quoteIsOld(h.quote_fetched_at, h.quote_stale) && <><br /><QuoteStamp fetchedAt={h.quote_fetched_at} stale={h.quote_stale} /></>}</td>
                 <td className="r num">{fmtBRL(h.market_value_brl)}</td>
                 <td className={`r num tone-${trend(h.pnl_brl)}`}>{fmtBRL(h.pnl_brl)} ({fmtPct(h.pnl_pct)})</td>
                 <td className="r num tone-down">{h.stop_loss ? fmtMoney(h.stop_loss, h.asset.currency) : <span className="muted">—</span>}</td>
@@ -42,6 +41,7 @@ export function PortfolioPage() {
               </tr>))}</tbody>
           </table></div>
         )}
+        {times.length > 0 && <p className="small" style={{ marginTop: 8 }}><QuoteStamp fetchedAt={times[0]} stale={anyStale} /></p>}
       </section>
 
     </div>

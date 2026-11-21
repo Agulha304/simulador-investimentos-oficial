@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useState } from "react";
+import { Fragment, Suspense, useEffect, useState } from "react";
 import { Link, NavLink, Navigate, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { fmtMonth } from "../lib/format";
 import { gameStore, useActiveGame } from "../services/gameStore";
+import { useApi } from "../services/dataCache";
 import { sim, type GameSummary } from "../services/sim";
 import { EndScreen } from "./EndScreen";
 import { SearchBar } from "./SearchBar";
@@ -37,15 +38,13 @@ export function GameLayout() {
   const active = useActiveGame();
   const nav = useNavigate();
   const loc = useLocation();
-  const [g, setG] = useState<GameSummary | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [version, setVersion] = useState(0); // incrementa após avançar o mês: remonta a página atual (sem recarregar o navegador)
 
-  const load = useCallback(() => {
-    if (!active) return;
-    sim.game_(active.id).then(setG).catch(() => { gameStore.set(null); nav("/"); });
-  }, [active, nav]);
-  useEffect(() => { load(); }, [load, loc.pathname === "/painel"]);   // eslint-disable-line react-hooks/exhaustive-deps
+  // um único GET /games/{id}, compartilhado (cache) com TrainingHome; refeito sozinho após qualquer mutação
+  const { data: g, error: gameError } = useApi<GameSummary>(active ? `/games/${active.id}` : null);
+  useEffect(() => { if (gameError && !g) { gameStore.set(null); nav("/"); } }, [gameError, g, nav]);
 
   if (!active) return <Navigate to="/" replace />;
   const training = active.kind === "TRAINING";
@@ -54,7 +53,7 @@ export function GameLayout() {
 
   const advance = async () => {
     setBusy(true); setErr(null);
-    try { await sim.trainAdvance(active.id, 1); window.location.reload(); } catch (e) { setErr(e instanceof Error ? e.message : "Erro"); setBusy(false); }
+    try { await sim.trainAdvance(active.id, 1); setVersion((v) => v + 1); } catch (e) { setErr(e instanceof Error ? e.message : "Erro"); } finally { setBusy(false); }
   };
   return (
     <div className="game-shell">
@@ -86,7 +85,7 @@ export function GameLayout() {
               {INVEST_TABS.map((t) => <NavLink key={t.to} to={t.to} className={({ isActive }) => `itab${isActive ? " on" : ""}`}>{t.label}</NavLink>)}
               <div className="grow" /><SearchBar />
             </div>)}
-          <Outlet />
+          <Fragment key={version}><Suspense fallback={<div className="muted">Carregando…</div>}><Outlet /></Suspense></Fragment>
         </main>
       </div>
     </div>

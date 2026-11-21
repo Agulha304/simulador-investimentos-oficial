@@ -52,20 +52,36 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-@app.middleware("http")
-async def server_timing(request, call_next):
-    """Header Server-Timing: nº de queries e tempo total no banco por request (veja na aba Rede do navegador)."""
-    import time
-    from backend.database import query_stats
-    stats = [0, 0.0]
-    tok = query_stats.set(stats)
-    t0 = time.perf_counter()
-    try:
-        resp = await call_next(request)
-    finally:
-        query_stats.reset(tok)
-    resp.headers["Server-Timing"] = f'db;dur={stats[1]:.0f};desc="{stats[0]} queries", total;dur={(time.perf_counter()-t0)*1000:.0f}'
-    return resp
+class ServerTimingMiddleware:
+    """ASGI puro (sem BaseHTTPMiddleware: sem task extra nem buffer por request). Header `Server-Timing` com o nº de
+    queries e o tempo no banco da requisição; comprime (gzip) só as respostas JSON da API."""
+
+    def __init__(self, inner):
+        import starlette.middleware.gzip as _gz
+        self.inner = inner
+        self.gz = _gz.GZipMiddleware(inner, minimum_size=1024)
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.inner(scope, receive, send)
+        import time
+        from backend.database import query_stats
+        stats = [0, 0.0]
+        tok = query_stats.set(stats)
+        t0 = time.perf_counter()
+
+        async def send_wrapped(msg):
+            if msg["type"] == "http.response.start":
+                headers = list(msg.get("headers", []))
+                headers.append((b"server-timing", f'db;dur={stats[1]:.0f};desc="{stats[0]} queries", total;dur={(time.perf_counter()-t0)*1000:.0f}'.encode()))
+                msg = {**msg, "headers": headers}
+            await send(msg)
+        path = scope.get("path", "")
+        target = self.gz if path.startswith("/api/") and not path.startswith("/api/media") else self.inner
+        try:
+            await target(scope, receive, send_wrapped)
+        finally:
+            query_stats.reset(tok)
 
 
 API_PREFIX = "/api"
@@ -104,7 +120,14 @@ from fastapi.staticfiles import StaticFiles  # noqa: E402
 _FRONT = Path(__file__).resolve().parent.parent / "frontend" / "dist"
 if (_FRONT / "index.html").is_file():
     if (_FRONT / "assets").is_dir():
-        app.mount("/assets", StaticFiles(directory=_FRONT / "assets"), name="site-assets")
+        class _ImmutableAssets(StaticFiles):
+            """Arquivos do Vite têm hash no nome: o navegador pode guardá-los por 1 ano sem revalidar."""
+            def file_response(self, *a, **k):
+                r = super().file_response(*a, **k)
+                r.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+                return r
+
+        app.mount("/assets", _ImmutableAssets(directory=_FRONT / "assets"), name="site-assets")
 
     @app.get("/{full_path:path}", include_in_schema=False)
     def _site(full_path: str):
@@ -112,5 +135,7 @@ if (_FRONT / "index.html").is_file():
             raise HTTPException(404, "Não encontrado")
         f = (_FRONT / full_path).resolve()
         if full_path and f.is_file() and _FRONT.resolve() in f.parents:
-            return FileResponse(f)
-        return FileResponse(_FRONT / "index.html")
+            return FileResponse(f, headers={"Cache-Control": "public, max-age=3600"})
+        return FileResponse(_FRONT / "index.html", headers={"Cache-Control": "no-cache"})   # sempre revalida (ETag): pega o deploy novo
+
+app.add_middleware(ServerTimingMiddleware)

@@ -45,11 +45,12 @@ def initial_deposit(db: Session, portfolio_id: int) -> Decimal:
     return quantize_money(v)
 
 
-def take_snapshot(db: Session, portfolio: Portfolio, now: datetime | None = None) -> PortfolioSnapshot | None:
+def take_snapshot(db: Session, portfolio: Portfolio, now: datetime | None = None,
+                  summary: "portfolio_service.PortfolioSummary | None" = None) -> PortfolioSnapshot | None:
     """Grava (ou atualiza) a foto da hora corrente. Pula se faltar cotação de alguma posição,
     para não registrar uma queda falsa causada por preço indisponível."""
     now = now or datetime.now(UTC)
-    s = portfolio_service.build_summary(db, portfolio)
+    s = summary or portfolio_service.build_summary(db, portfolio)      # `summary`: reaproveita o cálculo já feito na requisição
     if any(v.current_price_brl is None for v in s.holdings):
         log.warning("snapshot adiado (carteira %s): cotação indisponível", portfolio.id)
         return None
@@ -70,17 +71,18 @@ def take_snapshot(db: Session, portfolio: Portfolio, now: datetime | None = None
                                                      PortfolioSnapshot.bucket == bucket))
 
 
-def ensure_recent_snapshot(db: Session, portfolio: Portfolio, max_age: timedelta = timedelta(minutes=10)) -> None:
+def ensure_recent_snapshot(db: Session, portfolio: Portfolio, max_age: timedelta = timedelta(minutes=10),
+                           summary: "portfolio_service.PortfolioSummary | None" = None) -> None:
     from backend.core.clock import get_clock
     clock = get_clock()
     if clock is not None:                      # partida: a série usa o TEMPO DA PARTIDA (uma foto por data)
         when = datetime.combine(clock.today, datetime.min.time(), tzinfo=UTC)
         if not db.scalar(select(PortfolioSnapshot.id).where(PortfolioSnapshot.portfolio_id == portfolio.id, PortfolioSnapshot.taken_at == when)):
-            take_snapshot(db, portfolio, when)
+            take_snapshot(db, portfolio, when, summary)
         return
     last = db.scalar(select(func.max(PortfolioSnapshot.taken_at)).where(PortfolioSnapshot.portfolio_id == portfolio.id))
     if last is None or datetime.now(UTC) - last > max_age:
-        take_snapshot(db, portfolio)
+        take_snapshot(db, portfolio, summary=summary)
 
 
 def snapshot_all(db: Session) -> int:
@@ -107,6 +109,15 @@ def load_snapshots(db: Session, portfolio_id: int, range_key: str, now: datetime
     days = RANGES[range_key]
     if days is not None:
         q = q.where(PortfolioSnapshot.taken_at >= now - timedelta(days=days))
+    return list(db.scalars(q))
+
+
+def load_daily_snapshots(db: Session, portfolio_id: int) -> list[PortfolioSnapshot]:
+    """Última foto de cada dia (fuso local), de todo o histórico, calculada no banco: equivale a
+    downsample(load_snapshots('all'), hourly=False), mas traz ~1/24 das linhas."""
+    day = func.date(func.timezone(TZ.key, PortfolioSnapshot.taken_at))
+    q = (select(PortfolioSnapshot).where(PortfolioSnapshot.portfolio_id == portfolio_id)
+         .distinct(day).order_by(day, PortfolioSnapshot.taken_at.desc()))
     return list(db.scalars(q))
 
 
@@ -368,14 +379,17 @@ def _recommended(db: Session, user_id: int, alloc, positions, tstats, sstats, di
 def build_performance(db: Session, user_id: int, portfolio_id: int, range_key: str, now: datetime | None = None) -> dict:
     now = now or datetime.now(UTC)
     portfolio = portfolio_service.load_portfolio(db, portfolio_id)
-    ensure_recent_snapshot(db, portfolio)
     idx, today = index_data.load(db), today_br()
+    summary = portfolio_service.build_summary(db, portfolio, idx=idx)    # UMA vez por requisição (antes: até duas)
+    ensure_recent_snapshot(db, portfolio, summary=summary)
 
-    rows = load_snapshots(db, portfolio_id, range_key, now)
+    if range_key == "all":
+        rows = all_rows = load_daily_snapshots(db, portfolio_id)         # já 1 foto/dia
+    else:
+        rows, all_rows = load_snapshots(db, portfolio_id, range_key, now), None
     series = build_series(downsample(rows, hourly=range_key in ("1d", "7d")), idx)
     sstats = series_stats(series)
 
-    summary = portfolio_service.build_summary(db, portfolio)
     txs = load_transactions(db, portfolio_id)
     tstats = trade_stats(txs)
     monthly, cumulative = monthly_and_cumulative(txs)
@@ -387,8 +401,9 @@ def build_performance(db: Session, user_id: int, portfolio_id: int, range_key: s
     wealth = quantize_money(summary.total_equity_brl - extra)
     total_return = _pct(wealth - initial, initial) if initial else None
 
-    all_rows = rows if range_key == "all" else load_snapshots(db, portfolio_id, "all", now)
-    all_series = series if range_key == "all" else build_series(downsample(all_rows, hourly=False), idx)
+    if all_rows is None:
+        all_rows = load_daily_snapshots(db, portfolio_id)
+    all_series = series if range_key == "all" else build_series(all_rows, idx)
     all_stats = series_stats(all_series)
     beat = (all_stats["vs_cdi_pp"] >= 0) if all_stats["vs_cdi_pp"] is not None else None
 

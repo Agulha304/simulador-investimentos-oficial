@@ -1,19 +1,18 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { sim, type AccountCategory, type GameSummary, type SimParams } from "../services/sim";
+import { useApi } from "../services/dataCache";
+import { sim, type AccountCategory, type Hub, type SimParams } from "../services/sim";
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : "Erro inesperado");
 
 /** Configurações da conta: valem para todas as partidas (atuais e futuras). */
 export function SettingsPage() {
-  const [cats, setCats] = useState<AccountCategory[] | null>(null);
+  const { data: cats, error: loadErr, reload } = useApi<AccountCategory[]>("/account/categories");
   const [kind, setKind] = useState<"EXPENSE" | "INCOME">("EXPENSE");
   const [name, setName] = useState("");
   const [err, setErr] = useState<string | null>(null);
-  const load = () => sim.accountCategories().then(setCats).catch((e) => setErr(errMsg(e)));
-  useEffect(() => { void load(); }, []);
-  const run = async (fn: () => Promise<unknown>) => { setErr(null); try { await fn(); await load(); } catch (e) { setErr(errMsg(e)); } };
-  if (!cats) return err ? <div className="alert">{err}</div> : <div className="muted">Carregando…</div>;
+  const run = async (fn: () => Promise<unknown>) => { setErr(null); try { await fn(); await reload(); } catch (e) { setErr(errMsg(e)); } };
+  if (!cats) return err || loadErr ? <div className="alert">{err ?? loadErr}</div> : <div className="muted">Carregando…</div>;
   const Block = ({ k, title, hint }: { k: "EXPENSE" | "INCOME"; title: string; hint: string }) => (
     <section className="panel stack"><h2>{title}</h2><p className="muted small" style={{ margin: 0 }}>{hint}</p>
       <ul className="list-plain">{cats.filter((c) => c.kind === k).map((c) => (
@@ -49,12 +48,15 @@ const PARAM_LABELS: [keyof SimParams, string, string][] = [
 
 /** Ajustes da economia simulada de cada partida de vida completa (antes ficavam na tela de Economia). */
 function SimSettings() {
-  const [games, setGames] = useState<GameSummary[]>([]);
-  const [gid, setGid] = useState<number | null>(null);
+  const { data: hub } = useApi<Hub>("/games");
+  const games = useMemo(() => (hub?.games ?? []).filter((g) => g.kind === "LIFE"), [hub]);
+  const [gidSel, setGid] = useState<number | null>(null);
+  const gid = gidSel ?? games[0]?.id ?? null;
+  const { data: params, error: paramsErr } = useApi<{ game: string; params: SimParams }>(gid != null ? `/games/${gid}/sim-params` : null);
   const [p, setP] = useState<SimParams | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
-  useEffect(() => { sim.hub().then((h) => { const life = h.games.filter((g) => g.kind === "LIFE"); setGames(life); if (life[0]) setGid(life[0].id); }).catch(() => undefined); }, []);
-  useEffect(() => { if (gid != null) sim.gameSimParams(gid).then((r) => setP(r.params)).catch((e) => setMsg(errMsg(e))); }, [gid]);
+  useEffect(() => { setP(params?.params ?? null); }, [params]);
+  useEffect(() => { if (paramsErr) setMsg(paramsErr); }, [paramsErr]);
   const save = async () => { if (gid == null || !p) return; try { const r = await sim.putGameSimParams(gid, p); setP(r.params); setMsg("Salvo! Vale a partir do próximo mês."); } catch (e) { setMsg(errMsg(e)); } };
   return (
     <section className="panel stack"><h2>🎚️ Ajustes da economia simulada</h2>

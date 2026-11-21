@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import { api, type DividendItem, type Transaction } from "../services/api";
+import { useApi } from "../services/dataCache";
 import { KIND_LABEL, SOURCE_LABEL, STATUS_LABEL, TX_LABEL, fmtBRL, fmtDate, fmtDay, fmtMoney, fmtQty, trend } from "../lib/format";
 
 const FILTERS = [
@@ -13,24 +14,21 @@ const INVEST_TYPES = new Set(["BUY", "SELL", "DIVIDEND", "FIXED_INCOME_APPLY", "
 export function HistoryPage() {
   const [tab, setTab] = useState<"tx" | "div">("tx");
   const [filter, setFilter] = useState("ALL");
-  const [txs, setTxs] = useState<Transaction[] | null>(null);
-  const [divs, setDivs] = useState<DividendItem[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const { data: txsData, error: txErr } = useApi<Transaction[]>("/portfolio/transactions?limit=500");
+  const { data: divsData, error: divErr } = useApi<DividendItem[]>("/portfolio/dividends");
+  const txs = txsData ?? null;
+  const divs = divsData ?? null;
+  const [actionError, setError] = useState<string | null>(null);
+  const error = actionError ?? txErr ?? divErr;
   const [info, setInfo] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-
-  const load = useCallback(() => {
-    api.transactions(500).then(setTxs).catch((e: Error) => setError(e.message));
-    api.dividends().then(setDivs).catch((e: Error) => setError(e.message));
-  }, []);
-  useEffect(load, [load]);
 
   async function sync() {
     setBusy(true); setInfo(null); setError(null);
     try {
       const r = await api.syncDividends();
       setInfo(`${r.new_rights} novo(s) direito(s) reconhecido(s), ${r.paid} pagamento(s) efetuado(s).`);
-      load();
+      // a mutação invalida o cache e as listas são refeitas sozinhas
     } catch (e) { setError(e instanceof Error ? e.message : "Erro"); }
     finally { setBusy(false); }
   }

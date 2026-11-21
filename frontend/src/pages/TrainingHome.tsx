@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { StatCard } from "../components/StatCard";
 import { fmtBRL, fmtMonth, trend } from "../lib/format";
-import { api, type PortfolioSummary } from "../services/api";
+import { type PortfolioSummary } from "../services/api";
+import { useApi } from "../services/dataCache";
 import { useActiveGame } from "../services/gameStore";
 import { sim, type GameSummary } from "../services/sim";
 
@@ -10,18 +11,20 @@ const errMsg = (e: unknown) => (e instanceof Error ? e.message : "Erro inesperad
 
 export function TrainingHome() {
   const game = useActiveGame()!;
-  const [g, setG] = useState<GameSummary | null>(null);
-  const [pf, setPf] = useState<PortfolioSummary | null>(null);
+  // mesmos GET /games/{id} e /portfolio do restante do app: vêm do cache e são refeitos sozinhos após cada ação
+  const { data: g, error: loadErr } = useApi<GameSummary>(`/games/${game.id}`);
+  const { data: pf } = useApi<PortfolioSummary>("/portfolio");
   const [date, setDate] = useState("");
   const [money, setMoney] = useState("10000");
   const [err, setErr] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
-  useEffect(() => { sim.game_(game.id).then((x) => { setG(x); setDate(x.market_date?.slice(0, 7) ?? ""); }).catch((e) => setErr(errMsg(e))); api.portfolio().then(setPf).catch(() => undefined); }, [game.id]);
+  const marketMonth = g?.market_date?.slice(0, 7) ?? "";
+  useEffect(() => { setDate(marketMonth); }, [marketMonth]);
   const act = async (fn: () => Promise<unknown>, msg: string) => {
     setErr(null);
-    try { await fn(); setNote(msg); setTimeout(() => window.location.reload(), 700); } catch (e) { setErr(errMsg(e)); }
+    try { await fn(); setNote(msg); } catch (e) { setErr(errMsg(e)); }
   };
-  if (!g) return err ? <div className="alert">{err}</div> : <div className="muted">Carregando…</div>;
+  if (!g) return err || loadErr ? <div className="alert">{err ?? loadErr}</div> : <div className="muted">Carregando…</div>;
   return (
     <div className="page">
       <header className="page-head"><div><h1>🧪 {g.name}</h1><p className="muted">Hoje, no seu treino, é <b>{fmtMonth(g.market_date!)}</b>. Os preços são os reais daquela época.</p></div></header>

@@ -28,6 +28,8 @@ class HoldingOut(BaseModel):
     market_value_brl: Decimal
     pnl_brl: Decimal
     pnl_pct: Decimal | None
+    quote_fetched_at: datetime | None = None   # quando a cotação foi buscada
+    quote_stale: bool = False                  # cotação além do TTL (atualizando em segundo plano)
 
 
 class PortfolioSummaryOut(BaseModel):

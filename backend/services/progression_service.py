@@ -6,7 +6,7 @@ Tudo é calculado a partir dos dados reais dos outros módulos (carteira, ledger
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import func, select
+from sqlalchemy import exists, func, select
 from sqlalchemy.orm import Session
 
 from backend.core.money import quantize_money
@@ -165,38 +165,58 @@ def _exists(db: Session, q) -> bool:
     return db.scalar(q.limit(1)) is not None
 
 
-def achievement_checks(db: Session, user_id: int, m: dict) -> dict[str, bool]:
-    pid = db.scalar(select(Portfolio.id).where(Portfolio.user_id == user_id))
-    reports = list(db.scalars(select(MonthReport).where(MonthReport.user_id == user_id)))
-    return {
-        "first_investment": _exists(db, select(Transaction.id).where(
-            Transaction.portfolio_id == pid, Transaction.type.in_((TransactionType.BUY, TransactionType.FIXED_INCOME_APPLY)))),
-        "first_property": _exists(db, select(Good.id).where(Good.user_id == user_id, Good.category.in_(REAL_ESTATE))),
-        "first_company": _exists(db, select(Company.id).where(Company.user_id == user_id)),
-        "first_employee": _exists(db, select(Employee.id).join(Company, Company.id == Employee.company_id).where(Company.user_id == user_id)),
-        "first_positive_month": _exists(db, select(SimMonth.id).where(
-            SimMonth.user_id == user_id, SimMonth.status == MonthStatus.CLOSED, SimMonth.total_income > SimMonth.total_expense)),
-        "first_debt_paid": _exists(db, select(Loan.id).where(Loan.user_id == user_id, Loan.status == LoanStatus.PAID)) or
-        _exists(db, select(CompanyLoan.id).join(Company, Company.id == CompanyLoan.company_id).where(
-            Company.user_id == user_id, CompanyLoan.status == LoanStatus.PAID)),
-        "first_million": m["net_worth"] >= P.MILLION or any(r.data.get("net_worth", 0) >= P.MILLION for r in reports),
-        "company_expanded": _exists(db, select(CompanyEvent.id).join(Company, Company.id == CompanyEvent.company_id).where(
-            Company.user_id == user_id, CompanyEvent.type == CompanyEventType.EXPANSION)),
-        "first_distribution": _exists(db, select(LedgerEntry.id).where(LedgerEntry.user_id == user_id, LedgerEntry.line == "DISTRIBUTION")),
-        "emergency_reserve": m["emergency_months"] >= 6 or any(r.data.get("metrics", {}).get("emergency_months", 0) >= 6 for r in reports),
-        "first_partner": _exists(db, select(LifeLog.id).where(LifeLog.user_id == user_id, LifeLog.kind == "DATING")) or
-        _exists(db, select(Relationship.id).where(Relationship.user_id == user_id, Relationship.stage.in_(("DATING", "COHABITING", "MARRIED")))),
-        "married": _exists(db, select(LifeLog.id).where(LifeLog.user_id == user_id, LifeLog.kind == "MARRIED")) or
-        _exists(db, select(Relationship.id).where(Relationship.user_id == user_id, Relationship.stage == "MARRIED")),
-        "first_child": _exists(db, select(Child.id).where(Child.user_id == user_id)),
-        "first_goal": _exists(db, select(Goal.id).where(Goal.user_id == user_id, Goal.status == "DONE")),
+def achievement_checks(db: Session, user_id: int, m: dict, skip: frozenset | set = frozenset()) -> dict[str, bool]:
+    """Conquistas ainda NÃO desbloqueadas (`skip` = já desbloqueadas) verificadas em UMA query com EXISTS
+    (eram ~15 idas ao banco em série)."""
+    pid_q = select(Portfolio.id).where(Portfolio.user_id == user_id).scalar_subquery()
+    sql = {
+        "first_investment": select(Transaction.id).where(
+            Transaction.portfolio_id == pid_q, Transaction.type.in_((TransactionType.BUY, TransactionType.FIXED_INCOME_APPLY))),
+        "first_property": select(Good.id).where(Good.user_id == user_id, Good.category.in_(REAL_ESTATE)),
+        "first_company": select(Company.id).where(Company.user_id == user_id),
+        "first_employee": select(Employee.id).join(Company, Company.id == Employee.company_id).where(Company.user_id == user_id),
+        "first_positive_month": select(SimMonth.id).where(
+            SimMonth.user_id == user_id, SimMonth.status == MonthStatus.CLOSED, SimMonth.total_income > SimMonth.total_expense),
+        "first_debt_paid_a": select(Loan.id).where(Loan.user_id == user_id, Loan.status == LoanStatus.PAID),
+        "first_debt_paid_b": select(CompanyLoan.id).join(Company, Company.id == CompanyLoan.company_id).where(
+            Company.user_id == user_id, CompanyLoan.status == LoanStatus.PAID),
+        "company_expanded": select(CompanyEvent.id).join(Company, Company.id == CompanyEvent.company_id).where(
+            Company.user_id == user_id, CompanyEvent.type == CompanyEventType.EXPANSION),
+        "first_distribution": select(LedgerEntry.id).where(LedgerEntry.user_id == user_id, LedgerEntry.line == "DISTRIBUTION"),
+        "first_partner_a": select(LifeLog.id).where(LifeLog.user_id == user_id, LifeLog.kind == "DATING"),
+        "first_partner_b": select(Relationship.id).where(Relationship.user_id == user_id, Relationship.stage.in_(("DATING", "COHABITING", "MARRIED"))),
+        "married_a": select(LifeLog.id).where(LifeLog.user_id == user_id, LifeLog.kind == "MARRIED"),
+        "married_b": select(Relationship.id).where(Relationship.user_id == user_id, Relationship.stage == "MARRIED"),
+        "first_child": select(Child.id).where(Child.user_id == user_id),
+        "first_goal": select(Goal.id).where(Goal.user_id == user_id, Goal.status == "DONE"),
     }
+    need = {  # conquista -> consultas que a compõem (qualquer uma verdadeira basta)
+        "first_investment": ("first_investment",), "first_property": ("first_property",), "first_company": ("first_company",),
+        "first_employee": ("first_employee",), "first_positive_month": ("first_positive_month",),
+        "first_debt_paid": ("first_debt_paid_a", "first_debt_paid_b"), "company_expanded": ("company_expanded",),
+        "first_distribution": ("first_distribution",), "first_partner": ("first_partner_a", "first_partner_b"),
+        "married": ("married_a", "married_b"), "first_child": ("first_child",), "first_goal": ("first_goal",),
+    }
+    wanted = {k: v for k, v in need.items() if k not in skip}
+    labels = {q for qs in wanted.values() for q in qs}
+    hits: dict[str, bool] = {}
+    if labels:
+        row = db.execute(select(*[exists(sql[q]).label(q) for q in sorted(labels)])).one()
+        hits = dict(row._mapping)
+    out = {k: any(hits[q] for q in qs) for k, qs in wanted.items()}
+    if "first_million" not in skip or "emergency_reserve" not in skip:
+        reports = list(db.scalars(select(MonthReport).where(MonthReport.user_id == user_id)))
+        if "first_million" not in skip:
+            out["first_million"] = m["net_worth"] >= P.MILLION or any(r.data.get("net_worth", 0) >= P.MILLION for r in reports)
+        if "emergency_reserve" not in skip:
+            out["emergency_reserve"] = m["emergency_months"] >= 6 or any(r.data.get("metrics", {}).get("emergency_months", 0) >= 6 for r in reports)
+    return out
 
 
 def evaluate_achievements(db: Session, user_id: int, ref: date, m: dict) -> list[str]:
     have = set(db.scalars(select(Achievement.key).where(Achievement.user_id == user_id)))
     new = []
-    for key, ok in achievement_checks(db, user_id, m).items():
+    for key, ok in achievement_checks(db, user_id, m, have).items():
         if ok and key not in have:
             db.add(Achievement(user_id=user_id, key=key, unlocked_month=ref))
             new.append(key)
@@ -501,8 +521,8 @@ def _seed_family(db: Session, user_id: int, month: SimMonth, sc: P.Scenario) -> 
 # ------------------------------------------------------------------ painel geral
 def dashboard(db: Session, user_id: int) -> dict:
     month = budget_service.ensure_setup(db, user_id)
-    refresh_open_month(db, user_id, month)
-    m = metrics(db, user_id, month.ref_month)
+    m = metrics(db, user_id, month.ref_month)                       # uma vez só (antes: duas, uma em refresh_open_month)
+    evaluate_achievements(db, user_id, month.ref_month, m)
     summary = budget_service.summarize(db, user_id, month)
     game = economy_service.get_game(db, user_id)
     st = economy_service.get_state(db, user_id, month.ref_month)

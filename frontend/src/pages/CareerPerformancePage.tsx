@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 import { Link } from "react-router-dom";
 import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { StatCard } from "../components/StatCard";
 import { fmtBRL, fmtMonth, trend } from "../lib/format";
-import { sim, type CareerPerf } from "../services/sim";
+import { useApi } from "../services/dataCache";
+import { type CareerPerf } from "../services/sim";
 
 const COLORS = ["#ffd23f", "#3ee59a", "#ff6482", "#4cc9f0"];
 const ICON = { good: "✅", warn: "⚠️", info: "💡" } as const;
@@ -11,11 +12,9 @@ const n = (v: number | null | undefined) => (v == null ? "—" : fmtBRL(String(v
 
 /** Desempenho da CARREIRA (partida de vida completa): a vida financeira inteira, não só a carteira de investimentos. */
 export function CareerPerformancePage() {
-  const [d, setD] = useState<CareerPerf | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-  useEffect(() => { sim.careerPerformance().then(setD).catch((e) => setErr(e instanceof Error ? e.message : "Erro")); }, []);
+  const { data: d, error: err } = useApi<CareerPerf>("/progress/performance");
   const data = useMemo(() => (d?.series ?? []).map((s) => ({ ...s, m: fmtMonth(s.month).replace(" de ", "/") })), [d]);
-  if (err) return <div className="alert">{err}</div>;
+  if (err && !d) return <div className="alert">{err}</div>;
   if (!d) return <div className="muted">Carregando desempenho…</div>;
   const s = d.summary;
   const Chart = ({ title, hint, keys }: { title: string; hint: string; keys: [string, string][] }) => (

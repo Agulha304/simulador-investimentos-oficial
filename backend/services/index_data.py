@@ -8,6 +8,7 @@ Projeções (usadas para datas futuras / ainda não publicadas):
   * CDI e Selic: mantém a última taxa diária conhecida;
   * IPCA e IGP-M: média dos últimos 12 meses publicados.
 """
+import threading
 import logging
 from bisect import bisect_right
 from dataclasses import dataclass, field
@@ -181,15 +182,43 @@ class IndexData:
         return factor
 
 
-def load(db: Session, since_years: int = 7) -> IndexData:
-    s = get_settings()
+_RATES_CACHE: dict = {}      # since_years -> (cutoff, impressão digital da tabela, daily, monthly)
+_rates_lock = threading.Lock()
+
+
+def clear_cache() -> None:
+    with _rates_lock:
+        _RATES_CACHE.clear()
+
+
+def _load_rows(db: Session, since_years: int):
+    """Séries de índices (~7 anos) mudam no máximo 1x/dia. Em vez de baixar milhares de linhas a cada requisição,
+    pergunta ao banco uma IMPRESSÃO DIGITAL barata (contagem, última data, soma) e reaproveita a cópia em memória
+    enquanto ela não mudar: qualquer inserção/alteração de taxa invalida sozinha."""
+    cutoff = date.today() - timedelta(days=365 * since_years)
+    fp = tuple(db.execute(select(func.count(), func.max(IndexRate.ref_date), func.coalesce(func.sum(IndexRate.value), 0))
+                          .where(IndexRate.ref_date >= cutoff)).one())
+    with _rates_lock:
+        hit = _RATES_CACHE.get(since_years)
+    if hit and hit[0] == cutoff and hit[1] == fp:
+        return hit[2], hit[3]
     daily: dict[IndexName, dict[date, Decimal]] = {}
     monthly: dict[IndexName, dict[date, Decimal]] = {}
-    cutoff = date.today() - timedelta(days=365 * since_years)
     for name, ref_date, value in db.execute(
         select(IndexRate.index_name, IndexRate.ref_date, IndexRate.value).where(IndexRate.ref_date >= cutoff)
     ):
         (daily if name in DAILY else monthly).setdefault(name, {})[ref_date] = value
+    with _rates_lock:
+        _RATES_CACHE[since_years] = (cutoff, fp, daily, monthly)
+    return daily, monthly
+
+
+def load(db: Session, since_years: int = 7) -> IndexData:
+    s = get_settings()
+    cd, cm = _load_rows(db, since_years)
+    # cópia rasa por requisição: o relógio da partida simulada ALTERA os dicts (index_fn)
+    daily = {k: dict(v) for k, v in cd.items()}
+    monthly = {k: dict(v) for k, v in cm.items()}
     from backend.core.clock import get_clock
     clock = get_clock()
     if clock is not None and clock.index_fn is not None:        # partida simulada: CDI e IPCA do mundo simulado

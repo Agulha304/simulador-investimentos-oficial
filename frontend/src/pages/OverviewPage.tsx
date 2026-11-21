@@ -1,18 +1,15 @@
-import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { Meter } from "../components/Meter";
 import { StatCard } from "../components/StatCard";
 import { fmtBRL, fmtMonth, trend } from "../lib/format";
-import { sim, type Overview } from "../services/sim";
+import { useApi } from "../services/dataCache";
+import { type Overview } from "../services/sim";
 
-const errMsg = (e: unknown) => (e instanceof Error ? e.message : "Erro inesperado");
 const STAGE: Record<string, string> = { DATING: "Namorando", COHABITING: "União estável", MARRIED: "Casado(a)" };
 
 export function OverviewPage() {
-  const [o, setO] = useState<Overview | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-  useEffect(() => { sim.overview().then(setO).catch((e) => setErr(errMsg(e))); }, []);
-  if (err) return <div className="alert">Não foi possível carregar a visão geral: {err}</div>;
+  const { data: o, error: err } = useApi<Overview>("/progress/overview");
+  if (err && !o) return <div className="alert">Não foi possível carregar a visão geral: {err}</div>;
   if (!o) return <div className="muted">Carregando…</div>;
   const flow = Number(o.monthly_income) - Number(o.monthly_expense);
   return (

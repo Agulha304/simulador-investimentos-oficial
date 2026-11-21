@@ -11,7 +11,6 @@ export function ChartPanel({ assetId }: { assetId: number }) {
   const [drawings, setDrawings] = useState<Drawing[]>([]);
   const [tool, setTool] = useState<DrawingType | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [layoutLoaded, setLayoutLoaded] = useState(false);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [data, setData] = useState<ChartData | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -20,11 +19,13 @@ export function ChartPanel({ assetId }: { assetId: number }) {
 
   // layout salvo (indicadores e desenhos) por usuário e ativo
   useEffect(() => {
-    setLayoutLoaded(false); setData(null); setTool(null); setSelectedId(null);
+    setData(null); setTool(null); setSelectedId(null); setIndicators([]);
+    let off = false;
+    // layout e gráfico saem em paralelo; o gráfico só é refeito se o layout salvo trouxer indicadores
     api.layout(assetId)
-      .then((l) => { setIndicators(l.indicators); setDrawings(l.drawings as unknown as Drawing[]); })
-      .catch(() => { setIndicators([]); setDrawings([]); })
-      .finally(() => setLayoutLoaded(true));
+      .then((l) => { if (off) return; setIndicators((cur) => (l.indicators.join("|") === cur.join("|") ? cur : l.indicators)); setDrawings(l.drawings as unknown as Drawing[]); })
+      .catch(() => { if (!off) { setIndicators([]); setDrawings([]); } });
+    return () => { off = true; };
   }, [assetId]);
 
   const saveTimer = useRef<ReturnType<typeof setTimeout>>();
@@ -62,7 +63,6 @@ export function ChartPanel({ assetId }: { assetId: number }) {
   }, [selectedId, removeSelected]);
 
   useEffect(() => {
-    if (!layoutLoaded) return;
     let cancelled = false;
     setLoading(true); setError(null);
     api.chart(assetId, period, indicators)
@@ -70,7 +70,7 @@ export function ChartPanel({ assetId }: { assetId: number }) {
       .catch((e: Error) => { if (!cancelled) { setError(e.message); setData(null); } })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [assetId, period, indicators, layoutLoaded]);
+  }, [assetId, period, indicators]);
 
   const activeTool = TOOLS.find((t) => t.type === tool);
   const selected = drawings.find((d) => d.id === selectedId);

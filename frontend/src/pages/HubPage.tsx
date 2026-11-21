@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { fmtBRL, fmtDay } from "../lib/format";
-import { api, type Ranking } from "../services/api";
+import { type Ranking } from "../services/api";
+import { useApi } from "../services/dataCache";
 import { gameStore } from "../services/gameStore";
 import { sim, type GameSummary, type Hub } from "../services/sim";
 import { useAuth } from "../services/auth";
@@ -12,19 +13,18 @@ const MEDAL = ["🥇", "🥈", "🥉"];
 export function HubPage() {
   const { user } = useAuth();
   const nav = useNavigate();
-  const [hub, setHub] = useState<Hub | null>(null);
-  const [rank, setRank] = useState<Ranking | null>(null);
   const [board, setBoard] = useState<"wealth" | "return">("wealth");
-  const [error, setError] = useState<string | null>(null);
-
-  const load = useCallback(() => { sim.hub().then(setHub).catch((e) => setError(errMsg(e))); }, []);
-  useEffect(() => { gameStore.set(null); load(); }, [load]);          // estar no menu inicial = fora de qualquer partida
-  useEffect(() => { api.ranking(board, "all").then(setRank).catch(() => setRank(null)); }, [board]);
+  const [actionError, setActionError] = useState<string | null>(null);
+  useEffect(() => { gameStore.set(null); }, []);          // estar no menu inicial = fora de qualquer partida
+  // /games e ranking em paralelo, com cache (compartilhado com Conquistas/Configurações)
+  const { data: hub, error: hubError } = useApi<Hub>("/games");
+  const { data: rank } = useApi<Ranking>(`/ranking?board=${board}&period=all`);
+  const error = actionError ?? hubError;
 
   const open = async (g: GameSummary) => { gameStore.set({ id: g.id, kind: g.kind, name: g.name }); nav("/painel"); };
   const archive = async (g: GameSummary) => {
     if (!window.confirm(`Arquivar a partida “${g.name}”? Ela some da lista (seus dados ficam guardados).`)) return;
-    try { await sim.archiveGame(g.id); load(); } catch (e) { setError(errMsg(e)); }
+    try { await sim.archiveGame(g.id); } catch (e) { setActionError(errMsg(e)); }
   };
   const unlocked = hub?.achievements.filter((a) => a.unlocked).length ?? 0;
   const pct = hub ? Math.round((hub.lessons.done / Math.max(1, hub.lessons.total)) * 100) : 0;

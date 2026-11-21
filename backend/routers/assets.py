@@ -52,11 +52,12 @@ def get_quotes(_: CurrentUser, db: DbSession, ids: Annotated[str, Query(max_leng
 
     def one(a: Asset) -> QuoteBrief | None:
         try:
-            pq = market_data.get_priced_quote(a)
+            pq = market_data.get_priced_quote(a, allow_stale=True)
         except market_data.MarketDataUnavailable:
             return None
         return QuoteBrief(asset_id=a.id, price=pq.quote.price, currency=pq.quote.currency,
-                          price_brl=pq.price_brl, change_pct=pq.quote.change_pct)
+                          price_brl=pq.price_brl, change_pct=pq.quote.change_pct, as_of=pq.quote.as_of,
+                          fetched_at=pq.fetched_at, stale=pq.stale)
 
     with ThreadPoolExecutor(max_workers=6) as pool:
         results = list(pool.map(one, [assets[i] for i in wanted if i in assets]))
@@ -72,11 +73,12 @@ def get_asset(asset_id: int, _: CurrentUser, db: DbSession):
 def get_asset_quote(asset_id: int, _: CurrentUser, db: DbSession):
     asset = _get_asset(db, asset_id)
     try:
-        pq = market_data.get_priced_quote(asset)
+        pq = market_data.get_priced_quote(asset, allow_stale=True)
     except market_data.MarketDataUnavailable:
         raise HTTPException(503, "Cotação indisponível no momento") from None
     return QuoteOut(asset_id=asset.id, price=pq.quote.price, currency=pq.quote.currency, fx_rate=pq.fx_rate,
-                    price_brl=pq.price_brl, change_pct=pq.quote.change_pct, as_of=pq.quote.as_of)
+                    price_brl=pq.price_brl, change_pct=pq.quote.change_pct, as_of=pq.quote.as_of,
+                    fetched_at=pq.fetched_at, stale=pq.stale)
 
 
 @router.get("/{asset_id}/chart", response_model=ChartOut)

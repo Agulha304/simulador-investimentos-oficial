@@ -1,31 +1,35 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useParams } from "react-router-dom";
 import { RiskPanel } from "../components/RiskPanel";
 import { ChartPanel } from "../components/ChartPanel";
+import { QuoteStamp, quoteIsOld } from "../components/QuoteStamp";
 import { StatCard } from "../components/StatCard";
 import { api, type Asset, type PortfolioSummary, type Quote } from "../services/api";
+import { useApi } from "../services/dataCache";
 import { CLASS_LABEL, fmtBRL, fmtDate, fmtMoney, fmtPct, fmtQty, fmtQtyRaw, trend } from "../lib/format";
+
+const QUOTE_POLL_MS = 45_000;
 
 export function AssetPage() {
   const id = Number(useParams().id);
-  const [asset, setAsset] = useState<Asset | null>(null);
-  const [quote, setQuote] = useState<Quote | null>(null);
-  const [quoteError, setQuoteError] = useState<string | null>(null);
-  const [pf, setPf] = useState<PortfolioSummary | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  // ativo, cotação e carteira disparam em paralelo (e são servidos do cache quando frescos)
+  const { data: asset, error } = useApi<Asset>(`/assets/${id}`);
+  const { data: quoteData, error: quoteError, reload: reloadQuote } = useApi<Quote>(`/assets/${id}/quote`);
+  const { data: pf, reload: loadPortfolio } = useApi<PortfolioSummary>("/portfolio");
+  const quote = quoteData ?? null;
 
-  const loadQuote = useCallback(() => {
-    api.quote(id).then((q) => { setQuote(q); setQuoteError(null); }).catch((e: Error) => setQuoteError(e.message));
-  }, [id]);
-  const loadPortfolio = useCallback(() => { api.portfolio().then(setPf).catch(() => undefined); }, []);
-
+  // atualização periódica da cotação: pausa com a aba oculta e retoma (com refetch) ao voltar
+  const reloadRef = useRef(reloadQuote);
+  reloadRef.current = reloadQuote;
   useEffect(() => {
-    setAsset(null); setQuote(null); setError(null);
-    api.asset(id).then(setAsset).catch((e: Error) => setError(e.message));
-    loadQuote(); loadPortfolio();
-    const t = setInterval(loadQuote, 30_000);
-    return () => clearInterval(t);
-  }, [id, loadQuote, loadPortfolio]);
+    let t: ReturnType<typeof setInterval> | null = null;
+    const stop = () => { if (t) { clearInterval(t); t = null; } };
+    const start = () => { stop(); t = setInterval(() => { if (!document.hidden) void reloadRef.current(); }, QUOTE_POLL_MS); };
+    const onVis = () => { if (document.hidden) stop(); else { void reloadRef.current(); start(); } };
+    if (!document.hidden) start();
+    document.addEventListener("visibilitychange", onVis);
+    return () => { stop(); document.removeEventListener("visibilitychange", onVis); };
+  }, [id]);
 
   if (error) return <div className="alert">{error}</div>;
   if (!asset) return <div className="muted">Carregando…</div>;
@@ -53,8 +57,8 @@ export function AssetPage() {
         <StatCard label="Resultado da posição" value={holding ? fmtBRL(holding.pnl_brl) : "—"}
           sub={holding ? fmtPct(holding.pnl_pct) : undefined} tone={trend(holding?.pnl_brl)} />
       </section>
-      {quote && <p className="muted small">Cotação de {fmtDate(quote.as_of)} (pode ter atraso).</p>}
-      {quoteError && <div className="alert">{quoteError}</div>}
+      {quote && <p className="muted small">Cotação de {fmtDate(quote.as_of)} (pode ter atraso). <QuoteStamp fetchedAt={quote.fetched_at} stale={quote.stale} /></p>}
+      {quoteError && !quote && <div className="alert">{quoteError}</div>}
 
       <div className="trade-grid">
         <ChartPanel assetId={asset.id} />
@@ -124,6 +128,7 @@ function TradePanel({ asset, quote, cash, owned, onDone }: {
           </span>
         </div>
       )}
+      {quote && quoteIsOld(quote.fetched_at, quote.stale) && <div className="muted small"><QuoteStamp fetchedAt={quote.fetched_at} stale={quote.stale} /> A execução usa o preço atual do servidor.</div>}
       {msg && <div className={msg.ok ? "ok" : "alert"}>{msg.text}</div>}
       <button className={`btn ${side === "buy" ? "primary" : "danger"}`} disabled={busy || !quote}>
         {busy ? "Enviando…" : side === "buy" ? `Comprar ${asset.symbol}` : `Vender ${asset.symbol}`}

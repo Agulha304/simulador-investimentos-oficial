@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { StatCard } from "../components/StatCard";
+import { invalidateAll, useApi } from "../services/dataCache";
 import {
   api, type FiIndexes, type FiInvestment, type FiProduct, type FiSimulation, type PortfolioSummary,
 } from "../services/api";
@@ -12,26 +13,27 @@ const TYPE_FILTERS = [
   { id: "LCA", label: "LCA" }, { id: "CRI", label: "CRI" }, { id: "CRA", label: "CRA" }, { id: "DEBENTURE", label: "Debêntures" },
 ];
 
+// o refresh de produtos no servidor não precisa rodar a cada abertura da tela
+let lastFiRefresh = 0;
+const FI_REFRESH_EVERY_MS = 5 * 60_000;
+
 export function FixedIncomePage() {
   const [tab, setTab] = useState<"products" | "mine">("products");
-  const [products, setProducts] = useState<FiProduct[] | null>(null);
-  const [mine, setMine] = useState<FiInvestment[] | null>(null);
-  const [indexes, setIndexes] = useState<FiIndexes | null>(null);
-  const [pf, setPf] = useState<PortfolioSummary | null>(null);
   const [filter, setFilter] = useState("");
   const [selected, setSelected] = useState<FiProduct | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  const loadMine = useCallback(() => {
-    api.fiInvestments().then(setMine).catch((e: Error) => setError(e.message));
-    api.portfolio().then(setPf).catch(() => undefined);
-  }, []);
+  // produtos aparecem já (cache/rede), sem esperar o refresh; só refaz se o servidor disser que atualizou
+  const { data: products, error: prodErr } = useApi<FiProduct[]>("/fixed-income/products?", { ttl: 60_000 });
+  const { data: indexes } = useApi<FiIndexes>("/fixed-income/indexes", { ttl: 60_000 });
+  const { data: minePrimary, error: mineErr, reload: reloadMine } = useApi<FiInvestment[]>("/fixed-income/investments");
+  const { data: pf, reload: reloadPf } = useApi<PortfolioSummary>("/portfolio");
+  const mine = minePrimary ?? null;
+  const error = prodErr ?? mineErr;
+  const loadMine = () => { void reloadMine(); void reloadPf(); };
   useEffect(() => {
-    api.fiProducts().then(setProducts).catch((e: Error) => setError(e.message));
-    api.fiIndexes().then(setIndexes).catch(() => undefined);
-    loadMine();
-    api.fiRefresh().then((r) => { if (r.refreshed) api.fiProducts().then(setProducts).catch(() => undefined); }).catch(() => undefined);
-  }, [loadMine]);
+    if (Date.now() - lastFiRefresh < FI_REFRESH_EVERY_MS) return;
+    lastFiRefresh = Date.now();
+    api.fiRefresh().then((r) => { if (r.refreshed) invalidateAll(); }).catch(() => undefined);
+  }, []);
 
   const shown = useMemo(() => (products ?? []).filter((p) =>
     !filter || (filter === "TESOURO" ? p.product_type.startsWith("TESOURO") : p.product_type === filter)), [products, filter]);

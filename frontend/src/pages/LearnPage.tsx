@@ -1,12 +1,13 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { fmtDuration } from "../lib/format";
-import { api, type LearnOverview } from "../services/api";
+import { type LearnOverview } from "../services/api";
+import { cachedGet } from "../services/dataCache";
 
 export function LearnPage() {
   const [data, setData] = useState<LearnOverview | null>(null);
   const [error, setError] = useState<string | null>(null);
-  useEffect(() => { api.learn().then(setData).catch((e: Error) => setError(e.message)); }, []);
+  useEffect(() => { cachedGet<LearnOverview>("/learn").then(setData).catch((e: Error) => setError(e.message)); }, []);
   const startVideo = data
     ? (data.modules.flatMap((m) => m.lessons).find((l) => l.video_seconds && !l.completed)
       ?? data.modules.flatMap((m) => m.lessons).find((l) => l.video_seconds))?.id ?? null

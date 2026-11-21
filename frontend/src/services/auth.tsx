@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
 import { api, tokenStore, type User } from "./api";
+import { clearCache } from "./dataCache";
 
 interface AuthState {
   user: User | null;
@@ -24,14 +25,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => { void loadMe(); }, [loadMe]);
 
   const login = async (email: string, password: string) => {
+    clearCache();
     tokenStore.set((await api.login(email, password)).access_token);
     await loadMe();
   };
   const register = async (email: string, name: string, password: string) => {
+    clearCache();
     tokenStore.set((await api.register(email, name, password)).access_token);
     await loadMe();
   };
-  const logout = () => { tokenStore.clear(); setUser(null); };
+  const logout = () => { tokenStore.clear(); clearCache(); setUser(null); };
 
   return <AuthContext.Provider value={{ user, loading, login, register, logout }}>{children}</AuthContext.Provider>;
 }

@@ -6,6 +6,7 @@ Se a cotação estiver indisponível, a posição é avaliada pelo custo.
 import contextvars
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
+from datetime import datetime
 from decimal import Decimal
 
 from sqlalchemy import func, select
@@ -24,6 +25,8 @@ class HoldingView:
     market_value_brl: Decimal
     pnl_brl: Decimal
     pnl_pct: Decimal | None
+    quote_fetched_at: datetime | None = None     # quando a cotação foi buscada na fonte
+    quote_stale: bool = False                    # True = cotação além do TTL (só em telas de exibição)
 
 
 @dataclass
@@ -65,29 +68,31 @@ def _pct(part: Decimal, whole: Decimal) -> Decimal | None:
     return (part / whole * 100).quantize(Decimal("0.01"))
 
 
-def build_summary(db: Session, portfolio: Portfolio) -> PortfolioSummary:
+def build_summary(db: Session, portfolio: Portfolio, allow_stale: bool = False, idx=None) -> PortfolioSummary:
+    """`allow_stale=True` SÓ para exibição (GET /portfolio): snapshots, ranking e negociação usam cotação dentro do TTL."""
     views: list[HoldingView] = []
     open_holdings = [h for h in portfolio.holdings if h.quantity > 0]
 
     def _price(h):
         try:
-            return market_data.get_priced_quote(h.asset).price_brl
+            pq = market_data.get_priced_quote(h.asset, allow_stale)
+            return pq.price_brl, pq.fetched_at, pq.stale
         except market_data.MarketDataUnavailable:
-            return None  # sem cotação: avalia pelo custo e sinaliza com current_price_brl = null
+            return None, None, False  # sem cotação: avalia pelo custo e sinaliza com current_price_brl = null
     # cotações em paralelo (HTTP): com cache frio deixa de ser N chamadas em série
     # cada tarefa roda numa CÓPIA do contexto: o relógio da partida (ContextVar) precisa chegar às threads
     with ThreadPoolExecutor(max_workers=min(8, len(open_holdings) or 1)) as ex:
         futs = [ex.submit(contextvars.copy_context().run, _price, h) for h in open_holdings]
         prices = [f.result() for f in futs]
-    for h, price in zip(open_holdings, prices):
+    for h, (price, fetched_at, stale) in zip(open_holdings, prices):
         value = quantize_money(h.quantity * price) if price is not None else h.total_cost_brl
         pnl = quantize_money(value - h.total_cost_brl)
-        views.append(HoldingView(h, price, value, pnl, _pct(pnl, h.total_cost_brl)))
+        views.append(HoldingView(h, price, value, pnl, _pct(pnl, h.total_cost_brl), fetched_at, stale))
 
     invested = sum((v.holding.total_cost_brl for v in views), Decimal("0"))
     market = sum((v.market_value_brl for v in views), Decimal("0"))
     net_deposits = sum_net_deposits(db, portfolio.id)
-    fi_invested, fi_value = fixed_income_service.portfolio_totals(db, portfolio.id, index_data.load(db), today_br())
+    fi_invested, fi_value = fixed_income_service.portfolio_totals(db, portfolio.id, idx or index_data.load(db), today_br())
     goods_net = wealth_service.goods_net_value(db, portfolio.user_id)
     companies_net = wealth_service.companies_net_value(db, portfolio.user_id)
     personal_debts = wealth_service.personal_debts(db, portfolio.user_id)

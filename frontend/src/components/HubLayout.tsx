@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { Link, Outlet } from "react-router-dom";
 import { useAuth } from "../services/auth";
 
@@ -15,7 +16,7 @@ export function HubLayout() {
           <button className="btn ghost small" onClick={logout}>Sair</button>
         </div>
       </header>
-      <main className="hub-main"><Outlet /></main>
+      <main className="hub-main"><Suspense fallback={<div className="muted">Carregando…</div>}><Outlet /></Suspense></main>
     </div>
   );
 }

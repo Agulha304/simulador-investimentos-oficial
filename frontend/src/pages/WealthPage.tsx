@@ -1,8 +1,9 @@
-import { Suspense, lazy, useCallback, useEffect, useState } from "react";
+import { Suspense, lazy, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { PurchaseModal } from "../components/GoodsModals";
 import { StatCard } from "../components/StatCard";
-import { api, type Good, type GoodCategory, type Listing, type WealthOverview } from "../services/api";
+import { type Good, type GoodCategory, type Listing, type PortfolioSummary, type WealthOverview } from "../services/api";
+import { cachedGet, useApi } from "../services/dataCache";
 import { CATEGORY_LABEL, GOOD_STATUS_LABEL, OCCUPANCY_LABEL, fmtBRL, fmtDay, trend } from "../lib/format";
 
 const WealthSeriesChart = lazy(() => import("../components/charts/WealthCharts").then((m) => ({ default: m.WealthSeriesChart })));
@@ -22,25 +23,20 @@ export function WealthPage({ group = "goods" }: { group?: Group }) {
   const nav = useNavigate();
   const G = GROUPS[group];
   const [tab, setTab] = useState<Tab>("overview");
-  const [ov, setOv] = useState<WealthOverview | null>(null);
-  const [goods, setGoods] = useState<Good[]>([]);
-  const [cash, setCash] = useState("0");
-  const [taxes, setTaxes] = useState<{ total: string; items: { tax: string; amount: string }[] } | null>(null);
+  // quatro leituras em paralelo (todas com cache; carteira e mercado são compartilhados com outras telas)
+  const { data: ov, error: ovErr, reload: reloadOv } = useApi<WealthOverview>("/goods/overview");
+  const { data: allGoods, error: goodsErr, reload: reloadGoods } = useApi<Good[]>("/goods?");
+  const { data: pf, error: pfErr, reload: reloadPf } = useApi<PortfolioSummary>("/portfolio");
+  const { data: taxes } = useApi<{ total: string; items: { tax: string; amount: string }[] }>("/goods/taxes/summary");
+  const goods = useMemo(() => (allGoods ?? []).filter((x) => G.cats.includes(x.category)), [allGoods, G]);
+  const cash = pf?.cash_balance ?? "0";
   const mine = goods.filter((g) => g.status === "ACTIVE");
   const value = mine.reduce((a, g) => a + Number(g.current_value), 0);
   const cost = mine.reduce((a, g) => a + Number(g.acquisition_cost), 0);
   const debt = mine.reduce((a, g) => a + Number(g.loan_balance ?? 0), 0);
-  const [error, setError] = useState<string | null>(null);
+  const error = ovErr ?? goodsErr ?? pfErr;
   const [notice, setNotice] = useState<string | null>(null);
-
-  const reload = useCallback(async () => {
-    try {
-      const [o, g, p] = await Promise.all([api.wealth(), api.myGoods(), api.portfolio()]);
-      api.goodsTaxes().then(setTaxes).catch(() => undefined);
-      setOv(o); setGoods(g.filter((x) => G.cats.includes(x.category))); setCash(p.cash_balance); setError(null);
-    } catch (e) { setError(errMsg(e)); }
-  }, [G]);
-  useEffect(() => { void reload(); }, [reload]);
+  const reload = () => Promise.all([reloadOv(), reloadGoods(), reloadPf()]);
 
   if (error && !ov) return <div className="alert">Não foi possível carregar o patrimônio: {error}</div>;
   if (!ov) return <div className="muted">Carregando patrimônio…</div>;
@@ -139,7 +135,7 @@ function Market({ cash, cats: CATS, onBought }: { cash: string; cats: GoodCatego
     if (cat !== "ALL") p.category = cat;
     if (q.trim()) p.q = q.trim();
     if (max.trim()) p.max_price = max.trim().replace(/\./g, "").replace(",", ".");
-    const t = window.setTimeout(() => { api.market(p).then((l) => { setList(l.filter((x) => CATS.includes(x.category))); setError(null); }).catch((e) => setError(errMsg(e))); }, 250);
+    const t = window.setTimeout(() => { cachedGet<Listing[]>(`/goods/market?${new URLSearchParams(p)}`).then((l) => { setList(l.filter((x) => CATS.includes(x.category))); setError(null); }).catch((e) => setError(errMsg(e))); }, 250);
     return () => window.clearTimeout(t);
   }, [cat, q, max, CATS]);
 

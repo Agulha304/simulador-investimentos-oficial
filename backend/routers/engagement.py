@@ -1,3 +1,4 @@
+from datetime import timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query
@@ -21,8 +22,8 @@ def get_performance(user: CurrentUser, db: DbSession,
 def get_ranking(user: CurrentUser, db: DbSession,
                 board: Annotated[str, Query(pattern="^(wealth|return)$")] = "wealth",
                 period: Annotated[str, Query(pattern="^(all|30d|7d)$")] = "all"):
-    # a foto do próprio usuário é atualizada na hora; as dos demais vêm do worker horário
-    performance_service.ensure_recent_snapshot(db, portfolio_service.get_portfolio_for_user(db, user.id))
+    # a foto do próprio usuário só é regravada se tiver mais de 35 min (o worker roda a cada 30): o GET quase nunca escreve
+    performance_service.ensure_recent_snapshot(db, portfolio_service.get_portfolio_for_user(db, user.id), max_age=timedelta(minutes=35))
     return ranking_service.compute(db, board, period, user.id)
 
 

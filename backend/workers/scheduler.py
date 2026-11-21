@@ -10,7 +10,7 @@ from datetime import UTC, datetime, timedelta
 from apscheduler.schedulers.background import BackgroundScheduler
 
 from backend.config import get_settings
-from backend.workers import distribution_worker, fixed_income_worker, performance_worker, risk_worker
+from backend.workers import distribution_worker, fixed_income_worker, performance_worker, quote_worker, risk_worker
 
 log = logging.getLogger(__name__)
 
@@ -30,6 +30,8 @@ def start_scheduler() -> BackgroundScheduler:
         job_defaults={"coalesce": True, "max_instances": 1, "misfire_grace_time": 60},
     )
     _scheduler.add_job(heartbeat, "interval", minutes=5, id="heartbeat", replace_existing=True)
+    _scheduler.add_job(quote_worker.run, "interval", seconds=30, id="quote_warmer", replace_existing=True,
+                       next_run_time=datetime.now(UTC) + timedelta(seconds=10))
     _scheduler.add_job(risk_worker.run, "interval", seconds=get_settings().risk_check_interval_seconds,
                        id="stop_loss_take_profit", replace_existing=True)
     _scheduler.add_job(distribution_worker.discover, "interval", hours=6, id="distribution_discover",

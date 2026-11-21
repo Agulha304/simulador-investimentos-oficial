@@ -1,11 +1,12 @@
 import { Link } from "react-router-dom";
-import { Suspense, lazy, useCallback, useEffect, useState } from "react";
+import { Suspense, lazy, useEffect, useState } from "react";
 import { CloseModal, EntryModal, ItemModal } from "../components/BudgetModals";
 import { DebtCard } from "../components/DebtCard";
 import { BudgetImpactCard } from "../components/BudgetImpactCard";
 import { InvestPlanCard } from "../components/InvestPlanCard";
 import { DecisionModal } from "../components/DecisionModal";
 import { sim, type EcoEvent } from "../services/sim";
+import { cachedGet, useApi } from "../services/dataCache";
 import { StatCard } from "../components/StatCard";
 import {
   api, type BudgetCategory, type BudgetItem, type BudgetOverview, type FlowKind, type LedgerEntryOut, type MonthRow, type MonthSummary,
@@ -22,23 +23,21 @@ type Tab = "month" | "history";
 
 export function BudgetPage() {
   const [tab, setTab] = useState<Tab>("month");
-  const [ov, setOv] = useState<BudgetOverview | null>(null);
-  const [cats, setCats] = useState<BudgetCategory[]>([]);
-  const [entries, setEntries] = useState<LedgerEntryOut[]>([]);
-  const [error, setError] = useState<string | null>(null);
+  // overview, categorias e lançamentos em paralelo, com cache; após qualquer ação são refeitos automaticamente
+  const { data: ovData, error: ovErr, reload: reloadOv } = useApi<BudgetOverview>("/budget/overview");
+  const { data: catsData, reload: reloadCats } = useApi<BudgetCategory[]>("/budget/categories");
+  const { data: entriesData, error: entErr, reload: reloadEntries } = useApi<LedgerEntryOut[]>("/budget/entries");
+  const ov = ovData ?? null;
+  const cats = catsData ?? [];
+  const entries = entriesData ?? [];
+  const [actError, setError] = useState<string | null>(null);
+  const error = actError ?? ovErr ?? entErr;
   const [notice, setNotice] = useState<string | null>(null);
   const [itemModal, setItemModal] = useState<{ item: BudgetItem | null } | null>(null);
   const [entryModal, setEntryModal] = useState<{ preset: BudgetItem | null } | null>(null);
   const [closing, setClosing] = useState(false);
   const [decisions, setDecisions] = useState<EcoEvent[] | null>(null);
-
-  const reload = useCallback(async () => {
-    try {
-      const [o, c, e] = await Promise.all([api.budgetOverview(), api.budgetCategories(), api.budgetEntries()]);
-      setOv(o); setCats(c); setEntries(e); setError(null);
-    } catch (err) { setError(errMsg(err)); }
-  }, []);
-  useEffect(() => { void reload(); }, [reload]);
+  const reload = async () => { await Promise.all([reloadOv(), reloadCats(), reloadEntries()]); };
 
   /** Passar o mês: primeiro a decisão do mês (se houver), depois o resumo financeiro do fechamento. */
   const startClose = async () => {
@@ -225,16 +224,17 @@ function EntriesTable({ entries, canReverse, onReverse }: { entries: LedgerEntry
 }
 
 function HistoryTab() {
-  const [months, setMonths] = useState<MonthRow[] | null>(null);
+  const { data: monthsData, error: monthsErr } = useApi<MonthRow[]>("/budget/months");
+  const months = monthsData ?? null;
   const [open, setOpen] = useState<string | null>(null);
   const [detail, setDetail] = useState<{ summary: MonthSummary; entries: LedgerEntryOut[] } | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [detailErr, setError] = useState<string | null>(null);
+  const error = detailErr ?? monthsErr;
 
-  useEffect(() => { api.budgetMonths().then(setMonths).catch((e) => setError(errMsg(e))); }, []);
   useEffect(() => {
     if (!open) { setDetail(null); return; }
     const ref = open.slice(0, 7);
-    Promise.all([api.budgetMonth(ref), api.budgetEntries(ref)])
+    Promise.all([cachedGet<MonthSummary>(`/budget/months/${ref}`), cachedGet<LedgerEntryOut[]>(`/budget/entries?ref_month=${ref}`)])
       .then(([summary, entries]) => setDetail({ summary, entries })).catch((e) => setError(errMsg(e)));
   }, [open]);
 

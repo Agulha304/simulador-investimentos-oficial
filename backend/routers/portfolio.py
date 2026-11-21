@@ -10,7 +10,7 @@ router = APIRouter(prefix="/portfolio", tags=["portfolio"])
 @router.get("", response_model=PortfolioSummaryOut)
 def get_portfolio(user: CurrentUser, db: DbSession):
     portfolio = portfolio_service.get_portfolio_for_user(db, user.id)
-    s = portfolio_service.build_summary(db, portfolio)
+    s = portfolio_service.build_summary(db, portfolio, allow_stale=True)     # exibição: não espera a fonte externa
     return PortfolioSummaryOut(
         id=portfolio.id,
         name=portfolio.name,
@@ -39,6 +39,8 @@ def get_portfolio(user: CurrentUser, db: DbSession):
                 market_value_brl=v.market_value_brl,
                 pnl_brl=v.pnl_brl,
                 pnl_pct=v.pnl_pct,
+                quote_fetched_at=v.quote_fetched_at,
+                quote_stale=v.quote_stale,
             )
             for v in s.holdings
         ],

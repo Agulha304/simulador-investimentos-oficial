@@ -10,6 +10,7 @@ moeda) com os níveis e vende a posição inteira a mercado. Segurança contra d
 O preço de execução pode ser pior que o nível quando o mercado "pula" (gap).
 """
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from decimal import Decimal
 
@@ -113,15 +114,22 @@ def check_all(db: Session) -> int:
         .where(Holding.quantity > 0, (Holding.stop_loss.is_not(None)) | (Holding.take_profit.is_not(None)))
     ).all()
     executed = 0
+    targets = [(hid, a.id, a.provider_symbol, a.symbol) for hid, a in rows]
+    db.rollback()                       # encerra a transação: a conexão NÃO fica presa enquanto esperamos a fonte externa
     prices: dict[int, Decimal | None] = {}
-    for holding_id, asset in rows:
-        if asset.id not in prices:                      # uma consulta por ativo, não por posição
-            try:
-                prices[asset.id] = market_data.get_quote(asset).price
-            except market_data.MarketDataUnavailable:
-                prices[asset.id] = None
-                log.warning("sem cotação para %s; SL/TP adiado", asset.symbol)
-        price = prices[asset.id]
+    syms = {aid: (psym, sym) for _, aid, psym, sym in targets}
+
+    def fetch(aid: int):
+        try:
+            return aid, market_data._cached_quote(syms[aid][0], market_data.QUOTE_TTL).price
+        except market_data.MarketDataUnavailable:
+            log.warning("sem cotação para %s; SL/TP adiado", syms[aid][1])
+            return aid, None
+    if syms:                            # uma consulta por ativo (não por posição), em paralelo
+        with ThreadPoolExecutor(max_workers=min(6, len(syms))) as ex:
+            prices = dict(ex.map(fetch, list(syms)))
+    for holding_id, asset_id, _psym, _sym in targets:
+        price = prices[asset_id]
         if price is None:
             continue
         try:

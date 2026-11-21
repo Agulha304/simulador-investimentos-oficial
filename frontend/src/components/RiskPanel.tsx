@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { api, type Asset, type Holding, type Quote } from "../services/api";
 import { fmtMoney } from "../lib/format";
+import { QuoteStamp } from "./QuoteStamp";
 
 /** Stop Loss / Take Profit da posição. Os níveis são na MOEDA DO ATIVO (ex.: US$ para AAPL). */
 export function RiskPanel({ asset, quote, holding, onSaved }: {
@@ -35,7 +36,7 @@ export function RiskPanel({ asset, quote, holding, onSaved }: {
       <h2>Stop Loss e Take Profit</h2>
       <p className="muted small" style={{ margin: 0 }}>
         Vende toda a posição a mercado quando o preço atingir o nível. Valores em {asset.currency}
-        {quote ? ` — preço atual ${fmtMoney(quote.price, quote.currency)}` : ""}.
+        {quote ? ` — preço atual ${fmtMoney(quote.price, quote.currency)}` : ""}. {quote && <QuoteStamp fetchedAt={quote.fetched_at} stale={quote.stale} />}
       </p>
       <label>Stop Loss ({asset.currency}) — abaixo do preço atual
         <input inputMode="decimal" value={stop} onChange={(e) => setStop(e.target.value)} placeholder="sem stop" />

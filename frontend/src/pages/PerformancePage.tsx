@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react";
+import { useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { StatCard } from "../components/StatCard";
 import { AllocationChart, CumulativeChart, DrawdownChart, EquityChart, MonthlyChart, ReturnVsCdiChart } from "../components/charts/PerfCharts";
-import { api, type Performance } from "../services/api";
+import { type Performance } from "../services/api";
+import { useApi } from "../services/dataCache";
 import { fmtBRL, fmtPct, trend } from "../lib/format";
 import { fmtNum } from "../lib/viz";
 
@@ -12,19 +13,11 @@ const TONE_ICON = { good: "✓", warn: "!", info: "i" } as const;
 
 export function PerformancePage() {
   const [range, setRange] = useState("30d");
-  const [data, setData] = useState<Performance | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true); setError(null);
-    api.performance(range)
-      .then((d) => { if (!cancelled) setData(d); })
-      .catch((e: Error) => { if (!cancelled) setError(e.message); })
-      .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
-  }, [range]);
+  const { data: fresh, error, loading: l0, refreshing: l1 } = useApi<Performance>(`/performance?range=${range}`);
+  const lastGood = useRef<Performance | null>(null);   // ao trocar o período mantém o último gráfico na tela enquanto carrega
+  const loading = l0 || l1;
+  if (fresh) lastGood.current = fresh;
+  const data = fresh ?? lastGood.current;
 
   if (!data) return error ? <div className="alert">{error}</div> : <div className="muted">Carregando seu desempenho…</div>;
   const { summary: s, series_stats: st, trades: t } = data;

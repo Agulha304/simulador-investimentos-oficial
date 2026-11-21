@@ -1,4 +1,5 @@
 import { ACCOUNT_PATHS, gameStore } from "./gameStore";
+import { invalidateAll } from "./dataCache";
 /** Cliente HTTP da API. Valores Decimal chegam como string e assim são mantidos. */
 export type Decimal = string;
 
@@ -15,6 +16,8 @@ export interface Holding {
   market_value_brl: Decimal;
   pnl_brl: Decimal;
   pnl_pct: Decimal | null;
+  quote_fetched_at?: string | null; // ISO: quando o servidor buscou a cotação
+  quote_stale?: boolean | null;     // true = cotação além do TTL servida enquanto atualiza
 }
 
 export interface PortfolioSummary {
@@ -68,6 +71,7 @@ export interface Asset extends AssetBrief {
 export interface Quote {
   asset_id: number; price: Decimal; currency: string; fx_rate: Decimal; price_brl: Decimal;
   change_pct: Decimal | null; as_of: string;
+  fetched_at?: string | null; stale?: boolean | null;
 }
 
 export interface Candle { time: number; open: Decimal; high: Decimal; low: Decimal; close: Decimal; volume: Decimal }
@@ -132,7 +136,8 @@ export interface QuizResult {
   completed: boolean; next_lesson_id: string | null; overview: LearnOverview;
 }
 
-export interface QuoteBrief { asset_id: number; price: Decimal; currency: string; price_brl: Decimal; change_pct: Decimal | null }
+export interface QuoteBrief { asset_id: number; price: Decimal; currency: string; price_brl: Decimal; change_pct: Decimal | null;
+  as_of?: string | null; fetched_at?: string | null; stale?: boolean | null }
 
 export interface User { id: number; email: string; name: string; created_at: string }
 
@@ -282,7 +287,17 @@ export class ApiError extends Error {
   constructor(public status: number, message: string) { super(message); }
 }
 
+// POSTs que só calculam (não alteram estado): não invalidam o cache de leituras
+const READ_ONLY_POST = /\/(simulate|quote|search|refresh)$|^\/assets\/\d+\/layout$/; // layout do gráfico não afeta dados financeiros
+
+/** Toda mutação (não-GET) invalida o cache de leituras ao terminar (sucesso ou erro) para nunca exibir saldo/posição velhos. */
 export async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const method = (init.method ?? "GET").toUpperCase();
+  const mutating = method !== "GET" && method !== "HEAD" && !READ_ONLY_POST.test(path.split("?")[0]);
+  try { return await rawRequest<T>(path, init); } finally { if (mutating) invalidateAll(); }
+}
+
+async function rawRequest<T>(path: string, init: RequestInit): Promise<T> {
   const headers = new Headers(init.headers);
   headers.set("Content-Type", "application/json");
   const token = tokenStore.get();

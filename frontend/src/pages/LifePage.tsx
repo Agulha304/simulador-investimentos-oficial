@@ -3,6 +3,7 @@ import { Meter } from "../components/Meter";
 import { Toast } from "../components/Toast";
 import { StatCard } from "../components/StatCard";
 import { fmtBRL, fmtMonth } from "../lib/format";
+import { useApi } from "../services/dataCache";
 import { sim, type Calendar, type HousingOffer, type Kid, type Life, type Rel } from "../services/sim";
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : "Erro inesperado");
@@ -18,16 +19,20 @@ const CHOICE_LABEL: Record<string, [string, Record<string, string>]> = {
 const LINE: Record<string, string> = { food: "Alimentação", health: "Saúde", education: "Educação", clothing: "Vestuário", leisure: "Lazer", housing: "Moradia", transport: "Transporte" };
 
 export function LifePage() {
-  const [life, setLife] = useState<Life | null>(null);
+  const { data: fetched, error: loadError } = useApi<Life>("/life");   // mesmo /life de Empresas (cache compartilhado)
+  const [override, setOverride] = useState<Life | null>(null);          // resposta da última ação, exibida até a revalidação chegar
+  useEffect(() => { setOverride(null); }, [fetched]);
+  const life = override ?? fetched ?? null;
+  const setLife = setOverride;
   const [tab, setTab] = useState<Tab>("status");
-  const [error, setError] = useState<string | null>(null);
+  const [actError, setError] = useState<string | null>(null);
+  const error = actError ?? loadError;
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  useEffect(() => { sim.life().then(setLife).catch((e) => setError(errMsg(e))); }, []);
   const act = useCallback(async (fn: () => Promise<Life>, ok?: (l: Life) => string | null) => {
     setBusy(true); setError(null); setNote(null);
-    try { const l = await fn(); setLife(l); setNote(ok ? ok(l) : null); } catch (e) { const m = errMsg(e); if (/tempo livre insuficiente/i.test(m)) setNote("⏳ " + m); else setError(m); sim.life().then(setLife).catch(() => undefined); } finally { setBusy(false); }   // recusas mudam a afinidade: recarrega
+    try { const l = await fn(); setLife(l); setNote(ok ? ok(l) : null); } catch (e) { const m = errMsg(e); if (/tempo livre insuficiente/i.test(m)) setNote("⏳ " + m); else setError(m); } finally { setBusy(false); }   // recusas mudam a afinidade: a mutação invalida o cache e o /life é refeito sozinho
   }, []);
 
   if (!life) return error ? <div className="alert">{error}</div> : <div className="muted">Carregando vida pessoal…</div>;
@@ -47,7 +52,7 @@ export function LifePage() {
         <button className={tab === "family" ? "on" : ""} onClick={() => setTab("family")}>Família e filhos</button>
       </div>
 
-      {tab === "calendar" && <CalendarTab version={life.attributes.free_hours_left} />}
+      {tab === "calendar" && <CalendarTab />}
       {tab === "status" && (
         <>
           {(life.conditions ?? []).length > 0 && (
@@ -217,9 +222,8 @@ function MoveForm({ busy, act }: { busy: boolean; act: Act }) {
 
 
 
-function CalendarTab({ version }: { version: number }) {
-  const [c, setC] = useState<Calendar | null>(null);
-  useEffect(() => { sim.lifeCalendar().then(setC).catch(() => setC(null)); }, [version]);
+function CalendarTab() {
+  const { data: c } = useApi<Calendar>("/life/calendar");
   if (!c) return <div className="muted">Carregando calendário…</div>;
   const COL = ["#7c6cff", "#4cc9f0", "#3ee59a", "#ffd23f", "#ff9f43", "#c13cff", "#ff6482", "#8bd3dd", "#f4a261"];
   return (

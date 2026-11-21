@@ -3,6 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { HireModal, LeaseModal, LoanModal, MoneyModal } from "../components/CompanyModals";
 import { StatCard } from "../components/StatCard";
 import { api, type CompanyDetail, type Good, type Listing } from "../services/api";
+import { cachedGet } from "../services/dataCache";
 import { CATEGORY_LABEL, CO_COST_LABEL, CO_EVENT_LABEL, LEDGER_LINE_LABEL, LEVEL_LABEL, fmtBRL, fmtMonth, fmtPct, parseMoneyInput, trend } from "../lib/format";
 
 const RevenueCostChart = lazy(() => import("../components/charts/CompanyCharts").then((m) => ({ default: m.RevenueCostChart })));
@@ -26,7 +27,7 @@ export function CompanyPage() {
   const [market, setMarket] = useState<Listing[]>([]);
 
   const reload = useCallback(() => api.company(id).then((x) => { setD(x); setError(null); }).catch((e) => setError(errMsg(e))), [id]);
-  useEffect(() => { void reload(); api.myGoods().then(setPersonalGoods).catch(() => undefined); api.market().then(setMarket).catch(() => undefined); }, [reload]);
+  useEffect(() => { void reload(); cachedGet<Good[]>("/goods?").then(setPersonalGoods).catch(() => undefined); cachedGet<Listing[]>("/goods/market?").then(setMarket).catch(() => undefined); }, [reload]);
 
   if (error && !d) return <div className="page"><Link to="/empresas" className="link-btn" style={{ marginLeft: 0 }}>← Empresas</Link><div className="alert">{error}</div></div>;
   if (!d) return <div className="muted">Carregando empresa…</div>;

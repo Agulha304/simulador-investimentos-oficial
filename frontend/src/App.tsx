@@ -1,40 +1,57 @@
-import { Suspense, lazy } from "react";
+import { Suspense, lazy, useEffect, type ComponentType } from "react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { GameLayout } from "./components/GameLayout";
 import { HubLayout } from "./components/HubLayout";
-import { CareerPage } from "./pages/CareerPage";
-import { EducationPage } from "./pages/EducationPage";
 import { ProtectedRoute } from "./components/ProtectedRoute";
-import { BudgetPage } from "./pages/BudgetPage";
-import { CompaniesPage } from "./pages/CompaniesPage";
-import { CompanyPage } from "./pages/CompanyPage";
-import { GoodPage } from "./pages/GoodPage";
-import { WealthPage } from "./pages/WealthPage";
 import { AuthPage } from "./pages/AuthPage";
-import { LearnPage } from "./pages/LearnPage";
-import { LessonPage } from "./pages/LessonPage";
-import { MarketPage } from "./pages/MarketPage";
-import { FixedIncomePage } from "./pages/FixedIncomePage";
-import { HistoryPage } from "./pages/HistoryPage";
-import { PortfolioPage } from "./pages/PortfolioPage";
-import { RankingPage } from "./pages/RankingPage";
-import { EconomyPage } from "./pages/EconomyPage";
-import { LifePage } from "./pages/LifePage";
-import { DesempenhoPage } from "./pages/DesempenhoPage";
-import { AchievementsPage } from "./pages/AchievementsPage";
 import { HubPage } from "./pages/HubPage";
-import { NewGamePage } from "./pages/NewGamePage";
-import { NewTrainingPage } from "./pages/NewTrainingPage";
-import { SettingsPage } from "./pages/SettingsPage";
-import { PainelPage } from "./pages/PainelPage";
-import { ReportsPage } from "./pages/ReportsPage";
 import { AuthProvider } from "./services/auth";
 
-// páginas com bibliotecas de gráficos pesadas são carregadas só quando visitadas
-const AssetPage = lazy(() => import("./pages/AssetPage").then((m) => ({ default: m.AssetPage })));
-const PerformancePage = lazy(() => import("./pages/PerformancePage").then((m) => ({ default: m.PerformancePage })));
+// todas as páginas (exceto layouts, login e hub) são carregadas sob demanda; recharts/lightweight-charts só vêm com as que os usam
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const page = <K extends string>(load: () => Promise<Record<K, ComponentType<any>>>, name: K) => lazy(() => load().then((m) => ({ default: m[name] })));
+const imports = {
+  PainelPage: () => import("./pages/PainelPage"), MarketPage: () => import("./pages/MarketPage"),
+  FixedIncomePage: () => import("./pages/FixedIncomePage"), PortfolioPage: () => import("./pages/PortfolioPage"), HistoryPage: () => import("./pages/HistoryPage"),
+  AssetPage: () => import("./pages/AssetPage"),
+};
+const AssetPage = page(imports.AssetPage, "AssetPage");
+const PerformancePage = page(() => import("./pages/PerformancePage"), "PerformancePage");
+const PainelPage = page(imports.PainelPage, "PainelPage");
+const BudgetPage = page(() => import("./pages/BudgetPage"), "BudgetPage");
+const MarketPage = page(imports.MarketPage, "MarketPage");
+const FixedIncomePage = page(imports.FixedIncomePage, "FixedIncomePage");
+const PortfolioPage = page(imports.PortfolioPage, "PortfolioPage");
+const HistoryPage = page(imports.HistoryPage, "HistoryPage");
+const CareerPage = page(() => import("./pages/CareerPage"), "CareerPage");
+const EducationPage = page(() => import("./pages/EducationPage"), "EducationPage");
+const CompaniesPage = page(() => import("./pages/CompaniesPage"), "CompaniesPage");
+const CompanyPage = page(() => import("./pages/CompanyPage"), "CompanyPage");
+const GoodPage = page(() => import("./pages/GoodPage"), "GoodPage");
+const WealthPage = page(() => import("./pages/WealthPage"), "WealthPage");
+const LearnPage = page(() => import("./pages/LearnPage"), "LearnPage");
+const LessonPage = page(() => import("./pages/LessonPage"), "LessonPage");
+const RankingPage = page(() => import("./pages/RankingPage"), "RankingPage");
+const EconomyPage = page(() => import("./pages/EconomyPage"), "EconomyPage");
+const LifePage = page(() => import("./pages/LifePage"), "LifePage");
+const DesempenhoPage = page(() => import("./pages/DesempenhoPage"), "DesempenhoPage");
+const AchievementsPage = page(() => import("./pages/AchievementsPage"), "AchievementsPage");
+const NewGamePage = page(() => import("./pages/NewGamePage"), "NewGamePage");
+const NewTrainingPage = page(() => import("./pages/NewTrainingPage"), "NewTrainingPage");
+const SettingsPage = page(() => import("./pages/SettingsPage"), "SettingsPage");
+const ReportsPage = page(() => import("./pages/ReportsPage"), "ReportsPage");
+
+/** Com o navegador ocioso, baixa os chunks das telas mais usadas (sem recharts) para a primeira navegação ser instantânea. */
+function usePrefetch() {
+  useEffect(() => {
+    const run = () => Object.values(imports).forEach((f) => { void f().catch(() => undefined); });
+    const w = window as Window & { requestIdleCallback?: (cb: () => void) => number };
+    if (w.requestIdleCallback) w.requestIdleCallback(run); else setTimeout(run, 2000);
+  }, []);
+}
 
 export default function App() {
+  usePrefetch();
   return (
     <AuthProvider>
       <BrowserRouter>
