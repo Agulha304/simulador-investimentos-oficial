@@ -48,6 +48,13 @@ As migrações (`alembic upgrade head`) criam as tabelas e ligam o **RLS** em to
 chave pública do Supabase fica sem acesso a nada. **Toda tabela nova precisa de `ENABLE ROW LEVEL SECURITY`** na migration.
 Os testes (`pytest`) usam `TEST_DATABASE_URL` (Postgres local) e se recusam a rodar se ele apontar para o Supabase.
 
+### Backend como Cloudflare Container (opção usada neste projeto)
+
+O próprio Worker (`worker/index.js`) sobe o backend como container, usando o `Dockerfile` da raiz (config em `wrangler.jsonc`). Precisa do plano
+**Workers Paid**. No painel do Worker, em *Settings > Variables and Secrets*, crie dois **Secrets**: `DATABASE_URL` (Supabase, Session pooler) e
+`JWT_SECRET` (o *legacy JWT secret*). Opcionais: `CORS_ORIGINS`, `SCHEDULER_ENABLED`, `INITIAL_BALANCE`. Depois do deploy, a primeira chamada à API
+acorda o container (alguns segundos). Se `BACKEND_URL` estiver definida, o Worker usa esse backend externo e ignora o container.
+
 ## 2. Cloudflare (Workers & Pages → Create → conectar o repositório do GitHub)
 
 | Campo | O que colocar |
