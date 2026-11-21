@@ -7,7 +7,6 @@ __pycache__/
 # Ambiente / segredos
 .env
 .env.example
-
 # Banco local de desenvolvimento
 .pgdata/
 
