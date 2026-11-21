@@ -47,9 +47,10 @@ CAT_NAME = {"saude": "Saúde", "alimentacao": "Alimentação", "moradia": "Morad
             "educacao": "Educação", "lazer": "Lazer", "vestuario": "Vestuário"}
 
 
-def rules_payroll(salary):
+def rules_payroll(salary, regime=None):
+    """Custo mensal real de um funcionário (CLT 2x, PJ 1x). Sem regime: CLT."""
     from backend.services import company_rules
-    return company_rules.payroll_cost(salary)
+    return company_rules.payroll_cost(salary, regime) if regime is not None else company_rules.payroll_cost(salary)
 
 
 def _clamp(v, lo, hi):
@@ -311,6 +312,25 @@ def _make_event(db: Session, user_id: int, d: E.EventDef, ref: date, seed: int, 
     return ev
 
 
+def spawn_company_event(db: Session, c: Company, key: str, start: date, description: str | None = None) -> WorldEvent | None:
+    """Cria SOB DEMANDA um evento com opções para uma empresa específica (ex.: processo trabalhista depois de uma demissão),
+    a decidir a partir do mês `start`. Sem sorteio: quem chama decide. Idempotente por (usuário, evento, mês): se o mês já tem
+    esse evento, tenta o seguinte (até 3 meses depois) e devolve None se todos estiverem ocupados."""
+    d = E.CATALOG_BY_KEY[key]
+    for k in range(4):
+        ref = budget_service.shift_month(start, k)
+        if db.scalar(select(WorldEvent.id).where(WorldEvent.user_id == c.user_id, WorldEvent.key == key, WorldEvent.start_month == ref)):
+            continue
+        ev = WorldEvent(user_id=c.user_id, key=key, name=f"{d.name} — {c.name}"[:80], description=(description or d.description)[:400],
+                        category=d.category, scope=d.scope, sector=c.segment.value, company_id=c.id, positive=d.positive,
+                        intensity=d.intensity, start_month=ref, end_month=ref, effects=dict(d.effects), status="PENDING",
+                        options=[{"key": o.key, "label": o.label, "hint": o.hint, "cost": o.cost} for o in d.options])
+        db.add(ev)
+        db.flush()
+        return ev
+    return None
+
+
 def _partner_default(db: Session, ev: WorldEvent, ref: date, seed: int) -> None:
     """O calote ACONTECE na criação do evento (o sócio sai com dinheiro); a decisão do jogador é sobre como reagir."""
     from backend.services import company_service, life_service
@@ -387,7 +407,7 @@ def _activate(db: Session, ev: WorldEvent, ref: date) -> None:
         c = db.get(Company, ev.company_id)
         from backend.services import company_service
         if "payroll_mult" in co:                       # valores jurídicos proporcionais ao tamanho da folha da empresa
-            payroll = sum((rules_payroll(e.salary) for e in company_service._employees(db, c)), D("0.00"))
+            payroll = sum((rules_payroll(e.salary, e.regime) for e in company_service._employees(db, c)), D("0.00"))
             amt = max(D("3000"), quantize_money(payroll * D(str(co["payroll_mult"]))))
         else:
             amt = quantize_money(D(str(co["amount"])) * index_value(db, ev.user_id, ref, co.get("price_cat", "insumos")))
@@ -497,6 +517,8 @@ def decide(db: Session, user_id: int, month: SimMonth, event_id: int, option_key
         raise NotFoundError("evento não encontrado")
     if ev.status != "PENDING":
         raise ConflictError("este evento não aguarda decisão")
+    if ev.start_month > month.ref_month:
+        raise ConflictError("este evento só acontece num mês futuro")
     _resolve(db, ev, option_key, month.ref_month, get_game(db, user_id).seed)
     sync_month(db, user_id, month)
     return ev

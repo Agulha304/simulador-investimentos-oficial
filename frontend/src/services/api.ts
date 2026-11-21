@@ -239,19 +239,30 @@ export interface WealthOverview {
 
 // ------------------------------------------------------------------ empresas
 export type Segment = string;
-export interface CoRole { key: string; label: string; salary: Decimal; units: number }
+export interface CoRole { key: string; label: string; salary: Decimal; units: number; generic?: boolean; mandatory?: boolean }
+export type CoRegime = "CLT" | "PJ";
+export type CoSchedule = "6x1" | "5x2" | "12x36" | "4x3";
 export interface CoSegment {
   key: Segment; label: string; description: string; unit_label: string; price: Decimal; tax_pct: Decimal;
-  roles: CoRole[]; stock: string[]; required_capital: Decimal;
+  roles: CoRole[]; stock: string[]; minimum_capital: Decimal;
+  channels: CoChannel[]; locations: CoLocation[]; metrics_kind: CoMetricsKind; default_location: string;
 }
+export type CoChannel = "ONLINE" | "PHYSICAL";
+export type CoSiteMode = "BUY" | "RENT";
+export type CoMetricsKind = "PRODUCTION" | "RETAIL" | "SERVICE";
+export interface CoLocation { key: string; label: string; demand: number; rent_factor: string; land_price: Decimal }
 export interface CoCatalog {
   segments: CoSegment[];
-  locations: { key: string; label: string; demand: number; rent_factor: string }[];
   sizes: { key: string; label: string; demand: number; setup_factor: string }[];
 }
-export interface CoQuote { required_capital: Decimal; setup_cost: Decimal; monthly_fixed: Decimal; monthly_payroll: Decimal; initial_stock: Decimal; expected_units: number }
+export interface CoQuote {
+  channel: CoChannel; site_mode: CoSiteMode | null; location: string; owner_share_pct: Decimal;
+  minimum_capital: Decimal; owner_cost: Decimal; extra_capital: Decimal; total_owner_cost: Decimal;
+  setup_cost: Decimal; initial_stock: Decimal; land_cost: Decimal; monthly_fixed: Decimal; monthly_rent: Decimal; monthly_payroll: Decimal; mandatory_cost: Decimal; mandatory_roles: string[]; expected_units: number;
+}
+export interface CoSiteInput { channel?: CoChannel; site_mode?: CoSiteMode; location?: string }
 export interface Company {
-  id: number; name: string; segment: Segment; segment_label: string; business_type: string; location: string; location_label: string;
+  id: number; name: string; segment: Segment; segment_label: string; unit_label: string; metrics_kind: CoMetricsKind; channel: CoChannel; site_mode: CoSiteMode | null; site_value: Decimal; location: string; location_label: string;
   size: string; units: number; capacity_level: number; price: Decimal; reputation: number; owner_share_pct: Decimal; owner_salary: Decimal;
   auto_restock: boolean; status: string; founded_on: string; marketing_until: string | null; cash: Decimal; debts: Decimal; equity: Decimal;
   last_revenue: Decimal | null; last_net_result: Decimal | null;
@@ -259,14 +270,29 @@ export interface Company {
 export interface CoMonth {
   ref_month: string; demand_units: Decimal; capacity_units: Decimal; units_sold: Decimal; stockout: boolean; revenue: Decimal;
   variable_costs: Decimal; fixed_costs: Decimal; payroll: Decimal; taxes: Decimal; interest: Decimal; operating_result: Decimal;
-  net_result: Decimal; cash_end: Decimal; debts_end: Decimal; equity_end: Decimal; reputation_end: number;
+  net_result: Decimal; cash_end: Decimal; debts_end: Decimal; equity_end: Decimal; reputation_end: number; irregular?: boolean; fines?: Decimal;
 }
+export interface CoEmployee {
+  id: number; name: string; role: string; role_label: string; level: string; regime: CoRegime; schedule: CoSchedule; education: string; education_label: string;
+  experience_years: number; salary: Decimal; total_cost: Decimal; severance_estimate: Decimal; lawsuit_risk_pct: number; hours_week: number;
+  productivity: Decimal; status: string; hired_on: string; terminated_on: string | null;
+}
+export interface CoCompliance {
+  regular: boolean; required: { role: string; label: string; present: boolean }[]; missing: string[]; missing_labels: string[]; estimated_fine: Decimal;
+}
+export interface CoCandidate {
+  id: string; name: string; role: string; role_label: string; regime: CoRegime; education: string; education_label: string; experience_years: number;
+  level: string; level_label: string; productivity: Decimal; asking_salary: Decimal; hours_week: number; schedule: CoSchedule; monthly_cost_at_asking: Decimal;
+}
+export interface CoHireBody { candidate_id: string; salary: string; hours_week: number; schedule: CoSchedule; regime: CoRegime; confirm_risk: boolean; idempotency_key: string }
+export interface CoHireResult { accepted: boolean; status: "ACCEPTED" | "COUNTER" | "REFUSED"; message: string; counter_offer: Decimal | null; company: CompanyDetail | null }
+export interface CoHeadhunterResult { fee: Decimal; found: number; message: string; candidates: CoCandidate[]; company: CompanyDetail }
 export interface CompanyDetail {
   partners?: { person_id: number; name: string; share_pct: string; contribution: string; status: string; joined_month: string; finance: string }[];
   company: Company; distributable_profit: Decimal; runway_months: Decimal | null; monthly_obligations: Decimal; loan_limit: Decimal;
   expected_demand: number; expected_capacity: number; expansion_costs: Record<string, Decimal>; roles: CoRole[];
-  employees: { id: number; role: string; role_label: string; level: string; salary: Decimal; total_cost: Decimal; hours_week: number;
-    productivity: Decimal; status: string; hired_on: string; terminated_on: string | null }[];
+  employees: CoEmployee[];
+  compliance?: CoCompliance | null;
   inventory: { id: number; name: string; unit: string; quantity: Decimal; unit_cost: Decimal; value: Decimal; supplier: string;
     min_quantity: Decimal; monthly_consumption_est: Decimal; low: boolean }[];
   costs: { id: number; kind: string; name: string; amount: Decimal; active: boolean }[];
@@ -288,7 +314,7 @@ export class ApiError extends Error {
 }
 
 // POSTs que só calculam (não alteram estado): não invalidam o cache de leituras
-const READ_ONLY_POST = /\/(simulate|quote|search|refresh)$|^\/assets\/\d+\/layout$/; // layout do gráfico não afeta dados financeiros
+const READ_ONLY_POST = /\/(simulate|quote|search|refresh|candidates)$|^\/assets\/\d+\/layout$/; // layout do gráfico não afeta dados financeiros
 
 /** Toda mutação (não-GET) invalida o cache de leituras ao terminar (sucesso ou erro) para nunca exibir saldo/posição velhos. */
 export async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -409,12 +435,12 @@ export const api = {
   updateGoodCost: (id: number, costId: number, body: { amount?: string; active?: boolean }) =>
     request<GoodDetail>(`/goods/${id}/costs/${costId}`, { method: "PATCH", body: JSON.stringify(body) }),
   coCatalog: () => request<CoCatalog>("/companies/catalog"),
-  coQuote: (segment: string, location: string, size: string) =>
-    request<CoQuote>("/companies/quote", { method: "POST", body: JSON.stringify({ segment, location, size }) }),
+  coQuote: (body: { segment: string; size: string; extra_capital: string; owner_share_pct: string } & CoSiteInput) =>
+    request<CoQuote>("/companies/quote", { method: "POST", body: JSON.stringify(body) }),
   coOverview: () => request<CoOverview>("/companies/overview"),
   coInvitePartner: (person_id: number, share_pct: string, capital: string) =>
     request<{ id: number; person_id: number; accepted: boolean; message: string; share_pct: string }>("/companies/partner-invites", { method: "POST", body: JSON.stringify({ person_id, share_pct, capital }) }),
-  coCreate: (body: { name: string; segment: string; location: string; size: string; capital: string; owner_share_pct: string; business_type: string; partner_invite_ids?: number[] }) =>
+  coCreate: (body: { name: string; segment: string; size: string; extra_capital: string; owner_share_pct: string; partner_invite_ids?: number[] } & CoSiteInput) =>
     request<CompanyDetail>("/companies", { method: "POST", body: JSON.stringify(body) }),
   company: (id: number) => request<CompanyDetail>(`/companies/${id}`),
   coContribute: (id: number, amount: string) =>
@@ -423,8 +449,12 @@ export const api = {
     request<CompanyDetail>(`/companies/${id}/distribute`, { method: "POST", body: JSON.stringify({ amount, idempotency_key: crypto.randomUUID() }) }),
   coSettings: (id: number, body: { price?: string; owner_salary?: string; auto_restock?: boolean }) =>
     request<CompanyDetail>(`/companies/${id}/settings`, { method: "PATCH", body: JSON.stringify(body) }),
-  coHire: (id: number, role: string, level: string, confirm_risk: boolean) =>
-    request<CompanyDetail>(`/companies/${id}/employees`, { method: "POST", body: JSON.stringify({ role, level, confirm_risk }) }),
+  coCandidates: (id: number, role: string, regime: CoRegime) =>
+    request<{ role: string; regime: CoRegime; month: string; candidates: CoCandidate[] }>(`/companies/${id}/candidates`, { method: "POST", body: JSON.stringify({ role, regime }) }),
+  coHire: (id: number, body: Omit<CoHireBody, "idempotency_key"> & { idempotency_key?: string }) =>
+    request<CoHireResult>(`/companies/${id}/hire`, { method: "POST", body: JSON.stringify({ ...body, idempotency_key: body.idempotency_key ?? crypto.randomUUID() }) }),
+  coHeadhunter: (id: number, body: { role: string; regime: CoRegime; max_salary: string; min_level: string; idempotency_key?: string }) =>
+    request<CoHeadhunterResult>(`/companies/${id}/headhunter`, { method: "POST", body: JSON.stringify({ ...body, idempotency_key: body.idempotency_key ?? crypto.randomUUID() }) }),
   coFire: (id: number, employeeId: number) => request<CompanyDetail>(`/companies/${id}/employees/${employeeId}`, { method: "DELETE" }),
   coStock: (id: number, item_id: number, quantity: string) =>
     request<CompanyDetail>(`/companies/${id}/stock`, { method: "POST", body: JSON.stringify({ item_id, quantity, idempotency_key: crypto.randomUUID() }) }),

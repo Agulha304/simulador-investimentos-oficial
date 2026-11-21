@@ -93,7 +93,6 @@ def test_company_with_accepted_partners_splits_capital_and_ownership(client, aut
     with SessionLocal() as s:
         assets_before = s.get(Person, pid).assets
     r = create_ok(client, auth_headers, name="Sociedade", segment="CAFE", extra="40000", partner_invite_ids=[inv["id"]])
-    cap = D(r["company"]["cash"]) if False else None
     comp = r["company"]
     assert D(comp["owner_share_pct"]) == D("70.00")                                                    # 100% − 30% do sócio
     partners = r["partners"]
@@ -101,10 +100,10 @@ def test_company_with_accepted_partners_splits_capital_and_ownership(client, aut
     with SessionLocal() as s:
         assert s.get(Person, pid).assets == assets_before - D(partners[0]["contribution"])             # o aporte saiu do patrimônio dele(a)
     spent = before - co_cash(client, auth_headers)
-    total_capital = D(partners[0]["contribution"]) / D("0.30")
-    assert abs(spent - total_capital * D("0.70")) < D("0.05")                                          # você pagou só a sua parte
+    minimum = D(partners[0]["contribution"]) / D("0.30")                                               # sócio paga 30% do MÍNIMO para abrir
+    assert abs(spent - (minimum * D("0.70") + D("40000"))) < D("0.05")                                 # você: 70% do mínimo + capital adicional
     # um convite só vale uma vez
-    assert client.post(C, headers=auth_headers, json={"name": "Outra", "segment": "CAFE", "capital": "300000", "partner_invite_ids": [inv["id"]]}).status_code == 409
+    assert client.post(C, headers=auth_headers, json={"name": "Outra", "segment": "CAFE", "extra_capital": "300000", "partner_invite_ids": [inv["id"]]}).status_code == 409
     # lucros: só a parte do dono vai para o seu caixa pessoal
     cid = comp["id"]
     from tests.test_budget import close
@@ -126,9 +125,7 @@ def test_partner_without_funds_blocks_company_creation(client, auth_headers):
     with SessionLocal() as s:
         s.get(Person, pid).assets = D("1000")                                                          # perdeu o dinheiro depois de aceitar
         s.commit()
-    from tests.test_companies import quote
-    q = quote(client, auth_headers)
-    r = client.post(C, headers=auth_headers, json={"name": "Quebrada", "segment": "CAFE", "capital": str(D(q["required_capital"]) + 30000), "partner_invite_ids": [inv["id"]]})
+    r = client.post(C, headers=auth_headers, json={"name": "Quebrada", "segment": "CAFE", "extra_capital": "30000", "partner_invite_ids": [inv["id"]]})
     assert r.status_code in (400, 409) and "aportar" in r.text or r.status_code == 400
 
 

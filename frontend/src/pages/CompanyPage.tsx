@@ -4,12 +4,13 @@ import { HireModal, LeaseModal, LoanModal, MoneyModal } from "../components/Comp
 import { StatCard } from "../components/StatCard";
 import { api, type CompanyDetail, type Good, type Listing } from "../services/api";
 import { cachedGet } from "../services/dataCache";
-import { CATEGORY_LABEL, CO_COST_LABEL, CO_EVENT_LABEL, LEDGER_LINE_LABEL, LEVEL_LABEL, fmtBRL, fmtMonth, fmtPct, parseMoneyInput, trend } from "../lib/format";
+import { CATEGORY_LABEL, CO_COST_LABEL, CO_EVENT_LABEL, EDUCATION_LABEL, LEDGER_LINE_LABEL, LEVEL_LABEL, fmtBRL, fmtMonth, fmtPct, parseMoneyInput, trend } from "../lib/format";
 
 const RevenueCostChart = lazy(() => import("../components/charts/CompanyCharts").then((m) => ({ default: m.RevenueCostChart })));
 const NetResultChart = lazy(() => import("../components/charts/CompanyCharts").then((m) => ({ default: m.NetResultChart })));
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : "Erro inesperado");
 type Modal = "contribute" | "distribute" | "hire" | "loan" | "lease" | null;
+const SCHEDULE_HELP = "6x1 = seis dias de trabalho e uma folga; 5x2 = segunda a sexta; 12x36 = 12 h de trabalho e 36 h de folga; 4x3 = quatro dias de trabalho e três de folga";
 const EXPANSIONS: [string, string, string][] = [
   ["CAPACITY", "Ampliar capacidade", "+25% de capacidade de atendimento/produção."],
   ["NEW_UNIT", "Abrir nova unidade", "Dobra a escala (demanda e capacidade), mas também aluguel e custos fixos."],
@@ -23,6 +24,7 @@ export function CompanyPage() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [modal, setModal] = useState<Modal>(null);
+  const [hireRole, setHireRole] = useState<string | undefined>(undefined);
   const [personalGoods, setPersonalGoods] = useState<Good[]>([]);
   const [market, setMarket] = useState<Listing[]>([]);
 
@@ -45,7 +47,7 @@ export function CompanyPage() {
       <header className="page-head">
         <div>
           <h1>{c.name}</h1>
-          <p className="muted">{c.segment_label} · {c.location_label} · porte {c.size === "SMALL" ? "pequeno" : c.size === "MEDIUM" ? "médio" : "grande"} · {c.units} unidade(s) · sua participação {c.owner_share_pct}%</p>
+          <p className="muted">{c.segment_label} · {c.channel === "ONLINE" ? "operação online" : `${c.location_label} (${c.site_mode === "BUY" ? "terreno próprio" : "alugado"})`} · porte {c.size === "SMALL" ? "pequeno" : c.size === "MEDIUM" ? "médio" : "grande"} · {c.units} unidade(s) · sua participação {c.owner_share_pct}%</p>
         </div>
         <div className="row-gap" style={{ flexWrap: "wrap" }}>
           <button className="btn small ghost" onClick={() => setModal("contribute")}>Aportar capital</button>
@@ -55,11 +57,16 @@ export function CompanyPage() {
       </header>
       {error && <div className="alert">{error}</div>}
       {notice && <div className="ok">{notice}</div>}
+      {d.compliance && !d.compliance.regular && (
+        <div className="alert" role="alert">
+          <b>Empresa irregular.</b> Faltam: {d.compliance.missing_labels.join(", ")}. Sem isso a empresa não vende e paga multa (estimada em {fmtBRL(d.compliance.estimated_fine)}) no fechamento do mês. Contrate antes de fechar o mês.
+        </div>
+      )}
       {lowRunway && <div className="alert">Atenção: o caixa cobre apenas {Number(d.runway_months).toFixed(1).replace(".", ",")} mês(es) de custos fixos e folha. Aporte capital, ajuste custos ou reduza a equipe.</div>}
 
       <section className="stats-grid">
         <StatCard label="Caixa" value={fmtBRL(c.cash)} emphasis tone={Number(c.cash) < 0 ? "down" : "neutral"} sub={d.runway_months != null ? `cobre ${Number(d.runway_months).toFixed(1).replace(".", ",")} mês(es)` : undefined} />
-        <StatCard label="Patrimônio da empresa" value={fmtBRL(c.equity)} sub="caixa + estoque + bens − dívidas" />
+        <StatCard label="Patrimônio da empresa" value={fmtBRL(c.equity)} sub={c.site_mode === "BUY" ? "caixa + estoque + bens + terreno − dívidas" : "caixa + estoque + bens − dívidas"} />
         <StatCard label="Dívidas" value={fmtBRL(c.debts)} />
         <StatCard label="Lucro distribuível" value={fmtBRL(d.distributable_profit)} sub="acumulado ainda não distribuído" />
         <StatCard label="Reputação" value={`${c.reputation}/100`} sub={c.marketing_until ? `campanha até ${fmtMonth(c.marketing_until)}` : undefined} />
@@ -74,7 +81,7 @@ export function CompanyPage() {
           <div><dt>Preço de venda</dt><dd className="num">{fmtBRL(c.price)}</dd></div>
           <div><dt>Pró-labore mensal</dt><dd className="num">{fmtBRL(c.owner_salary)}</dd></div>
         </dl>
-        <SettingsForm d={d} onSave={(body) => act(() => api.coSettings(c.id, body), "Ajustes salvos.")} />
+        <SettingsForm d={d} showRestock={c.metrics_kind !== "SERVICE"} onSave={(body) => act(() => api.coSettings(c.id, body), "Ajustes salvos.")} />
       </section>
 
       <section className="card">
@@ -82,11 +89,12 @@ export function CompanyPage() {
         {!last ? <div className="empty">Feche o mês do simulador (aba Orçamento) para a empresa operar e gerar o primeiro demonstrativo.</div> : (
           <>
             <dl className="facts">
-              <div><dt>Vendas</dt><dd className="num">{last.units_sold} un. de {last.demand_units} de demanda{last.stockout ? " — faltou estoque" : ""}</dd></div>
+              <div><dt>Vendas</dt><dd className="num">{last.units_sold} {c.unit_label}(s) de {last.demand_units} de demanda{last.stockout && c.metrics_kind !== "SERVICE" ? " — faltou estoque" : ""}</dd></div>
               <div><dt>Receita bruta</dt><dd className="num tone-up">{fmtBRL(last.revenue)}</dd></div>
-              <div><dt>(−) Custos variáveis (mercadorias e outros)</dt><dd className="num">{fmtBRL(last.variable_costs)}</dd></div>
-              <div><dt>(−) Custos fixos (aluguel, energia, estrutura)</dt><dd className="num">{fmtBRL(last.fixed_costs)}</dd></div>
-              <div><dt>(−) Folha de pagamento e pró-labore</dt><dd className="num">{fmtBRL(last.payroll)}</dd></div>
+              <div><dt>(−) Custos variáveis ({c.metrics_kind === "SERVICE" ? "insumos diretos, taxas e comissões" : "mercadorias e outros"})</dt><dd className="num">{fmtBRL(last.variable_costs)}</dd></div>
+              <div><dt>(−) Custos fixos ({c.channel === "ONLINE" || c.site_mode === "BUY" ? "energia, estrutura" : "aluguel, energia, estrutura"})</dt><dd className="num">{fmtBRL(last.fixed_costs)}</dd></div>
+              {last.irregular && <div><dt className="tone-down">Mês irregular</dt><dd className="tone-down">sem cargos obrigatórios: vendas zeradas e multa de {fmtBRL(last.fines ?? "0")} (dentro dos custos fixos)</dd></div>}
+              <div><dt>(−) Folha de pagamento (CLT 2×, PJ 1×) e pró-labore</dt><dd className="num">{fmtBRL(last.payroll)}</dd></div>
               <div><dt>= Resultado operacional</dt><dd className={`num tone-${trend(last.operating_result)}`}>{fmtBRL(last.operating_result)}</dd></div>
               <div><dt>(−) Impostos</dt><dd className="num">{fmtBRL(last.taxes)}</dd></div>
               <div><dt>(−) Juros</dt><dd className="num">{fmtBRL(last.interest)}</dd></div>
@@ -107,18 +115,38 @@ export function CompanyPage() {
             <li key={p.person_id}><span><b>{p.name}</b> <span className="muted small">· situação {p.finance} · entrou com {fmtBRL(p.contribution)}</span></span>
               <span className={`chip ${p.status === "ACTIVE" ? "up" : "down"}`}>{p.share_pct}% · {p.status === "ACTIVE" ? "sócio(a)" : "deu calote"}</span></li>))}</ul>
         </section>)}
+      {d.compliance && (
+        <section className="card" aria-label="Cargos obrigatórios">
+          <h2>Obrigatórios</h2>
+          <ul className="list-plain">{d.compliance.required.map((q) => (
+            <li key={q.role}>
+              <span className={q.present ? "tone-up" : "tone-down"}>{q.present ? "✓" : "✗"} <b>{q.label}</b></span>
+              {q.present ? <span className="muted small">contratado</span> : <button className="link-btn" onClick={() => { setHireRole(q.role); setModal("hire"); }}>contratar</button>}
+            </li>))}</ul>
+          <p className="muted small" style={{ margin: 0 }}>Contador e Advogado são obrigatórios{c.channel === "PHYSICAL" ? "; empresa física também precisa de Auxiliar de limpeza" : " (empresa online não precisa de limpeza)"}. Sem todos no fechamento do mês a empresa fica irregular: não vende e paga multa de 1 salário-base de cada cargo faltante. Não há tolerância no mês da abertura.</p>
+        </section>
+      )}
+
       <section className="card">
-        <div className="row"><h2>Funcionários</h2><button className="btn small ghost" onClick={() => setModal("hire")}>+ Contratar</button></div>
-        <div className="table-wrap"><table>
-          <thead><tr><th>Cargo</th><th>Nível</th><th className="r">Salário</th><th className="r">Custo total</th><th>Situação</th><th /></tr></thead>
-          <tbody>{d.employees.map((e) => (
-            <tr key={e.id} className={e.status === "ACTIVE" ? "" : "muted"}>
-              <td>{e.role_label}</td><td>{LEVEL_LABEL[e.level]}</td><td className="r num">{fmtBRL(e.salary)}</td><td className="r num">{fmtBRL(e.total_cost)}</td>
-              <td>{e.status === "ACTIVE" ? `desde ${fmtMonth(e.hired_on)}` : `desligado em ${e.terminated_on ? fmtMonth(e.terminated_on) : ""}`}</td>
-              <td className="r">{e.status === "ACTIVE" && <button className="link-btn" onClick={() => window.confirm(`Desligar ${e.role_label}? A rescisão custa um salário.`) && act(() => api.coFire(c.id, e.id), "Funcionário desligado.")}>desligar</button>}</td>
-            </tr>
-          ))}</tbody>
-        </table></div>
+        <div className="row"><h2>Funcionários</h2><button className="btn small ghost" onClick={() => { setHireRole(undefined); setModal("hire"); }}>+ Contratar</button></div>
+        {d.employees.length === 0 && <div className="empty">Nenhum funcionário. A empresa nasce sem equipe: sem funcionários produtivos só o dono produz ({d.expected_capacity} /mês).</div>}
+        {d.employees.length > 0 && (
+          <div className="table-wrap"><table>
+            <thead><tr><th>Funcionário</th><th>Regime</th><th title={SCHEDULE_HELP}>Escala</th><th>Escolaridade</th><th>Nível</th><th className="r">Salário negociado</th><th className="r">Custo real/mês</th><th>Situação</th><th /></tr></thead>
+            <tbody>{d.employees.map((e) => (
+              <tr key={e.id} className={e.status === "ACTIVE" ? "" : "muted"}>
+                <td><b>{e.name || e.role_label}</b><br /><span className="muted small">{e.role_label} · {e.experience_years} ano(s) exp.</span></td>
+                <td><span className={`chip ${e.regime === "CLT" ? "up" : "down"}`}>{e.regime}</span></td>
+                <td>{e.schedule} <span className="muted small">{e.hours_week} h</span></td><td>{EDUCATION_LABEL[e.education] ?? e.education_label}</td><td>{LEVEL_LABEL[e.level]}</td>
+                <td className="r num">{fmtBRL(e.salary)}</td><td className="r num">{fmtBRL(e.total_cost)}<br /><span className="muted small">{e.regime === "CLT" ? "2× o salário" : "1× o salário"}</span></td>
+                <td>{e.status === "ACTIVE" ? `desde ${fmtMonth(e.hired_on)}` : `desligado em ${e.terminated_on ? fmtMonth(e.terminated_on) : ""}`}</td>
+                <td className="r">{e.status === "ACTIVE" && <button className="link-btn" onClick={() => window.confirm(
+                  `Desligar ${e.name || e.role_label}?\nRescisão: ${e.regime === "CLT" ? `${fmtBRL(e.severance_estimate)} (1 salário + aviso prévio)` : "nenhuma (PJ)"}.\nRisco de processo trabalhista: ${String(e.lawsuit_risk_pct).replace(".", ",")}%${e.regime === "PJ" ? " — PJ costuma alegar vínculo empregatício e processar com muito mais frequência que CLT" : ""}${e.hours_week > 44 || e.schedule === "6x1" ? ". Jornada acima de 44 h/semana e escala 6x1 aumentam o risco" : ""}.`) && act(() => api.coFire(c.id, e.id), "Funcionário desligado.")}>desligar</button>}</td>
+              </tr>
+            ))}</tbody>
+          </table></div>
+        )}
+        <p className="muted small" style={{ margin: 0 }}>Custo real: CLT = 2× o salário negociado; PJ = 1× (sem encargos, mas com risco alto de processo ao demitir). {SCHEDULE_HELP}.</p>
       </section>
 
       {d.inventory.length > 0 && (
@@ -139,9 +167,9 @@ export function CompanyPage() {
       )}
 
       <section className="card">
-        <div className="row"><h2>Instalações e custos</h2><button className="btn small ghost" onClick={() => setModal("lease")}>Alterar instalações</button></div>
+        <div className="row"><h2>Instalações e custos</h2>{c.channel === "PHYSICAL" && c.site_mode !== "BUY" && <button className="btn small ghost" onClick={() => setModal("lease")}>Alterar instalações</button>}</div>
         <dl className="facts">
-          <div><dt>Instalações</dt><dd>{d.lease ? `${d.lease.name} — ${fmtBRL(d.lease.monthly_rent)}/mês (${d.lease.kind === "EXTERNAL" ? "alugado de terceiros" : d.lease.kind === "OWN_GOOD" ? "imóvel seu, alugado à empresa" : "imóvel da empresa"})` : "nenhuma"}</dd></div>
+          <div><dt>Instalações</dt><dd>{c.channel === "ONLINE" ? "operação online — sem ponto físico nem aluguel" : c.site_mode === "BUY" ? `terreno próprio (${fmtBRL(c.site_value)}) — sem aluguel` : d.lease ? `${d.lease.name} — ${fmtBRL(d.lease.monthly_rent)}/mês (${d.lease.kind === "EXTERNAL" ? "alugado de terceiros" : d.lease.kind === "OWN_GOOD" ? "imóvel seu, alugado à empresa" : "imóvel da empresa"})` : "nenhuma"}</dd></div>
           {d.costs.map((x) => <div key={x.id}><dt>{CO_COST_LABEL[x.kind] ?? x.kind}</dt><dd className="num">{fmtBRL(x.amount)}/mês{x.active ? "" : " (inativo)"}</dd></div>)}
         </dl>
       </section>
@@ -186,8 +214,8 @@ export function CompanyPage() {
         <h2>Histórico mensal</h2>
         {d.months.length === 0 ? <div className="empty">Nenhum mês processado ainda.</div> : (
           <div className="table-wrap"><table>
-            <thead><tr><th>Mês</th><th className="r">Vendas</th><th className="r">Receita</th><th className="r">Resultado líquido</th><th className="r">Caixa</th><th className="r">Patrimônio</th></tr></thead>
-            <tbody>{d.months.map((m) => <tr key={m.ref_month}><td>{fmtMonth(m.ref_month)}</td><td className="r num">{m.units_sold}{m.stockout ? " ⚠" : ""}</td><td className="r num">{fmtBRL(m.revenue)}</td>
+            <thead><tr><th>Mês</th><th className="r" style={{ textTransform: "capitalize" }}>{c.unit_label}s</th><th className="r">Receita</th><th className="r">Resultado líquido</th><th className="r">Caixa</th><th className="r">Patrimônio</th></tr></thead>
+            <tbody>{d.months.map((m) => <tr key={m.ref_month}><td>{fmtMonth(m.ref_month)}</td><td className="r num">{m.units_sold}{m.stockout && c.metrics_kind !== "SERVICE" ? " ⚠" : ""}</td><td className="r num">{fmtBRL(m.revenue)}</td>
               <td className={`r num tone-${trend(m.net_result)}`}>{Number(m.net_result) >= 0 ? "▲ " : "▼ "}{fmtBRL(m.net_result)}</td><td className="r num">{fmtBRL(m.cash_end)}</td><td className="r num">{fmtBRL(m.equity_end)}</td></tr>)}</tbody>
           </table></div>
         )}
@@ -207,14 +235,14 @@ export function CompanyPage() {
       {modal === "distribute" && <MoneyModal title="Distribuir lucros" label="Valor (R$)" cta="Distribuir"
         hint={`Lucro distribuível: ${fmtBRL(d.distributable_profit)} (limitado também ao caixa). Sua parte (${c.owner_share_pct}%) entra na conta pessoal e a empresa registra a saída. Não é receita operacional.`}
         run={(a) => api.coDistribute(c.id, a)} onClose={() => setModal(null)} onDone={(x) => done(x, "Lucros distribuídos.")} />}
-      {modal === "hire" && <HireModal d={d} onClose={() => setModal(null)} onDone={(x) => done(x, "Funcionário contratado.")} />}
+      {modal === "hire" && <HireModal d={d} initialRole={hireRole} onClose={() => setModal(null)} onChange={(x) => setD(x)} onDone={(x, m) => done(x, m)} />}
       {modal === "loan" && <LoanModal d={d} onClose={() => setModal(null)} onDone={(x) => done(x, "Empréstimo contratado.")} />}
       {modal === "lease" && <LeaseModal d={d} goods={personalGoods} onClose={() => setModal(null)} onDone={(x) => done(x, "Instalações atualizadas.")} />}
     </div>
   );
 }
 
-function SettingsForm({ d, onSave }: { d: CompanyDetail; onSave: (b: { price?: string; owner_salary?: string; auto_restock?: boolean }) => void }) {
+function SettingsForm({ d, showRestock, onSave }: { d: CompanyDetail; showRestock: boolean; onSave: (b: { price?: string; owner_salary?: string; auto_restock?: boolean }) => void }) {
   const [price, setPrice] = useState(d.company.price);
   const [salary, setSalary] = useState(d.company.owner_salary);
   const [restock, setRestock] = useState(d.company.auto_restock);
@@ -223,7 +251,7 @@ function SettingsForm({ d, onSave }: { d: CompanyDetail; onSave: (b: { price?: s
     <form className="row-gap" style={{ maxWidth: "none", flexWrap: "wrap", marginTop: 12 }} onSubmit={(e) => { e.preventDefault(); onSave({ price: parseMoneyInput(price), owner_salary: parseMoneyInput(salary), auto_restock: restock }); }}>
       <label>Preço de venda (R$)<input inputMode="decimal" value={price} onChange={(e) => setPrice(e.target.value)} /></label>
       <label>Pró-labore (R$/mês)<input inputMode="decimal" value={salary} onChange={(e) => setSalary(e.target.value)} /></label>
-      <label className="check"><input type="checkbox" checked={restock} onChange={(e) => setRestock(e.target.checked)} />Reposição automática de estoque</label>
+      {showRestock && <label className="check"><input type="checkbox" checked={restock} onChange={(e) => setRestock(e.target.checked)} />Reposição automática de estoque</label>}
       <button className="btn small ghost">Salvar</button>
     </form>
   );

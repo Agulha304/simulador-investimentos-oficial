@@ -39,7 +39,7 @@ def personal_debts(db: Session, user_id: int) -> Decimal:
 
 
 def company_equity(db: Session, company: Company) -> Decimal:
-    """Patrimônio empresarial = caixa (negativo = dívida) + estoque + bens da empresa − empréstimos."""
+    """Patrimônio empresarial = caixa (negativo = dívida) + estoque + bens da empresa + terreno próprio − empréstimos."""
     from backend.models import CompanyLoan   # evita ciclo de import no topo
     cash = db.scalar(select(FinanceAccount.balance).where(FinanceAccount.id == company.account_id))
     stock = db.scalar(select(func.coalesce(func.sum(InventoryItem.quantity * InventoryItem.unit_cost), 0)).where(
@@ -48,7 +48,7 @@ def company_equity(db: Session, company: Company) -> Decimal:
         Good.owner_account_id == company.account_id, Good.status == GoodStatus.ACTIVE))
     loans = db.scalar(select(func.coalesce(func.sum(CompanyLoan.balance), 0)).where(
         CompanyLoan.company_id == company.id, CompanyLoan.status == LoanStatus.ACTIVE))
-    return quantize_money(cash + stock + assets - loans)
+    return quantize_money(cash + stock + assets + (company.site_value or 0) - loans)
 
 
 def companies_net_value(db: Session, user_id: int) -> Decimal:

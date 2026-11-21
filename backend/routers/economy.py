@@ -78,7 +78,7 @@ def overview(db: Session, user_id: int) -> dict:
         "params": es.sim_params(db, user_id).__dict__,
         "crises": [crisis_out(c) for c in db.scalars(select(EconomicCrisis).where(EconomicCrisis.user_id == user_id)
                                                      .order_by(EconomicCrisis.start_month.desc()))],
-        "pending": [event_out(e) for e in events if e.status == "PENDING"],
+        "pending": [event_out(e) for e in events if e.status == "PENDING" and e.start_month <= month.ref_month],
         "active": [event_out(e) for e in events if e.status == "ACTIVE"],
         "past": [event_out(e) for e in events if e.status == "ENDED"],
     }
@@ -95,8 +95,8 @@ def decisions(user: CurrentUser, db: DbSession):
     def go():
         month = bs.ensure_setup(db, user.id)
         es.ensure_monthly_decision(db, user.id, month)
-        pend = list(db.scalars(select(WorldEvent).where(WorldEvent.user_id == user.id, WorldEvent.status == "PENDING")
-                               .order_by(WorldEvent.id)))
+        pend = list(db.scalars(select(WorldEvent).where(WorldEvent.user_id == user.id, WorldEvent.status == "PENDING",
+                                                        WorldEvent.start_month <= month.ref_month).order_by(WorldEvent.id)))
         pend.sort(key=lambda e: e.key not in E.MONTHLY_BY_KEY)           # a decisão do mês vem primeiro
         return {"month": month.ref_month.isoformat(), "pending": [event_out(e) for e in pend]}
     return _run(db, go)

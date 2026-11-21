@@ -14,8 +14,8 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.database import Base
 from backend.models.enums import (
-    AmortizationSystem, CompanyCostKind, CompanyEventType, CompanySegment, CompanySize, CompanyStatus, EmployeeLevel,
-    EmployeeStatus, InstallmentStatus, LeaseKind, LoanStatus,
+    AmortizationSystem, CompanyChannel, SiteMode, CompanyCostKind, CompanyEventType, CompanySegment, CompanySize, CompanyStatus, EmployeeEducation, EmployeeLevel,
+    EmployeeRegime, EmployeeStatus, WorkSchedule, InstallmentStatus, LeaseKind, LoanStatus,
 )
 from backend.models.types import Money, StrEnumType
 
@@ -33,8 +33,11 @@ class Company(Base):
     account_id: Mapped[int] = mapped_column(ForeignKey("finance_accounts.id", ondelete="RESTRICT"), unique=True)
     name: Mapped[str] = mapped_column(String(80))
     segment: Mapped[CompanySegment] = mapped_column(StrEnumType(CompanySegment, "company_segment"))
-    business_type: Mapped[str] = mapped_column(String(60), default="")
-    location: Mapped[str] = mapped_column(String(32))                       # chave em company_rules.LOCATIONS
+    location: Mapped[str] = mapped_column(String(32))                       # chave em company_rules (por segmento; "online" se ONLINE)
+    channel: Mapped[CompanyChannel] = mapped_column(StrEnumType(CompanyChannel, "company_channel"), default=CompanyChannel.PHYSICAL,
+                                                    server_default="PHYSICAL")
+    site_mode: Mapped[SiteMode | None] = mapped_column(StrEnumType(SiteMode, "company_site_mode"), nullable=True, default=None)
+    site_value: Mapped[Decimal] = mapped_column(Money(), default=Decimal("0"), server_default="0")   # terreno comprado (BUY)
     size: Mapped[CompanySize] = mapped_column(StrEnumType(CompanySize, "company_size"), default=CompanySize.SMALL)
     units: Mapped[int] = mapped_column(Integer, default=1, server_default="1")         # unidades/filiais
     capacity_level: Mapped[int] = mapped_column(Integer, default=0, server_default="0")  # expansões de capacidade
@@ -63,6 +66,29 @@ class Employee(Base):
     status: Mapped[EmployeeStatus] = mapped_column(StrEnumType(EmployeeStatus, "employee_status"), default=EmployeeStatus.ACTIVE)
     hired_on: Mapped[date] = mapped_column(Date)
     terminated_on: Mapped[date | None] = mapped_column(Date)
+    # empresas v2 (fase 2): `salary` é o salário NEGOCIADO; o custo real depende do regime (CLT 2x, PJ 1x)
+    name: Mapped[str] = mapped_column(String(80), default="", server_default="")
+    regime: Mapped[EmployeeRegime] = mapped_column(StrEnumType(EmployeeRegime, "employee_regime"), default=EmployeeRegime.CLT,
+                                                   server_default="CLT")
+    schedule: Mapped[WorkSchedule] = mapped_column(StrEnumType(WorkSchedule, "employee_schedule"), default=WorkSchedule.ESC_5X2,
+                                                   server_default="5x2")
+    education: Mapped[EmployeeEducation] = mapped_column(StrEnumType(EmployeeEducation, "employee_education"),
+                                                         default=EmployeeEducation.MEDIO, server_default="MEDIO")
+    experience_years: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+
+
+class CandidateBlock(Base):
+    """Candidato indisponível para a empresa (recusou a proposta ou já foi contratado). O id do candidato é um token
+    determinístico (ver `company_team`), por isso basta guardar o token: sem tabela de candidatos."""
+
+    __tablename__ = "company_candidate_blocks"
+    __table_args__ = (UniqueConstraint("company_id", "candidate_id", name="uq_candidate_block"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id", ondelete="CASCADE"), index=True)
+    candidate_id: Mapped[str] = mapped_column(String(80))
+    ref_month: Mapped[date] = mapped_column(Date)
+    reason: Mapped[str] = mapped_column(String(10))                       # REFUSED | HIRED
 
 
 class InventoryItem(Base):
@@ -174,6 +200,8 @@ class CompanyMonth(Base):
     debts_end: Mapped[Decimal] = mapped_column(Money())
     equity_end: Mapped[Decimal] = mapped_column(Money())
     reputation_end: Mapped[int] = mapped_column(Integer)
+    irregular: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")      # sem cargos obrigatórios no fechamento
+    fines: Mapped[Decimal] = mapped_column(Money(), default=Decimal("0"), server_default="0")   # multas do mês (já dentro de fixed_costs)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

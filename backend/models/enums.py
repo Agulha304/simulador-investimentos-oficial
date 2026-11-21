@@ -291,6 +291,16 @@ class CompanySize(StrEnum):
     LARGE = "LARGE"
 
 
+class CompanyChannel(StrEnum):
+    ONLINE = "ONLINE"
+    PHYSICAL = "PHYSICAL"
+
+
+class SiteMode(StrEnum):
+    BUY = "BUY"
+    RENT = "RENT"
+
+
 class CompanyStatus(StrEnum):
     ACTIVE = "ACTIVE"
     CLOSED = "CLOSED"
@@ -305,6 +315,26 @@ class EmployeeLevel(StrEnum):
 class EmployeeStatus(StrEnum):
     ACTIVE = "ACTIVE"
     TERMINATED = "TERMINATED"
+
+
+class EmployeeRegime(StrEnum):
+    CLT = "CLT"                    # custa 2x o salário (encargos, benefícios e provisões)
+    PJ = "PJ"                      # custa 1x o salário; risco alto de processo (reconhecimento de vínculo)
+
+
+class WorkSchedule(StrEnum):
+    ESC_6X1 = "6x1"
+    ESC_5X2 = "5x2"
+    ESC_12X36 = "12x36"
+    ESC_4X3 = "4x3"
+
+
+class EmployeeEducation(StrEnum):
+    FUNDAMENTAL = "FUNDAMENTAL"
+    MEDIO = "MEDIO"
+    TECNICO = "TECNICO"
+    SUPERIOR = "SUPERIOR"
+    POS = "POS"
 
 
 class CompanyCostKind(StrEnum):
@@ -336,3 +366,4 @@ class CompanyEventType(StrEnum):
     SETTINGS = "SETTINGS"
     MONTH = "MONTH"
     CLOSED = "CLOSED"
+    COMPLIANCE = "COMPLIANCE"

@@ -8,12 +8,12 @@ from backend.models.chart_layout import ChartLayout
 from backend.models.company import (
     CompanyPartner, PartnerInvite,
     Company, CompanyCost, CompanyEvent, CompanyLease, CompanyLoan, CompanyLoanInstallment, CompanyMonth, Employee,
-    InventoryItem,
+    InventoryItem, CandidateBlock,
 )
 from backend.models.distribution import Dividend, DividendEligibility, DividendPayment
 from backend.models.enums import (
-    AccountKind, AmortizationSystem, CompanyCostKind, CompanyEventType, CompanySegment, CompanySize, CompanyStatus,
-    EmployeeLevel, EmployeeStatus, LeaseKind, AssetClass, Condition, CostKind, GoodCategory, GoodEventType, GoodStatus,
+    AccountKind, AmortizationSystem, CompanyChannel, SiteMode, CompanyCostKind, CompanyEventType, CompanySegment, CompanySize, CompanyStatus,
+    EmployeeLevel, EmployeeStatus, EmployeeRegime, WorkSchedule, EmployeeEducation, LeaseKind, AssetClass, Condition, CostKind, GoodCategory, GoodEventType, GoodStatus,
     InstallmentStatus, LoanStatus, Occupancy, REAL_ESTATE, ValueSource, Currency, EntryOrigin, FlowKind, Frequency, MonthStatus, DistributionKind, EligibilityStatus, EventKind, EventStatus, FixedIncomeType,
     IndexName, Indexer, InvestmentStatus, Liquidity, PaymentFrequency, ProductSource, RateMode, RiskLevel,
     TaxRegime, TransactionSource, TransactionType,
@@ -38,9 +38,9 @@ __all__ = [
     "Achievement", "Goal", "MonthReport",
     "EconomicCrisis", "EconomyState", "GameProfile", "SimPrice", "WorldEvent",
     "Child", "LifeLog", "LifeProfile", "Person", "Relationship",
-    "Company", "CompanyCost", "CompanyCostKind", "CompanyEvent", "CompanyEventType", "CompanyLease", "CompanyLoan",
+    "Company", "CompanyChannel", "SiteMode", "CompanyCost", "CompanyCostKind", "CompanyEvent", "CompanyEventType", "CompanyLease", "CompanyLoan",
     "CompanyLoanInstallment", "CompanyMonth", "CompanySegment", "CompanySize", "CompanyStatus", "Employee", "EmployeeLevel",
-    "EmployeeStatus", "InventoryItem", "LeaseKind",
+    "EmployeeStatus", "EmployeeRegime", "WorkSchedule", "EmployeeEducation", "CandidateBlock", "InventoryItem", "LeaseKind",
     "AmortizationSystem", "Condition", "CostKind", "Good", "GoodCategory", "GoodCost", "GoodEvent", "GoodEventType",
     "GoodStatus", "GoodValue", "InstallmentStatus", "Loan", "LoanInstallment", "LoanStatus", "Occupancy", "REAL_ESTATE",
     "RealEstateDetails", "ValuationRule", "ValueSource", "VehicleDetails",

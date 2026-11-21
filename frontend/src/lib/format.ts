@@ -98,6 +98,8 @@ export const EVENT_LABEL: Record<string, string> = {
 };
 export const REAL_ESTATE_CATS = ["RESIDENTIAL", "COMMERCIAL", "LAND"];
 
+export const REGIME_LABEL: Record<string, string> = { CLT: "CLT", PJ: "PJ" };
+export const EDUCATION_LABEL: Record<string, string> = { FUNDAMENTAL: "Fundamental", MEDIO: "Médio", TECNICO: "Técnico", SUPERIOR: "Superior", POS: "Pós-graduação" };
 export const LEVEL_LABEL: Record<string, string> = { JUNIOR: "Júnior", MID: "Pleno", SENIOR: "Sênior" };
 export const CO_COST_LABEL: Record<string, string> = {
   UTILITIES: "Energia, água e internet", TOOLS: "Ferramentas e manutenção", INSURANCE: "Seguro", MARKETING: "Marketing",
@@ -105,11 +107,11 @@ export const CO_COST_LABEL: Record<string, string> = {
 };
 export const CO_EVENT_LABEL: Record<string, string> = {
   CREATED: "Criação", CAPITAL: "Capital", HIRE: "Contratação", FIRE: "Desligamento", STOCK: "Estoque", EXPANSION: "Expansão",
-  LEASE: "Instalações", LOAN: "Empréstimo", DISTRIBUTION: "Lucros", EQUIPMENT: "Equipamento", SETTINGS: "Ajustes", MONTH: "Fechamento", CLOSED: "Encerramento",
+  LEASE: "Instalações", LOAN: "Empréstimo", DISTRIBUTION: "Lucros", EQUIPMENT: "Equipamento", SETTINGS: "Ajustes", MONTH: "Fechamento", CLOSED: "Encerramento", COMPLIANCE: "Regularidade",
 };
 export const LEDGER_LINE_LABEL: Record<string, string> = {
   CAPITAL_IN: "Aporte de capital", REVENUE: "Receitas", VARIABLE: "Custos variáveis", PAYROLL: "Folha", PRO_LABORE: "Pró-labore",
   RENT: "Aluguel", FIXED: "Custos fixos", ASSET_COSTS: "Custos de bens", TAX: "Impostos", INTEREST: "Juros", LOAN_IN: "Empréstimo",
-  LOAN_PRINCIPAL: "Amortização", STOCK_PURCHASE: "Compra de estoque", EQUIPMENT: "Equipamentos", FEES: "Taxas", SETUP: "Estruturação",
+  LOAN_PRINCIPAL: "Amortização", STOCK_PURCHASE: "Compra de estoque", LAND: "Compra de terreno", EQUIPMENT: "Equipamentos", FEES: "Multas e taxas", SETUP: "Estruturação",
   HIRING: "Contratação", SEVERANCE: "Rescisão", EXPANSION: "Expansão", MARKETING: "Marketing", DISTRIBUTION: "Distribuição de lucros",
 };

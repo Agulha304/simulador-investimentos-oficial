@@ -9,6 +9,7 @@ Nenhuma função aqui faz commit.
 """
 import logging
 import math
+from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 
@@ -17,12 +18,13 @@ from sqlalchemy.orm import Session
 
 from backend.core.money import quantize_money
 from backend.models import (
-    AccountKind, AmortizationSystem, Company, CompanyCost, CompanyEvent, CompanyEventType, CompanyLease, CompanyLoan,
-    CompanyLoanInstallment, CompanyMonth, CompanyPartner, CompanySegment, CompanySize, CompanyStatus, Employee, EmployeeLevel, EmployeeStatus,
-    EntryOrigin, FinanceAccount, FlowKind, Frequency, Good, GoodCategory, GoodCost, GoodEvent, GoodEventType, GoodStatus,
-    InstallmentStatus, InventoryItem, LeaseKind, LedgerEntry, LoanStatus, Occupancy, Person, RealEstateDetails, SimMonth,
+    AccountKind, AmortizationSystem, Company, CompanyChannel, SiteMode, CompanyCost, CompanyEvent, CompanyEventType, CompanyLease, CompanyLoan,
+    CandidateBlock, CompanyLoanInstallment, CompanyMonth, CompanyPartner, CompanySegment, CompanySize, CompanyStatus, Employee, EmployeeLevel, EmployeeStatus,
+    EmployeeRegime, EntryOrigin, FinanceAccount, FlowKind, Frequency, Good, GoodCategory, GoodCost, GoodEvent, GoodEventType, GoodStatus,
+    InstallmentStatus, InventoryItem, LeaseKind, LedgerEntry, LoanStatus, Occupancy, Person, RealEstateDetails, SimMonth, WorkSchedule,
 )
 from backend.services import company_rules as rules
+from backend.services import company_team as team
 from backend.services import economy_service, partners
 from backend.services import finance_ledger, loan_math, wealth_service
 from backend.services.budget_service import months_between, require_open, shift_month
@@ -33,7 +35,7 @@ from backend.services.goods_service import _category, _cost_due
 log = logging.getLogger(__name__)
 ZERO = Decimal("0.00")
 D = Decimal
-CAPITAL_LINES = {"CAPITAL_IN", "STOCK_PURCHASE", "EQUIPMENT", "LOAN_IN", "LOAN_PRINCIPAL", "DISTRIBUTION"}
+CAPITAL_LINES = {"CAPITAL_IN", "LAND", "STOCK_PURCHASE", "EQUIPMENT", "LOAN_IN", "LOAN_PRINCIPAL", "DISTRIBUTION"}
 
 
 # ------------------------------------------------------------------ acesso e utilidades
@@ -90,10 +92,15 @@ def _replayed(db: Session, key: str) -> bool:
 def monthly_obligations(db: Session, c: Company) -> Decimal:
     """Folha + aluguel + custos fixos: o que a empresa paga por mês independentemente das vendas."""
     seg = rules.SEGMENTS[c.segment]
-    payroll = sum((rules.payroll_cost(e.salary) for e in _employees(db, c)), ZERO) + c.owner_salary
+    payroll = sum((employee_cost(e) for e in _employees(db, c)), ZERO) + c.owner_salary
     fixed = sum((x.amount * (c.units if x.scales_with_units else 1) for x in db.scalars(
         select(CompanyCost).where(CompanyCost.company_id == c.id, CompanyCost.active.is_(True)))), ZERO)
     return quantize_money(payroll + fixed + _rent(db, c, seg))
+
+
+def employee_cost(e: Employee) -> Decimal:
+    """Custo mensal REAL do funcionário: CLT = 2x o salário negociado, PJ = 1x."""
+    return rules.payroll_cost(e.salary, e.regime)
 
 
 def _employees(db: Session, c: Company) -> list[Employee]:
@@ -107,15 +114,18 @@ def _lease(db: Session, c: Company) -> CompanyLease | None:
 
 def _rent(db: Session, c: Company, seg: rules.Segment) -> Decimal:
     lease = _lease(db, c)
-    extra = rules.default_rent(seg, c.location, c.size) * max(c.units - 1, 0)
+    extra = rules.default_rent(seg, c.location, c.size) * max(c.units - 1, 0) if c.channel == CompanyChannel.PHYSICAL else ZERO
     return quantize_money((lease.monthly_rent if lease else ZERO) + extra)
 
 
 # ------------------------------------------------------------------ criação e capital
 
-def create_company(db: Session, user_id: int, month: SimMonth, *, name: str, segment: CompanySegment, location: str,
-                   size: CompanySize, capital: Decimal, owner_share_pct: Decimal = D(100), business_type: str = "",
+def create_company(db: Session, user_id: int, month: SimMonth, *, name: str, segment: CompanySegment, size: CompanySize,
+                   extra_capital: Decimal = ZERO, owner_share_pct: Decimal = D(100), channel: CompanyChannel = CompanyChannel.PHYSICAL,
+                   location: str | None = None, site_mode: SiteMode | None = None,
                    partner_invite_ids: list[int] | None = None) -> Company:
+    """Abre a empresa. A empresa recebe o capital MÍNIMO para abrir (dividido entre dono e sócios conforme a participação)
+    mais o capital adicional do dono: o dono paga `participação% × mínimo + adicional`, cada sócio paga a sua % do mínimo."""
     require_open(month)
     invites = partners.usable_invites(db, user_id, month, partner_invite_ids or []) if partner_invite_ids else []
     if invites:
@@ -125,56 +135,55 @@ def create_company(db: Session, user_id: int, month: SimMonth, *, name: str, seg
     name = name.strip()
     if not name:
         raise FinanceError("informe o nome da empresa")
-    if location not in rules.LOCATIONS:
-        raise FinanceError("localização inválida")
     if not D(0) < owner_share_pct <= D(100):
         raise FinanceError("a participação societária deve ficar entre 0 e 100%")
     seg = rules.SEGMENTS[segment]
+    try:
+        location, site_mode = rules.validate_site(seg, channel, location, site_mode)
+    except ValueError as e:
+        raise FinanceError(str(e)) from None
+    extra = quantize_money(extra_capital)
+    if extra < 0:
+        raise FinanceError("o capital adicional não pode ser negativo")
     if db.scalar(select(Company.id).where(Company.user_id == user_id, Company.name == name)):
         raise ConflictError("você já tem uma empresa com esse nome")
-    capital = quantize_money(capital)
-    need = rules.required_capital(seg, location, size)
-    if capital < need:
-        raise FinanceError(f"capital inicial insuficiente: este negócio exige pelo menos {need} "
-                           f"(estrutura, estoque inicial, folha e custos fixos do primeiro mês)")
+    minimum = rules.minimum_capital(seg, location, size, channel, site_mode)
+    land = rules.land_value(seg, channel, site_mode, location, size)
     ref = month.ref_month
+    parts = partners.contributions(invites, minimum) if invites else []
+    for inv, amount in parts:                                               # aporte de cada sócio sai do patrimônio DELE(A)
+        person = db.get(Person, inv.person_id)
+        if person.assets < amount:
+            raise FinanceError(f"{person.name} não tem {amount} para aportar: reduza o capital ou a participação")
+    owner_part = quantize_money(minimum * owner_share_pct / 100)
     account = FinanceAccount(user_id=user_id, kind=AccountKind.BUSINESS, name=f"Conta empresarial — {name}"[:80], balance=ZERO)
     db.add(account)
     db.flush()
-    c = Company(user_id=user_id, account_id=account.id, name=name, segment=segment, business_type=business_type.strip(),
-                location=location, size=size, price=seg.price, owner_share_pct=owner_share_pct, founded_on=ref)
+    c = Company(user_id=user_id, account_id=account.id, name=name, segment=segment, channel=channel, site_mode=site_mode,
+                site_value=land, location=location, size=size, price=seg.price, owner_share_pct=owner_share_pct, founded_on=ref)
     db.add(c)
     db.flush()
-    _event(db, c, ref, CompanyEventType.CREATED, f"Empresa criada: {seg.label}, {rules.SIZES[size].label}, {rules.LOCATIONS[location].label}")
-    if invites:
-        parts = partners.contributions(invites, capital)
-        for inv, amount in parts:                                           # aporte de cada sócio sai do patrimônio DELE(A)
-            person = db.get(Person, inv.person_id)
-            if person.assets < amount:
-                raise FinanceError(f"{person.name} não tem {amount} para aportar: reduza o capital ou a participação")
-        own = quantize_money(capital * owner_share_pct / 100)
-        transfer_in(db, c, ref, own, key=f"company:{c.id}:capital:initial")
-        for inv, amount in parts:
-            person = db.get(Person, inv.person_id)
-            person.assets -= amount
-            db.add(CompanyPartner(company_id=c.id, person_id=person.id, share_pct=inv.share_pct, contribution=amount, joined_month=ref))
-            inv.used = True
-            _post(db, c, ref, kind=FlowKind.INCOME, amount=amount, desc=f"Aporte do sócio {person.name}", line="CAPITAL_IN",
-                  key=f"company:{c.id}:capital:partner:{person.id}")
-            _event(db, c, ref, CompanyEventType.CAPITAL, f"Sócio {person.name} entrou com {amount} ({inv.share_pct}%)", amount)
-    else:
-        transfer_in(db, c, ref, capital, key=f"company:{c.id}:capital:initial")
-    _event(db, c, ref, CompanyEventType.CAPITAL, "Capital inicial integralizado", capital)
-    _post(db, c, ref, kind=FlowKind.EXPENSE, amount=rules.setup_cost(seg, size), desc="Estruturação do negócio (reforma, licenças e abertura)",
+    where = "online" if channel == CompanyChannel.ONLINE else rules.resolve_location(seg, location).label
+    _event(db, c, ref, CompanyEventType.CREATED, f"Empresa criada: {seg.label}, {rules.SIZES[size].label}, {where}")
+    transfer_in(db, c, ref, owner_part + extra, key=f"company:{c.id}:capital:initial")
+    for inv, amount in parts:
+        person = db.get(Person, inv.person_id)
+        person.assets -= amount
+        db.add(CompanyPartner(company_id=c.id, person_id=person.id, share_pct=inv.share_pct, contribution=amount, joined_month=ref))
+        inv.used = True
+        _post(db, c, ref, kind=FlowKind.INCOME, amount=amount, desc=f"Aporte do sócio {person.name}", line="CAPITAL_IN",
+              key=f"company:{c.id}:capital:partner:{person.id}")
+        _event(db, c, ref, CompanyEventType.CAPITAL, f"Sócio {person.name} entrou com {amount} ({inv.share_pct}%)", amount)
+    _event(db, c, ref, CompanyEventType.CAPITAL, "Capital inicial integralizado", owner_part + extra + sum((a for _, a in parts), ZERO))
+    _post(db, c, ref, kind=FlowKind.EXPENSE, amount=rules.setup_cost(seg, size, channel), desc="Estruturação do negócio (reforma, licenças e abertura)",
           line="SETUP", key=f"co:{c.id}:setup")
-    for role_key in rules.initial_staff(seg, size):
-        role = seg.role(role_key)
-        db.add(Employee(company_id=c.id, role=role.key, level=EmployeeLevel.MID, salary=rules.level_salary(role, EmployeeLevel.MID),
-                        productivity=rules.level_productivity(EmployeeLevel.MID), hired_on=ref))
+    if land > 0:                                                            # terreno comprado: sai do caixa, vira ativo (patrimônio)
+        _post(db, c, ref, kind=FlowKind.EXPENSE, amount=land, desc=f"Compra do terreno — {where}", line="LAND", key=f"co:{c.id}:land")
     for kind, label, amount in seg.fixed:
-        db.add(CompanyCost(company_id=c.id, kind=kind, name=label, amount=quantize_money(amount * rules.SIZES[size].fixed)))
-    db.add(CompanyLease(company_id=c.id, kind=LeaseKind.EXTERNAL, name=f"Ponto comercial — {rules.LOCATIONS[location].label}",
-                        monthly_rent=rules.default_rent(seg, location, size), start_month=ref))
+        db.add(CompanyCost(company_id=c.id, kind=kind, name=label, amount=quantize_money(amount * rules.cost_scale(size, channel, seg))))
+    if channel == CompanyChannel.PHYSICAL and site_mode == SiteMode.RENT:
+        db.add(CompanyLease(company_id=c.id, kind=LeaseKind.EXTERNAL, name=f"Ponto comercial — {where}",
+                            monthly_rent=rules.default_rent(seg, location, size), start_month=ref))
     for stock, qty in rules.initial_stock_quantities(seg, location, size):
         item = InventoryItem(company_id=c.id, name=stock.name, unit=stock.unit, quantity=qty, unit_cost=stock.unit_cost,
                              supplier=stock.supplier, min_quantity=(qty * D("0.5")).quantize(D("0.001")),
@@ -184,7 +193,7 @@ def create_company(db: Session, user_id: int, month: SimMonth, *, name: str, seg
         _post(db, c, ref, kind=FlowKind.EXPENSE, amount=quantize_money(qty * stock.unit_cost), desc=f"Estoque inicial: {stock.name}",
               line="STOCK_PURCHASE", key=f"co:{c.id}:stock:init:{item.id}")
     db.flush()
-    log.info("empresa criada id=%s user=%s segmento=%s", c.id, user_id, segment)
+    log.info("empresa criada id=%s user=%s segmento=%s canal=%s", c.id, user_id, segment, channel)
     return c
 
 
@@ -254,35 +263,127 @@ def runway(db: Session, c: Company, cash_now: Decimal | None = None) -> Decimal 
     return quantize_money((cash(db, c) if cash_now is None else cash_now) / obligations)
 
 
-def hire(db: Session, user_id: int, month: SimMonth, company_id: int, role_key: str, level: EmployeeLevel,
-         confirm_risk: bool = False) -> Employee:
+def _seed(db: Session, user_id: int) -> int:
+    g = economy_service.get_game(db, user_id, create=False)
+    return g.seed if g is not None else user_id
+
+
+def _role(seg: rules.Segment, role_key: str) -> rules.Role:
+    try:
+        return seg.role(role_key)
+    except KeyError:
+        raise FinanceError("cargo inexistente neste segmento") from None
+
+
+def _blocked(db: Session, c: Company) -> set[str]:
+    return set(db.scalars(select(CandidateBlock.candidate_id).where(CandidateBlock.company_id == c.id)))
+
+
+def list_candidates(db: Session, user_id: int, month: SimMonth, company_id: int, role_key: str,
+                    regime: EmployeeRegime) -> list[team.Candidate]:
+    """Candidatos do mês para o cargo/regime (determinísticos). Quem recusou a proposta ou já foi contratado some da lista."""
+    require_open(month)
+    c = get_company(db, user_id, company_id)
+    _active(c)
+    role = _role(rules.SEGMENTS[c.segment], role_key)
+    blocked = _blocked(db, c)
+    return [x for x in team.candidates_for(_seed(db, user_id), c.id, month.ref_month, role, regime) if x.id not in blocked]
+
+
+def _block(db: Session, c: Company, cand: team.Candidate, ref: date, reason: str) -> None:
+    db.add(CandidateBlock(company_id=c.id, candidate_id=cand.id, ref_month=ref, reason=reason))
+    db.flush()
+
+
+@dataclass
+class HireResult:
+    status: str                         # ACCEPTED | COUNTER | REFUSED
+    message: str
+    counter_offer: Decimal | None = None
+
+    @property
+    def accepted(self) -> bool:
+        return self.status == "ACCEPTED"
+
+
+def hire(db: Session, user_id: int, month: SimMonth, company_id: int, *, candidate_id: str, salary: Decimal, hours_week: int,
+         schedule: WorkSchedule, regime: EmployeeRegime, confirm_risk: bool = False, idempotency_key: str) -> HireResult:
+    """Proposta a um candidato. O candidato é RECALCULADO no servidor a partir do id (pretensão, nível e escolaridade nunca vêm
+    do cliente). Recusa bloqueia o candidato no mês (repetir não muda nada); contraproposta não bloqueia."""
     require_open(month)
     c = get_company(db, user_id, company_id, lock=True)
     _active(c)
     seg = rules.SEGMENTS[c.segment]
+    ref = month.ref_month
     try:
-        role = seg.role(role_key)
-    except KeyError:
-        raise FinanceError("cargo inexistente neste segmento") from None
-    salary = rules.level_salary(role, level)
+        cand = team.resolve_token(_seed(db, user_id), c.id, ref, candidate_id, seg)
+    except ValueError as e:
+        raise FinanceError(str(e)) from None
+    if cand.regime != regime:
+        raise FinanceError("o regime informado não é o do candidato")
+    salary = quantize_money(salary)
+    if salary <= 0 or not team.MIN_WEEK <= hours_week <= team.MAX_WEEK:
+        raise FinanceError(f"informe salário positivo e jornada entre {team.MIN_WEEK} e {team.MAX_WEEK} horas por semana")
+    hire_key = f"co:{c.id}:hire:{idempotency_key}"
+    if _replayed(db, hire_key):
+        return HireResult("ACCEPTED", f"{cand.name}: contratação já registrada.")
+    if cand.id in _blocked(db, c):
+        return HireResult("REFUSED", f"{cand.name} não está mais disponível neste mês.")
+    offer = team.evaluate_offer(cand, salary, hours_week, schedule)
+    if offer.status == "REFUSED":
+        _block(db, c, cand, ref, "REFUSED")
+        return HireResult("REFUSED", offer.message)
+    if offer.status == "COUNTER":
+        return HireResult("COUNTER", offer.message, offer.counter_offer)
+    role = _role(seg, cand.role)
     cost = quantize_money(salary * rules.HIRING_COST_MONTHS)
     balance = cash(db, c)
     if balance < cost:
         raise FinanceError(f"a empresa não tem caixa para o custo de contratação ({cost}); caixa atual: {balance}")
     after = balance - cost
-    obligations = monthly_obligations(db, c) + rules.payroll_cost(salary)
+    obligations = monthly_obligations(db, c) + rules.payroll_cost(salary, regime)
     months_cover = after / obligations if obligations > 0 else D(99)
     if months_cover < 2 and not confirm_risk:
         raise ConflictError(
             f"RISCO: após contratar, o caixa cobre apenas {months_cover:.1f} mês(es) de custos fixos e folha "
             f"(novo custo mensal total {quantize_money(obligations)}). Confirme explicitamente para contratar assim mesmo.")
-    _post(db, c, month.ref_month, kind=FlowKind.EXPENSE, amount=cost, desc=f"Custo de contratação: {role.label}", line="HIRING",
-          key=f"co:{c.id}:hire:{_next_key(db, c)}")
-    e = Employee(company_id=c.id, role=role.key, level=level, salary=salary, productivity=rules.level_productivity(level),
-                 hired_on=month.ref_month)
+    _post(db, c, ref, kind=FlowKind.EXPENSE, amount=cost, desc=f"Custo de contratação: {role.label} ({cand.name})", line="HIRING", key=hire_key)
+    e = Employee(company_id=c.id, role=role.key, level=cand.level, salary=salary, hours_week=hours_week, productivity=cand.productivity,
+                 hired_on=ref, name=cand.name, regime=regime, schedule=schedule, education=cand.education,
+                 experience_years=cand.experience_years)
     db.add(e)
-    _event(db, c, month.ref_month, CompanyEventType.HIRE, f"Contratado: {role.label} ({level.value}), salário {salary}", salary)
-    return e
+    _block(db, c, cand, ref, "HIRED")
+    _event(db, c, ref, CompanyEventType.HIRE,
+           f"Contratado: {cand.name}, {role.label} ({cand.level.value}, {regime.value}, {schedule.value}), salário {salary}", salary)
+    return HireResult("ACCEPTED", offer.message)
+
+
+def headhunter(db: Session, user_id: int, month: SimMonth, company_id: int, *, role_key: str, regime: EmployeeRegime,
+               max_salary: Decimal, min_level: EmployeeLevel, idempotency_key: str) -> tuple[list[team.Candidate], Decimal]:
+    """Briefing -> até 3 candidatos que cumprem o briefing. Honorário = 1x o salário-teto; se nenhum servir, metade do honorário.
+    Idempotente: a mesma chave não cobra de novo (a lista é determinística)."""
+    require_open(month)
+    c = get_company(db, user_id, company_id, lock=True)
+    _active(c)
+    role = _role(rules.SEGMENTS[c.segment], role_key)
+    max_salary = quantize_money(max_salary)
+    if max_salary <= 0:
+        raise FinanceError("informe o salário máximo do briefing")
+    blocked = _blocked(db, c)
+    found = [x for x in team.headhunter_search(_seed(db, user_id), c.id, month.ref_month, role, regime, max_salary, min_level)
+             if x.id not in blocked]
+    fee = quantize_money(max_salary * team.HEADHUNTER_FEE_MONTHS * (1 if found else team.HEADHUNTER_EMPTY_FEE_FACTOR))
+    key = f"co:{c.id}:hh:{idempotency_key}"
+    if _replayed(db, key):
+        return found, fee
+    balance = cash(db, c)
+    if balance < fee:
+        raise FinanceError(f"a empresa não tem caixa para o honorário do headhunter ({fee}); caixa atual: {balance}")
+    _post(db, c, month.ref_month, kind=FlowKind.EXPENSE, amount=fee, desc=f"Honorário do headhunter: {role.label}", line="HIRING", key=key)
+    _event(db, c, month.ref_month, CompanyEventType.HIRE,
+           f"Headhunter contratado para {role.label} ({regime.value}, até {max_salary}): "
+           + (f"{len(found)} candidato(s)" if found else "nenhum candidato serviu ao briefing (honorário pela metade)"), fee)
+    return found, fee
 
 
 def _next_key(db: Session, c: Company) -> int:
@@ -298,13 +399,38 @@ def fire(db: Session, user_id: int, month: SimMonth, company_id: int, employee_i
         raise NotFoundError("funcionário não encontrado")
     if e.status != EmployeeStatus.ACTIVE:
         raise ConflictError("funcionário já desligado")
-    severance = quantize_money(e.salary * rules.SEVERANCE_MONTHS)
-    _post(db, c, month.ref_month, kind=FlowKind.EXPENSE, amount=severance, desc=f"Rescisão: {e.role}", line="SEVERANCE",
+    ref = month.ref_month
+    tenure = team.tenure_months(e.hired_on, ref)
+    severance = team.severance(e.regime, e.salary, tenure)
+    _post(db, c, ref, kind=FlowKind.EXPENSE, amount=severance, desc=f"Rescisão ({e.regime.value}): {e.name or e.role}", line="SEVERANCE",
           key=f"co:{c.id}:fire:{e.id}", overdraft=True)
     e.status = EmployeeStatus.TERMINATED
-    e.terminated_on = month.ref_month
-    _event(db, c, month.ref_month, CompanyEventType.FIRE, f"Desligado: {e.role}, rescisão {severance}", severance)
+    e.terminated_on = ref
+    _event(db, c, ref, CompanyEventType.FIRE,
+           f"Desligado: {e.name or e.role} ({e.regime.value}), rescisão {severance}" if severance > 0
+           else f"Desligado: {e.name or e.role} ({e.regime.value}), sem rescisão", severance)
+    p = team.lawsuit_probability(e.regime, e.hours_week, e.schedule, tenure)
+    if hash01(_seed(db, user_id), "lawsuit", c.id, e.id, f"{ref:%Y-%m}") < p:
+        who = e.name or e.role
+        ev = economy_service.spawn_company_event(
+            db, c, "processo_trabalhista", shift_month(ref, 1),
+            f"{who} ({e.regime.value}, {e.hours_week} h/semana, escala {e.schedule.value}) entrou com um processo trabalhista "
+            f"{'alegando vínculo empregatício' if e.regime == EmployeeRegime.PJ else 'pedindo verbas'}. Como reagir?")
+        if ev is not None:
+            _event(db, c, ref, CompanyEventType.FIRE, f"Processo trabalhista a caminho: {who} vai processar a empresa (decisão no mês seguinte)")
     return e
+
+
+def compliance(db: Session, c: Company) -> dict:
+    """Situação dos cargos obrigatórios: quais existem, quais faltam e a multa que seria aplicada no fechamento."""
+    seg = rules.SEGMENTS[c.segment]
+    active = {e.role for e in _employees(db, c)}
+    required = rules.mandatory_roles(c.channel)
+    missing = rules.missing_mandatory(c.channel, active)
+    return {"regular": not missing,
+            "required": [{"role": r, "label": seg.role(r).label, "present": r in active} for r in required],
+            "missing": missing, "missing_labels": [seg.role(r).label for r in missing],
+            "estimated_fine": rules.compliance_fine(seg, missing)}
 
 
 # ------------------------------------------------------------------ estoque
@@ -423,6 +549,10 @@ def set_lease(db: Session, user_id: int, month: SimMonth, company_id: int, kind:
     _active(c)
     seg = rules.SEGMENTS[c.segment]
     ref = month.ref_month
+    if c.channel == CompanyChannel.ONLINE:
+        raise ConflictError("empresa online não tem ponto físico nem aluguel")
+    if c.site_mode == SiteMode.BUY:
+        raise ConflictError("o terreno desta empresa é próprio (comprado na abertura): não há aluguel a contratar")
     current = _lease(db, c)
     if current:
         current.active = False
@@ -441,7 +571,7 @@ def set_lease(db: Session, user_id: int, month: SimMonth, company_id: int, kind:
         rent = quantize_money(monthly_rent) if monthly_rent is not None else rules.default_rent(seg, c.location, c.size)
         if rent < 0:
             raise FinanceError("aluguel inválido")
-        lease = CompanyLease(company_id=c.id, kind=kind, name=(name or f"Ponto comercial — {rules.LOCATIONS[c.location].label}")[:120],
+        lease = CompanyLease(company_id=c.id, kind=kind, name=(name or f"Ponto comercial — {rules.resolve_location(seg, c.location).label}")[:120],
                              monthly_rent=rent, start_month=ref)
     else:
         if good_id is None:
@@ -537,7 +667,8 @@ def _process_company(db: Session, c: Company, month: SimMonth) -> CompanyMonth:
     seg = rules.SEGMENTS[c.segment]
     k = f"co:{c.id}:{ref:%Y-%m}"
     staff = _employees(db, c)
-    items = list(db.scalars(select(InventoryItem).where(InventoryItem.company_id == c.id).order_by(InventoryItem.id)))
+    items = list(db.scalars(select(InventoryItem).where(InventoryItem.company_id == c.id).order_by(InventoryItem.id))) \
+        if seg.has_stock else []                                        # segmentos de serviço não têm estoque
     opening_cash = cash(db, c)
 
     # 1) condições do mês (demanda, sazonalidade, campanha)
@@ -549,7 +680,9 @@ def _process_company(db: Session, c: Company, month: SimMonth) -> CompanyMonth:
                                     staff=[(e.role, e.productivity) for e in staff], equipment_factor=_equipment_factor(db, c))
     # 2) consumo de estoque limita as vendas
     stock_cap = min((float(i.quantity / (i.units_per_sale * (1 + i.waste_pct / 100))) for i in items), default=math.inf)
-    potential = min(demand, capacity)
+    missing = rules.missing_mandatory(c.channel, [e.role for e in staff])          # fase 2: cargos obrigatórios
+    irregular = bool(missing)
+    potential = 0.0 if irregular else min(demand, capacity)                        # empresa irregular não opera: vendas = 0
     sold = min(potential, stock_cap)
     sold = round(max(sold, 0), 2) if seg.fractional else math.floor(max(sold, 0))
     stockout = bool(items) and stock_cap < potential
@@ -566,8 +699,14 @@ def _process_company(db: Session, c: Company, month: SimMonth) -> CompanyMonth:
     variable = quantize_money(revenue * seg.variable_pct / 100)
     _post(db, c, ref, kind=FlowKind.EXPENSE, amount=variable, desc="Custos variáveis (frete, taxas, comissões)", line="VARIABLE", key=f"{k}:variable", overdraft=True)
     # 4) folha de pagamento (+ pró-labore, que vira receita PESSOAL do usuário)
-    payroll = quantize_money(sum((rules.payroll_cost(e.salary) for e in staff), ZERO))
-    _post(db, c, ref, kind=FlowKind.EXPENSE, amount=payroll, desc=f"Folha de pagamento ({len(staff)} funcionários, com encargos)", line="PAYROLL", key=f"{k}:payroll", overdraft=True)
+    payroll = quantize_money(sum((employee_cost(e) for e in staff), ZERO))
+    _post(db, c, ref, kind=FlowKind.EXPENSE, amount=payroll, desc=f"Folha de pagamento ({len(staff)} funcionários; CLT 2x, PJ 1x)", line="PAYROLL", key=f"{k}:payroll", overdraft=True)
+    fine = rules.compliance_fine(seg, missing) if irregular else ZERO
+    if irregular:
+        labels = ", ".join(seg.role(r).label for r in missing)
+        _post(db, c, ref, kind=FlowKind.EXPENSE, amount=fine, desc=f"Multa por irregularidade (sem {labels})", line="FEES", key=f"{k}:fine", overdraft=True)
+        _event(db, c, ref, CompanyEventType.COMPLIANCE,
+               f"Empresa irregular: sem {labels}. Vendas zeradas no mês e multa de {fine}", fine)
     if c.owner_salary > 0:
         _post(db, c, ref, kind=FlowKind.EXPENSE, amount=c.owner_salary, desc="Pró-labore do sócio", line="PRO_LABORE", key=f"{k}:prolabore", overdraft=True)
         _post_personal(db, c, ref, kind=FlowKind.INCOME, amount=c.owner_salary, desc=f"Pró-labore: {c.name}",
@@ -634,13 +773,14 @@ def _process_company(db: Session, c: Company, month: SimMonth) -> CompanyMonth:
     loans = db.scalar(select(func.coalesce(func.sum(CompanyLoan.balance), 0)).where(
         CompanyLoan.company_id == c.id, CompanyLoan.status == LoanStatus.ACTIVE))
     served = sold >= math.floor(min(demand, capacity)) and not stockout
-    c.reputation = max(5, min(100, c.reputation + (2 if served else -4 if stockout else -1)))
+    c.reputation = max(5, min(100, c.reputation + (2 if served else -4 if stockout or irregular else -1)))
     equity = wealth_service.company_equity(db, c)
     row = CompanyMonth(company_id=c.id, ref_month=ref, demand_units=D(str(round(demand, 2))), capacity_units=D(str(round(capacity, 2))),
                        units_sold=D(str(sold)), stockout=stockout, revenue=revenue, variable_costs=variable_total,
                        fixed_costs=fixed_total, payroll=payroll, taxes=taxes, interest=quantize_money(interest),
                        operating_result=operating, net_result=net, cash_end=balance,
-                       debts_end=quantize_money(loans + max(-balance, ZERO)), equity_end=equity, reputation_end=c.reputation)
+                       debts_end=quantize_money(loans + max(-balance, ZERO)), equity_end=equity, reputation_end=c.reputation,
+                       irregular=irregular, fines=fine)
     db.add(row)
     c.last_processed_month = ref
     _event(db, c, ref, CompanyEventType.MONTH, f"Mês fechado: receita {revenue}, resultado líquido {net}", net)
