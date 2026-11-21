@@ -102,9 +102,12 @@ class FakeProvider:
 @pytest.fixture(autouse=True)
 def _fake_market():
     provider = FakeProvider()
+    from backend.services import ranking_service
     market_data.set_provider(provider)
+    ranking_service.clear_cache()
     yield provider
     market_data.clear_cache()
+    ranking_service.clear_cache()
 
 
 @pytest.fixture

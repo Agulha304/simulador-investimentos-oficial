@@ -23,9 +23,13 @@ router = APIRouter(prefix="/companies", tags=["companies"])
 ZERO = Decimal("0.00")
 
 
-def _company_out(db: Session, c: Company) -> s.CompanyOut:
+_UNSET = object()
+
+
+def _company_out(db: Session, c: Company, last=_UNSET) -> s.CompanyOut:
     seg = rules.SEGMENTS[c.segment]
-    last = db.scalar(select(CompanyMonth).where(CompanyMonth.company_id == c.id).order_by(CompanyMonth.ref_month.desc()).limit(1))
+    if last is _UNSET:
+        last = db.scalar(select(CompanyMonth).where(CompanyMonth.company_id == c.id).order_by(CompanyMonth.ref_month.desc()).limit(1))
     balance = cs.cash(db, c)
     loans = sum((l.balance for l in db.scalars(select(CompanyLoan).where(
         CompanyLoan.company_id == c.id, CompanyLoan.status == LoanStatus.ACTIVE))), ZERO)
@@ -52,6 +56,11 @@ def _detail(db: Session, c: Company) -> s.CompanyDetailOut:
     items = list(db.scalars(select(InventoryItem).where(InventoryItem.company_id == c.id).order_by(InventoryItem.id)))
     lease = cs._lease(db, c)
     loans = list(db.scalars(select(CompanyLoan).where(CompanyLoan.company_id == c.id).order_by(CompanyLoan.id)))
+    inst_by_loan: dict[int, list] = {l.id: [] for l in loans}
+    if loans:
+        for i in db.scalars(select(CompanyLoanInstallment).where(CompanyLoanInstallment.loan_id.in_(inst_by_loan))
+                            .order_by(CompanyLoanInstallment.number)):
+            inst_by_loan[i.loan_id].append(i)
     role_labels = {r.key: r.label for r in seg.roles}
     employees = list(db.scalars(select(Employee).where(Employee.company_id == c.id).order_by(Employee.id)))
     goods = list(db.scalars(select(Good).where(Good.owner_account_id == c.account_id).order_by(Good.id)))
@@ -82,8 +91,7 @@ def _detail(db: Session, c: Company) -> s.CompanyDetailOut:
                          start_month=l.start_month, balance=l.balance, status=l.status, installments=[
                              s.InstallmentOut(number=i.number, due_month=i.due_month, payment=i.payment, interest=i.interest,
                                               amortization=i.amortization, balance_after=i.balance_after, status=i.status)
-                             for i in db.scalars(select(CompanyLoanInstallment).where(CompanyLoanInstallment.loan_id == l.id)
-                                                 .order_by(CompanyLoanInstallment.number))]) for l in loans],
+                             for i in inst_by_loan[l.id]]) for l in loans],
         goods=[s.CompanyGoodOut(id=g.id, name=g.name, category=g.category.value, current_value=g.current_value, status=g.status.value)
                for g in goods],
         months=[s.MonthOut.model_validate(m, from_attributes=True) for m in db.scalars(
@@ -127,9 +135,9 @@ def overview(user: CurrentUser, db: DbSession):
     def go():
         bs.ensure_setup(db, user.id)
         comps = [c for c in cs.user_companies(db, user.id) if c.status == CompanyStatus.ACTIVE]
-        outs = [_company_out(db, c) for c in comps]
         last = {c.id: db.scalar(select(CompanyMonth).where(CompanyMonth.company_id == c.id).order_by(CompanyMonth.ref_month.desc()).limit(1))
                 for c in comps}
+        outs = [_company_out(db, c, last[c.id]) for c in comps]
         rev = sum((m.revenue for m in last.values() if m), ZERO)
         spent = sum((m.variable_costs + m.fixed_costs + m.payroll + m.taxes + m.interest for m in last.values() if m), ZERO)
         return s.OverviewOut(

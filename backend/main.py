@@ -52,6 +52,22 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.middleware("http")
+async def server_timing(request, call_next):
+    """Header Server-Timing: nº de queries e tempo total no banco por request (veja na aba Rede do navegador)."""
+    import time
+    from backend.database import query_stats
+    stats = [0, 0.0]
+    tok = query_stats.set(stats)
+    t0 = time.perf_counter()
+    try:
+        resp = await call_next(request)
+    finally:
+        query_stats.reset(tok)
+    resp.headers["Server-Timing"] = f'db;dur={stats[1]:.0f};desc="{stats[0]} queries", total;dur={(time.perf_counter()-t0)*1000:.0f}'
+    return resp
+
+
 API_PREFIX = "/api"
 app.include_router(health.router, prefix=API_PREFIX)
 app.include_router(auth.router, prefix=API_PREFIX)

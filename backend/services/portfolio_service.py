@@ -3,6 +3,8 @@
 Posições são avaliadas pela cotação atual (market_data), convertida para BRL.
 Se a cotação estiver indisponível, a posição é avaliada pelo custo.
 """
+import contextvars
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from decimal import Decimal
 
@@ -65,13 +67,19 @@ def _pct(part: Decimal, whole: Decimal) -> Decimal | None:
 
 def build_summary(db: Session, portfolio: Portfolio) -> PortfolioSummary:
     views: list[HoldingView] = []
-    for h in portfolio.holdings:
-        if h.quantity <= 0:
-            continue
+    open_holdings = [h for h in portfolio.holdings if h.quantity > 0]
+
+    def _price(h):
         try:
-            price = market_data.get_priced_quote(h.asset).price_brl
+            return market_data.get_priced_quote(h.asset).price_brl
         except market_data.MarketDataUnavailable:
-            price = None  # sem cotação: avalia pelo custo e sinaliza com current_price_brl = null
+            return None  # sem cotação: avalia pelo custo e sinaliza com current_price_brl = null
+    # cotações em paralelo (HTTP): com cache frio deixa de ser N chamadas em série
+    # cada tarefa roda numa CÓPIA do contexto: o relógio da partida (ContextVar) precisa chegar às threads
+    with ThreadPoolExecutor(max_workers=min(8, len(open_holdings) or 1)) as ex:
+        futs = [ex.submit(contextvars.copy_context().run, _price, h) for h in open_holdings]
+        prices = [f.result() for f in futs]
+    for h, price in zip(open_holdings, prices):
         value = quantize_money(h.quantity * price) if price is not None else h.total_cost_brl
         pnl = quantize_money(value - h.total_cost_brl)
         views.append(HoldingView(h, price, value, pnl, _pct(pnl, h.total_cost_brl)))

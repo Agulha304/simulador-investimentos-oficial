@@ -53,6 +53,7 @@ def test_return_board_and_ties(client, db):
     r = board(client, ha, board="return")
     assert [(e["nickname"], D(e["return_pct"])) for e in r["entries"]] == [("Ana", D("20.00")), ("Bruno", D("-20.00"))]
     hc, _, _ = make_user(client, db, "Caio", "c@example.com", "120000")
+    ranking_service.clear_cache()          # o ranking é cacheado por 5 min
     wealth = board(client, ha, board="wealth")["entries"]
     assert [e["nickname"] for e in wealth[:2]] == ["Ana", "Caio"]                # empate: quem entrou primeiro
 

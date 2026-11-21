@@ -49,26 +49,26 @@ def get_current_user(
     return db.get(User, game.world_user_id)
 
 
-def _resolve_clock(token: str, game_id: int):
-    from backend.database import SessionLocal
+def _resolve_clock(token: str, game_id: int, db: Session):
+    """Usa a MESMA sessão do request: sem checkout extra de conexão, e o Game/User carregados aqui
+    ficam no identity map para o get_current_user (sem repetir a ida ao banco)."""
     from backend.services import game_service
     sub = decode_access_token(token)
     if not sub or not sub.isdigit():
         return None
-    with SessionLocal() as db:
-        game = db.get(Game, game_id)
-        if game is None or game.account_id != int(sub) or game.status != "ACTIVE":
-            return None
-        return game_service.clock_of(game, db)
+    game = db.get(Game, game_id)
+    if game is None or game.account_id != int(sub) or game.status != "ACTIVE":
+        return None
+    return game_service.clock_of(game, db)
 
 
-async def game_clock(request: Request):
+async def game_clock(request: Request, db: DbSession):
     """Define o relógio de mercado da partida (treino/simulação) para toda a requisição."""
     from backend.core import clock
     gid, auth = request.headers.get("x-game-id"), request.headers.get("authorization", "")
     token = None
     if gid and gid.isdigit() and auth.lower().startswith("bearer "):
-        c = await run_in_threadpool(_resolve_clock, auth[7:], int(gid))
+        c = await run_in_threadpool(_resolve_clock, auth[7:], int(gid), db)
         if c is not None:
             token = clock.set_clock(c)
     try:

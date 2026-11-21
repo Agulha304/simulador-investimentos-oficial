@@ -3,6 +3,7 @@
 Patrimônio do ranking = patrimônio − aportes virtuais EXTRAS (wealth_brl): depositar mais dinheiro
 fictício não sobe no ranking. Rentabilidade = ganho / ponto de partida (saldo inicial ou, nos
 períodos de 7/30 dias, o último registro antes do início da janela)."""
+import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -39,22 +40,48 @@ class Row:
     ret: Decimal
 
 
-def _latest(db: Session) -> dict[int, PortfolioSnapshot]:
-    q = (select(PortfolioSnapshot).distinct(PortfolioSnapshot.portfolio_id)
-         .order_by(PortfolioSnapshot.portfolio_id, PortfolioSnapshot.taken_at.desc()))
-    return {s.portfolio_id: s for s in db.scalars(q)}
+_CACHE: dict = {}
+_TTL = 300  # s: as fotos mudam no máximo a cada 30 min; ranking é "atualizado a cada hora"
+
+
+def clear_cache() -> None:
+    _CACHE.clear()
+
+
+def _cached(key, loader):
+    hit = _CACHE.get(key)
+    if hit and time.monotonic() - hit[0] < _TTL:
+        return hit[1]
+    val = loader()
+    _CACHE[key] = (time.monotonic(), val)
+    return val
+
+
+@dataclass
+class _Snap:
+    initial_brl: Decimal
+    wealth_brl: Decimal
+
+
+def _latest(db: Session) -> dict[int, _Snap]:
+    def load():
+        q = (select(PortfolioSnapshot.portfolio_id, PortfolioSnapshot.initial_brl, PortfolioSnapshot.wealth_brl)
+             .distinct(PortfolioSnapshot.portfolio_id)
+             .order_by(PortfolioSnapshot.portfolio_id, PortfolioSnapshot.taken_at.desc()))
+        return {pid: _Snap(i, w) for pid, i, w in db.execute(q)}
+    return _cached("latest", load)
 
 
 def _baseline(db: Session, cutoff: datetime) -> dict[int, Decimal]:
     """Patrimônio de partida da janela: último registro antes do corte, ou o primeiro depois dele."""
-    before = (select(PortfolioSnapshot).distinct(PortfolioSnapshot.portfolio_id)
+    before = (select(PortfolioSnapshot.portfolio_id, PortfolioSnapshot.wealth_brl).distinct(PortfolioSnapshot.portfolio_id)
               .where(PortfolioSnapshot.taken_at < cutoff)
               .order_by(PortfolioSnapshot.portfolio_id, PortfolioSnapshot.taken_at.desc()))
-    after = (select(PortfolioSnapshot).distinct(PortfolioSnapshot.portfolio_id)
+    after = (select(PortfolioSnapshot.portfolio_id, PortfolioSnapshot.wealth_brl).distinct(PortfolioSnapshot.portfolio_id)
              .where(PortfolioSnapshot.taken_at >= cutoff)
              .order_by(PortfolioSnapshot.portfolio_id, PortfolioSnapshot.taken_at))
-    base = {s.portfolio_id: s.wealth_brl for s in db.scalars(after)}
-    base.update({s.portfolio_id: s.wealth_brl for s in db.scalars(before)})     # "antes" tem prioridade
+    base = dict(db.execute(after).all())
+    base.update(dict(db.execute(before).all()))     # "antes" tem prioridade
     return base
 
 
@@ -62,7 +89,7 @@ def compute(db: Session, board: str, period: str, me_user_id: int, limit: int = 
     now = now or datetime.now(UTC)
     latest = _latest(db)
     days = PERIOD_DAYS[period]
-    baseline = _baseline(db, now - timedelta(days=days)) if days else {}
+    baseline = _cached(("base", days), lambda: _baseline(db, now - timedelta(days=days))) if days else {}
     users = {p.id: u for p, u in db.execute(select(Portfolio, User).join(User, User.id == Portfolio.user_id)).all()}
     # mundos de partida contam para a CONTA dona: vida completa no ranking de patrimônio, treino no de rentabilidade
     worlds = {g.world_user_id: g for g in db.scalars(select(Game).where(Game.status == "ACTIVE"))}
