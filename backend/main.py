@@ -75,3 +75,26 @@ app.include_router(progress.game_router, prefix=API_PREFIX)
 app.include_router(progress.router, prefix=API_PREFIX)
 for _r in (engagement.performance_router, engagement.ranking_router, engagement.learn_router):
     app.include_router(_r, prefix=API_PREFIX)
+
+
+# --- site (React) servido pelo próprio backend: dá para hospedar tudo num único serviço (ex.: Render) -------------------
+# Só ativa se frontend/dist existir (a imagem Docker gera). /api/* continua sendo a API; o resto cai no index.html (rotas do React).
+from pathlib import Path  # noqa: E402
+
+from fastapi import HTTPException  # noqa: E402
+from fastapi.responses import FileResponse  # noqa: E402
+from fastapi.staticfiles import StaticFiles  # noqa: E402
+
+_FRONT = Path(__file__).resolve().parent.parent / "frontend" / "dist"
+if (_FRONT / "index.html").is_file():
+    if (_FRONT / "assets").is_dir():
+        app.mount("/assets", StaticFiles(directory=_FRONT / "assets"), name="site-assets")
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    def _site(full_path: str):
+        if full_path.startswith("api/") or full_path in ("docs", "openapi.json", "redoc"):
+            raise HTTPException(404, "Não encontrado")
+        f = (_FRONT / full_path).resolve()
+        if full_path and f.is_file() and _FRONT.resolve() in f.parents:
+            return FileResponse(f)
+        return FileResponse(_FRONT / "index.html")

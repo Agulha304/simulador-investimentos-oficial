@@ -5,7 +5,8 @@
 .git
 .wrangler
 node_modules
-frontend
+frontend/node_modules
+frontend/dist
 worker
 tests
 docs
