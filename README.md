@@ -46,7 +46,7 @@ Pré-requisitos: Python 3.12, binários do PostgreSQL 16 (`/usr/lib/postgresql/1
 
 ```bash
 python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt
+.venv/bin/pip install -r backend/requirements.txt
 cp .env.example .env            # e troque o JWT_SECRET
 (cd frontend && npm install)
 

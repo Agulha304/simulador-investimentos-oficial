@@ -8,7 +8,7 @@ ENV PYTHONUNBUFFERED=1 \
     ENVIRONMENT=production
 
 WORKDIR /app
-COPY requirements.txt .
+COPY backend/requirements.txt requirements.txt
 RUN pip install -r requirements.txt
 
 COPY alembic.ini .
