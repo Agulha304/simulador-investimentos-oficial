@@ -20,7 +20,7 @@ frontend e `pytest` completo verde. Código de referência: `backend/services/co
    **"Capital adicional a aportar (R$) — dinheiro a mais além do mínimo para abrir que você investirá na empresa"**.
    `POST /companies/quote` devolve `minimum_capital`, `owner_cost` (= parte do dono do mínimo), `extra_capital` e `total_owner_cost`.
 3. **Canal**: `channel` = `ONLINE` | `PHYSICAL`. Cada segmento define `channels` permitidos (ex.: e-commerce só ONLINE; oficina,
-   indústria, construtora, transporte só PHYSICAL; restaurante/cafeteria/roupas/supermercado/tecnologia/agência/imobiliária: ambos).
+   indústria, construtora, transporte só PHYSICAL; roupas/tecnologia/agência/imobiliária: ambos; **restaurante, cafeteria e supermercado: só PHYSICAL** — decisão posterior). Empresas existentes não mudam; a validação vale na criação (400).
    ONLINE: sem terreno, sem aluguel de ponto, custos fixos menores, demanda local não se aplica (usa alcance digital).
 4. **Terreno** (só PHYSICAL): `site_mode` = `BUY` | `RENT`. BUY: paga o valor do terreno/ponto na abertura (entra no capital mínimo;
    vira ativo da empresa no patrimônio, sem aluguel). RENT: aluguel mensal (como hoje) + risco de despejo (fase 5).
@@ -41,14 +41,13 @@ frontend e `pytest` completo verde. Código de referência: `backend/services/co
    `POST /companies/{id}/hire` {candidate_id, salary, hours_week, schedule} → aceita ou recusa conforme as condições: salário vs
    pretensão, jornada (> 44 h exige prêmio), escala (6x1 / 5x2 / 12x36 / 4x3), regime e a "concorrência" do candidato; pode
    devolver contraproposta. Registrar `regime`, `schedule`, `education`, `experience_years` no `Employee`.
-3. **Headhunter**: `POST /companies/{id}/headhunter` {role, regime, max_salary, min_level} → cobra honorário (1 salário-teto) e devolve até 3
-   candidatos já filtrados pelo briefing (orçamento, proficiência, CLT/PJ); a contratação segue o mesmo fluxo da proposta.
+3. ~~Headhunter por consulta~~ (REMOVIDO): substituído pelo **Contratador** opcional (seção "Contratador" abaixo).
 4. **Custo**: CLT custa **2× o salário** (encargos/benefícios/provisões). PJ custa **1× o salário** (sem encargos) — mais barato —,
    mas na demissão tem **chance muito maior de processo trabalhista** (reconhecimento de vínculo).
 5. **Obrigatórios**: sem Contador e Advogado (e Auxiliar de limpeza se PHYSICAL) a empresa fica **irregular**: não opera (vendas zero)
    e paga multa no mês. A UI avisa antes de fechar o mês.
 6. UI: modal "Contratar" (cargo + regime → lista de candidatos), popup de proposta (salário, horas, escala) com resposta do candidato;
-   "Contratar via headhunter" (briefing). Mostrar regime/escala/escolaridade na lista de funcionários e o custo real (2× / 1×).
+   "Contratar via contratador" (cartão Contratador). Mostrar regime/escala/escolaridade na lista de funcionários e o custo real (2× / 1×).
 
 ## Fase 3 — Mercado, relevância, produção, impostos reais, crises
 1. **Relevância** (0–100, começa em 0): `Company.relevance`. Sobe devagar (bom atendimento, qualidade, marketing, meses de venda), cai
@@ -136,3 +135,49 @@ frontend e `pytest` completo verde. Código de referência: `backend/services/co
   folha real x (2,0 / 0,5-3,5 / 4,0) x multiplicador da causa 1,0-1,75) e quebra de equipamento (3%/mês x capacidade ampliada x turno extra; conserto
   barato 4,5% do setup, médio 8%, premium 16% + 12 meses sem quebra, adiar = -30% de vendas e 40% de piorar). Custo esperado entra em
   `company_balance` (`incidents_on`); virada continua entre os meses 12 e 16.
+
+## Contratador (headhunter) opcional, histórico trabalhista e limites de fornecedor
+Pedido: o headhunter por consulta foi removido; no lugar entra um **serviço opcional por empresa** que contrata sozinho (obrigatórios, equipe por
+área e fornecedores) a partir de um briefing. Restaurante, cafeteria e supermercado deixam de poder ser online.
+
+### Decisões de implementação
+- **Histórico trabalhista**: `lawsuit_history` (0 a 3 processos anteriores) gerado por `hash01` em cada candidato (`company_team.build_candidate`): ~9% (CLT)
+  e ~17% (PJ) têm >= 1, +3 pontos em cargos de jornada >= 44 h (≈12-15% na média); entre quem tem, 70% têm 1, 22% têm 2 e 8% têm 3. Gravado em
+  `employees.lawsuit_history` (default 0; os antigos ficam em 0). Chance de processo na demissão x `(1 + 0,6 x histórico)` (teto de 90% mantido).
+- **Contratador** (`company_recruiters`, 1 por empresa, reaproveitada ao recontratar): níveis BASIC/PRO/ELITE. Taxa mensal cobrada no fechamento (linha
+  `FEES`, entra em `monthly_obligations` e no runway), SMALL 900 / 2.200 / 4.800, x1,6 (MÉDIA) e x2,6 (GRANDE). Dispensa a qualquer momento, sem multa
+  (não cobra mais a partir do fechamento seguinte). Trocar de nível vale a partir do fechamento corrente. A **comissão** por contratação (0,25x / 0,20x /
+  0,15x o salário, linha `HIRING`) SUBSTITUI o custo de recrutamento de meio salário do fluxo manual (o contratador é quem recruta).
+- **Qualidade do nível** (`company_recruiter.TIERS`): pessoas avaliadas por vaga 6/12/24, ofertas por categoria de fornecedor 6/12/24, chance de CADA
+  pessoa/oferta ser encontrada 0,60/0,80/0,95 (sorteio `hash01(semente, empresa, mês, nível, pessoa)`), desconto de negociação 0/3/6% e taxa de sucesso da
+  negociação 0,80/0,90/0,97. As pessoas do contratador são um universo próprio (token `AAAAMM-cargo-CLT-rN`), sem regime definido: ele escolhe o regime.
+- **Desconto na função de avaliação**: `team.evaluate_offer(..., extra_flex)` soma o desconto à folga do próprio candidato (só baixa o MÍNIMO aceito) e
+  `supply.evaluate(..., extra_discount)` multiplica o piso do fornecedor por `(1 - desconto)`. Recusa, contraproposta, jornada > 52 h e concorrência
+  seguem as regras do fluxo manual; o contratador propõe exatamente `team.min_acceptable` (menor valor que `evaluate_offer` aceita; no PJ considera também
+  a regra "cobriu a pretensão") e a proposta é revalidada pela mesma função.
+- **Custo-benefício** do funcionário = produtividade (nível x min(1, jornada/40)) / custo mensal real (CLT 2x, PJ 1x, sobre o salário proposto). Cargos
+  obrigatórios: menor custo mensal (aceita 20 h, que conta como preenchido, se custar menos). Equipe: do maior custo-benefício para o menor; contrata os
+  que cabem no salário máximo, no teto de funcionários (por unidade), no teto de folha extra da operação (`max_monthly_payroll`) e no caixa (não contrata
+  se o caixa pós-contratação cobrir < 2 meses de obrigações; vale para a equipe, não para os obrigatórios, que só exigem caixa para a comissão).
+- **Regime BOTH**: com histórico de processos => CLT; sem histórico => PJ (mais barato) e, se o PJ não couber no salário máximo ou no orçamento de folha
+  restante, cai para CLT. Nenhum cargo exige CLT (sem regra por cargo). CLT_ONLY/PJ_ONLY são respeitados sempre.
+- **Briefing** (`settings` JSON, PUT substitui tudo): `max_salary`, `schedule`, `hours_week` (20 a 44; padrão da escala: 6x1=44, 5x2=40, 12x36=36, 4x3=40),
+  `regime_policy`, `max_monthly_payroll`, fornecedores gerais (`supplier_max_total_spend`, `_min_reliability`, `_max_lead_days`, `_volume_cap`) e
+  `supplier_overrides[categoria]` (`max_spend`, `min_reliability`, `max_lead_days`, `volume_cap`), que prevalecem campo a campo sobre o geral. Fora de
+  intervalo => 400. Contratar sem `max_salary` => 400.
+- **Fornecedores via contratador**: para cada categoria (padrão: as sem contrato) avalia as ofertas do universo do nível (as primeiras do universo são as
+  da lista manual), filtra por confiabilidade mínima, prazo máximo, volume (contrato = min(volume do fornecedor, `volume_cap`), >= pedido mínimo) e gasto
+  máximo da categoria; gasto previsto = min(demanda esperada x consumo x (1 + perda), volume do contrato) x preço negociado; respeita o gasto total no
+  conjunto (categorias em ordem do segmento); escolhe o menor preço efetivo `preço x (1 + 2 x (1 - confiabilidade))` e negocia o menor preço aceito (com o
+  desconto do nível). Os limites ficam gravados no contrato.
+- **Limites por contrato** (`company_suppliers.max_monthly_spend/volume_cap/min_reliability/max_lead_days`, `PUT .../suppliers/{id}/limits`): gasto e
+  volume valem em TODA compra: a compra manual recebe 409 explicando (gasto do mês em `spend_used`, zerado a cada mês junto com `volume_used`) e a
+  reposição automática compra só o que cabe e registra um evento "Reposição travada pelo limite do contrato". O volume efetivo (menor entre o contrato e o
+  `volume_cap`) também limita a capacidade pelos fornecedores. Confiabilidade/prazo por contrato são critérios do contratador (renovar/trocar). Nos
+  serviços (sem compra de estoque) o gasto é consumo por venda e não é travado; só o volume efetivo limita a capacidade. O orçamento mostra previsto x limite
+  por categoria e o total contra `supplier_max_total_spend`.
+- **Idempotência**: contratar/trocar usa `last_key`; as três operações guardam o relatório em `company_recruiter_runs` e a mesma chave devolve o mesmo
+  relatório (`replayed: true`) sem cobrar nem contratar de novo.
+- API: `POST/DELETE /companies/{id}/recruiter`, `PUT .../recruiter/settings`, `POST .../recruiter/hire-mandatory | hire-team | contract-suppliers` (409
+  sem contratador ativo), `PUT .../suppliers/{id}/limits`; o estado vem em `recruiter` e `recruiter_tiers` do detalhe. Migration `e1f2a3b4c5d6` (aditiva,
+  com defaults e reaplicável).

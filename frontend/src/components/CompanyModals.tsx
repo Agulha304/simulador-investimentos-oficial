@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
-import { api, type CoCandidate, type CoChannel, type CoExpKind, type CoExpOptions, type CoExpResult, type CoTier, type CoSupplierOffer, type CoCatalog, type CoHeadhunterResult, type CoRegime, type CoRelocateQuote, type CoSchedule, type CoSiteMode, type CompanyDetail, type Good } from "../services/api";
-import { LEVEL_LABEL, fmtBRL, parseMoneyInput } from "../lib/format";
+import { api, type CoCandidate, type CoChannel, type CoExpKind, type CoExpOptions, type CoExpResult, type CoTier, type CoSupplierOffer, type CoCatalog, type CoRegime, type CoRelocateQuote, type CoSchedule, type CoSiteMode, type CompanyDetail, type Good } from "../services/api";
+import { fmtBRL, parseMoneyInput } from "../lib/format";
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : "Erro inesperado");
 
@@ -47,7 +47,7 @@ const SCHEDULES: { key: CoSchedule; label: string; hint: string }[] = [
 const costMult = (regime: CoRegime) => (regime === "CLT" ? 2 : 1);
 const fmtNum = (v: number) => fmtBRL(v.toFixed(2));
 
-function Panel({ title, onClose, children, wide }: { title: string; onClose: () => void; children: ReactNode; wide?: boolean }) {
+export function Panel({ title, onClose, children, wide }: { title: string; onClose: () => void; children: ReactNode; wide?: boolean }) {
   return (
     <div className="modal-back" onMouseDown={onClose}>
       <div className="card modal" style={wide ? { maxWidth: 820, width: "96vw" } : undefined} role="dialog" aria-label={title} onMouseDown={(e) => e.stopPropagation()}>
@@ -58,15 +58,18 @@ function Panel({ title, onClose, children, wide }: { title: string; onClose: () 
   );
 }
 
+export const lawsuitHistoryLabel = (n: number) => (n > 0 ? `histórico: ${n} processo${n > 1 ? "s" : ""} anterior${n > 1 ? "es" : ""}` : "sem processos anteriores");
+
 function CandidateTable({ list, onPick }: { list: CoCandidate[]; onPick: (c: CoCandidate) => void }) {
-  if (list.length === 0) return <div className="empty">Nenhum candidato disponível agora. Volte no próximo mês ou use o headhunter.</div>;
+  if (list.length === 0) return <div className="empty">Nenhum candidato disponível agora. Volte no próximo mês ou contrate via contratador.</div>;
   return (
     <div className="table-wrap"><table>
-      <thead><tr><th>Nome</th><th>Escolaridade</th><th className="r">Experiência</th><th>Nível</th><th className="r">Pretensão</th><th>Jornada preferida</th><th /></tr></thead>
+      <thead><tr><th>Nome</th><th>Escolaridade</th><th className="r">Experiência</th><th>Nível</th><th className="r">Pretensão</th><th>Jornada preferida</th><th>Histórico</th><th /></tr></thead>
       <tbody>{list.map((c) => (
         <tr key={c.id}>
           <td><b>{c.name}</b></td><td>{c.education_label}</td><td className="r num">{c.experience_years} ano(s)</td><td>{c.level_label}</td>
           <td className="r num">{fmtBRL(c.asking_salary)}</td><td>{c.hours_week} h/sem · {c.schedule}</td>
+          <td>{lawsuitHistoryLabel(c.lawsuit_history ?? 0)}</td>
           <td className="r"><button type="button" className="btn small ghost" onClick={() => onPick(c)}>Fazer proposta</button></td>
         </tr>))}</tbody>
     </table></div>
@@ -101,7 +104,7 @@ function OfferPopup({ d, cand, onClose, onAccepted, onRefused }: {
   const refused = msg != null && !risk && !counter && msg.includes("recusou");
   return (
     <Panel title={`Proposta para ${cand.name}`} onClose={onClose}>
-      <p className="muted small" style={{ margin: 0 }}>{cand.role_label} · {cand.level_label} · {cand.education_label} · {cand.experience_years} ano(s) de experiência · pretensão {fmtBRL(cand.asking_salary)} · prefere {cand.hours_week} h/sem em {cand.schedule}.</p>
+      <p className="muted small" style={{ margin: 0 }}>{cand.role_label} · {cand.level_label} · {cand.education_label} · {cand.experience_years} ano(s) de experiência · pretensão {fmtBRL(cand.asking_salary)} · prefere {cand.hours_week} h/sem em {cand.schedule} · {lawsuitHistoryLabel(cand.lawsuit_history ?? 0)}.</p>
       <label>Salário mensal negociado (R$)<input inputMode="decimal" value={salary} onChange={(e) => { setSalary(e.target.value); setCounter(null); }} disabled={refused} /></label>
       <label>Horas por semana<input inputMode="numeric" value={hours} onChange={(e) => { setHours(e.target.value.replace(/\D/g, "")); setCounter(null); }} disabled={refused} /></label>
       <label>Escala<select value={schedule} onChange={(e) => { setSchedule(e.target.value as CoSchedule); setCounter(null); }} disabled={refused}>
@@ -126,24 +129,21 @@ function OfferPopup({ d, cand, onClose, onAccepted, onRefused }: {
   );
 }
 
-/** Contratação em passos: (a) cargo e regime, (b) candidatos, (c) proposta; (d) headhunter com briefing. */
-export function HireModal({ d, initialRole, onClose, onDone, onChange }: {
-  d: CompanyDetail; initialRole?: string; onClose: () => void; onDone: (d: CompanyDetail, msg: string) => void; onChange: (d: CompanyDetail) => void;
+/** Contratação em passos: (a) cargo e regime, (b) candidatos, (c) proposta. A contratação via contratador (headhunter) fica no cartão "Contratador" da empresa. */
+export function HireModal({ d, initialRole, onClose, onDone }: {
+  d: CompanyDetail; initialRole?: string; onClose: () => void; onDone: (d: CompanyDetail, msg: string) => void;
 }) {
   const business = d.roles.filter((x) => !x.generic);
   const mandatory = d.roles.filter((x) => x.mandatory);
   const optional = d.roles.filter((x) => x.generic && !x.mandatory);
   const [role, setRole] = useState(initialRole ?? business[0]?.key ?? d.roles[0]?.key ?? "");
   const [regime, setRegime] = useState<CoRegime>("CLT");
-  const [step, setStep] = useState<"role" | "list" | "headhunter">("role");
+  const [step, setStep] = useState<"role" | "list">("role");
   const [list, setList] = useState<CoCandidate[]>([]);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [offer, setOffer] = useState<CoCandidate | null>(null);
-  const [maxSalary, setMaxSalary] = useState("");
-  const [minLevel, setMinLevel] = useState("MID");
-  const [hh, setHh] = useState<CoHeadhunterResult | null>(null);
   const r = d.roles.find((x) => x.key === role);
   const base = Number(r?.salary ?? 0);
   const present = (key: string) => d.compliance?.required.find((q) => q.role === key)?.present;
@@ -153,16 +153,8 @@ export function HireModal({ d, initialRole, onClose, onDone, onChange }: {
     try { setList((await api.coCandidates(d.company.id, role, regime)).candidates); setStep("list"); }
     catch (err) { setMsg(errMsg(err)); } finally { setBusy(false); }
   }
-  async function callHeadhunter() {
-    setBusy(true); setMsg(null);
-    try {
-      const res = await api.coHeadhunter(d.company.id, { role, regime, max_salary: parseMoneyInput(maxSalary), min_level: minLevel });
-      setHh(res); onChange(res.company);
-    } catch (err) { setMsg(errMsg(err)); } finally { setBusy(false); }
-  }
-  const hhFee = (Number(parseMoneyInput(maxSalary)) || 0);
   const popup = offer && (
-    <OfferPopup d={d} cand={offer} onClose={() => setOffer(null)} onAccepted={(next, m) => onDone(next, m)} onRefused={(id, m) => { setInfo(m); setList((l) => l.filter((x) => x.id !== id)); setHh((h) => h && { ...h, candidates: h.candidates.filter((x) => x.id !== id) }); }} />
+    <OfferPopup d={d} cand={offer} onClose={() => setOffer(null)} onAccepted={(next, m) => onDone(next, m)} onRefused={(id, m) => { setInfo(m); setList((l) => l.filter((x) => x.id !== id)); }} />
   );
   return (
     <>
@@ -188,7 +180,6 @@ export function HireModal({ d, initialRole, onClose, onDone, onChange }: {
             {msg && <div className="alert">{msg}</div>}
             <div className="row-gap" style={{ flexWrap: "wrap" }}>
               <button type="button" className="btn primary" disabled={busy || !role} onClick={() => void loadList()}>{busy ? "Buscando…" : "Ver candidatos"}</button>
-              <button type="button" className="btn ghost" onClick={() => { setHh(null); setMaxSalary(String(Math.round(base * 1.3))); setStep("headhunter"); }}>Contratar via headhunter</button>
             </div>
           </>
         )}
@@ -198,24 +189,6 @@ export function HireModal({ d, initialRole, onClose, onDone, onChange }: {
             {info && <div className="alert">{info}</div>}
             <CandidateTable list={list} onPick={(c) => { setInfo(null); setOffer(c); }} />
             <button type="button" className="btn ghost small" onClick={() => { setStep("role"); setInfo(null); }}>← trocar cargo ou regime</button>
-          </>
-        )}
-        {step === "headhunter" && (
-          <>
-            <p className="muted small" style={{ margin: 0 }}>Briefing para <b>{r?.label}</b> ({regime}). O headhunter cobra <b>1× o salário-teto</b> como honorário e devolve até 3 candidatos que cumprem o briefing. Se ninguém servir, cobra metade.</p>
-            <label>Orçamento máximo de salário (R$)<input inputMode="decimal" value={maxSalary} onChange={(e) => { setMaxSalary(e.target.value); setHh(null); }} /></label>
-            <label>Nível mínimo<select value={minLevel} onChange={(e) => { setMinLevel(e.target.value); setHh(null); }}>{Object.entries(LEVEL_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></label>
-            {!hh && <p className="card" style={{ margin: 0 }}>Honorário a pagar agora: <b>{fmtNum(hhFee)}</b> ({fmtNum(hhFee / 2)} se nenhum candidato servir). Caixa da empresa: {fmtBRL(d.company.cash)}.</p>}
-            {msg && <div className="alert">{msg}</div>}
-            {!hh && <button type="button" className="btn primary" disabled={busy || hhFee <= 0} onClick={() => void callHeadhunter()}>{busy ? "Procurando…" : `Confirmar e pagar ${fmtNum(hhFee)}`}</button>}
-            {hh && (
-              <>
-                <div className={hh.found > 0 ? "ok" : "alert"}>{hh.message} Honorário cobrado: {fmtBRL(hh.fee)}.</div>
-                {info && <div className="alert">{info}</div>}
-                {hh.found > 0 && <CandidateTable list={hh.candidates} onPick={(c) => { setInfo(null); setOffer(c); }} />}
-              </>
-            )}
-            <button type="button" className="btn ghost small" onClick={() => { setStep("role"); setHh(null); setInfo(null); }}>← trocar cargo ou regime</button>
           </>
         )}
       </Panel>

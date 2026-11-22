@@ -1,4 +1,4 @@
-"""Equipe das empresas (Empresas v2, fase 2): candidatos, propostas, headhunter, rescisão e risco de processo.
+"""Equipe das empresas (Empresas v2, fase 2): candidatos, propostas, rescisão e risco de processo (o contratador está em `company_recruiter`).
 
 Tudo aqui é PURO e determinístico (sem banco, sem `random`): os sorteios usam `hash01` com a semente da partida, o id da
 empresa, o mês, o cargo e o regime. O `id` do candidato é um token que descreve QUEM ele é (mês-cargo-regime-índice), então
@@ -18,10 +18,6 @@ D = Decimal
 
 # ------------------------------------------------------------------ parâmetros
 CANDIDATES_MIN, CANDIDATES_SPAN = 4, 3          # 4 a 6 candidatos por consulta
-HEADHUNTER_POOL = 12                            # o headhunter varre um universo maior, filtra e devolve até 3
-HEADHUNTER_MAX = 3
-HEADHUNTER_FEE_MONTHS = D("1.0")                # honorário = 1x o orçamento (salário-teto) informado no briefing
-HEADHUNTER_EMPTY_FEE_FACTOR = D("0.5")          # sem candidato que sirva ao briefing: cobra metade
 COMPETING_PROB = 0.30                           # chance (por candidato/mês) de ter proposta concorrente
 COMPETING_PREMIUM = D("1.10")                   # concorrência exige +10% sobre a pretensão
 PJ_ASKING_FACTOR = D("1.10")                    # PJ não tem encargos nem benefícios: pede ~10% a mais de salário
@@ -44,6 +40,11 @@ LAWSUIT_LONG_HOURS = 1.5                        # jornada acima de 44 h/semana
 LAWSUIT_6X1 = 1.2
 LAWSUIT_TENURE_MAX = 0.5                        # até +50% com 5 anos de casa
 LAWSUIT_CAP = 0.90
+LAWSUIT_HISTORY_WEIGHT = 0.6                    # cada processo trabalhista anterior do funcionário: +60% na chance de processo
+LAWSUIT_HISTORY_MAX = 3
+HISTORY_PROB = {EmployeeRegime.CLT: 0.09, EmployeeRegime.PJ: 0.17}   # chance de ter >= 1 processo anterior (~13% na média CLT/PJ)
+HISTORY_PROB_NEUTRAL = 0.12                     # pessoas do universo do contratador (regime ainda indefinido)
+HISTORY_LONG_HOURS = 0.03                       # cargo de jornada longa (>= 44 h): +3 pontos
 
 EDUCATION_ORDER = [EmployeeEducation.FUNDAMENTAL, EmployeeEducation.MEDIO, EmployeeEducation.TECNICO,
                    EmployeeEducation.SUPERIOR, EmployeeEducation.POS]
@@ -78,23 +79,25 @@ class Candidate:
     schedule: WorkSchedule
     flex: float                 # quanto abaixo da pretensão (ajustada) ele aceita
     competing: bool             # tem proposta concorrente neste mês
+    lawsuit_history: int = 0    # processos trabalhistas anteriores (0..3): sobe a chance de novo processo na demissão
 
     @property
     def productivity(self) -> Decimal:
         return rules.level_productivity(self.level)
 
 
-def make_token(ref: date, role: str, regime: EmployeeRegime, idx: int, headhunter: bool = False) -> str:
-    return f"{ref:%Y%m}-{role}-{regime.value}-{'h' if headhunter else 'c'}{idx}"
+def make_token(ref: date, role: str, regime: EmployeeRegime, idx: int, kind: str = "c") -> str:
+    """kind: `c` = lista manual; `r` = pessoa do universo do contratador (o regime é escolhido por ele)."""
+    return f"{ref:%Y%m}-{role}-{regime.value}-{kind}{idx}"
 
 
-def parse_token(token: str) -> tuple[str, str, EmployeeRegime, bool, int]:
-    """(AAAAMM, cargo, regime, via headhunter?, índice). Levanta ValueError se o token for inválido."""
+def parse_token(token: str) -> tuple[str, str, EmployeeRegime, str, int]:
+    """(AAAAMM, cargo, regime, tipo, índice). Levanta ValueError se o token for inválido."""
     try:
         ym, role, regime, tail = token.split("-")
-        if len(ym) != 6 or not ym.isdigit() or tail[0] not in "ch" or not tail[1:].isdigit():
+        if len(ym) != 6 or not ym.isdigit() or tail[0] not in "cr" or not tail[1:].isdigit():
             raise ValueError
-        return ym, role, EmployeeRegime(regime), tail[0] == "h", int(tail[1:])
+        return ym, role, EmployeeRegime(regime), tail[0], int(tail[1:])
     except (ValueError, IndexError):
         raise ValueError("candidato inválido") from None
 
@@ -108,9 +111,9 @@ def _min_education(role: rules.Role) -> int:
 
 
 def build_candidate(seed: int, company_id: int, ref: date, role: rules.Role, regime: EmployeeRegime, idx: int,
-                    headhunter: bool = False) -> Candidate:
+                    kind: str = "c") -> Candidate:
     def h(tag: str) -> float:
-        return hash01(seed, "cand", tag, company_id, f"{ref:%Y-%m}", role.key, regime.value, "h" if headhunter else "c", idx)
+        return hash01(seed, "cand", tag, company_id, f"{ref:%Y-%m}", role.key, regime.value, kind, idx)
 
     name = f"{FIRST_NAMES[int(h('fn') * len(FIRST_NAMES))]} {LAST_NAMES[int(h('ln') * len(LAST_NAMES))]}"
     exp = int(h("exp") ** 1.4 * 16)                                                  # 0..15 anos, mais gente com pouca experiência
@@ -126,11 +129,16 @@ def build_candidate(seed: int, company_id: int, ref: date, role: rules.Role, reg
     if regime == EmployeeRegime.PJ:
         asking *= PJ_ASKING_FACTOR
     asking = D(int(round(float(asking) / 10.0)) * 10).quantize(D("0.01"))
-    cid = make_token(ref, role.key, regime, idx, headhunter)
+    cid = make_token(ref, role.key, regime, idx, kind)
+    p_hist = (HISTORY_PROB_NEUTRAL if kind == "r" else HISTORY_PROB[regime]) + (HISTORY_LONG_HOURS if hours >= STANDARD_WEEK else 0.0)
+    history = 0
+    if h("law") < p_hist:                                       # 70% dos que têm histórico tiveram 1 processo, 22% 2 e 8% 3
+        u = h("lawn")
+        history = 1 if u < 0.70 else 2 if u < 0.92 else 3
     return Candidate(
         id=cid, role=role.key, regime=regime, name=name, education=EDUCATION_ORDER[edu_idx], experience_years=exp, level=level,
         asking_salary=asking, hours_week=hours, schedule=schedule, flex=0.03 + 0.07 * h("flex"),
-        competing=hash01(seed, "compete", company_id, f"{ref:%Y-%m}", cid) < COMPETING_PROB)
+        competing=hash01(seed, "compete", company_id, f"{ref:%Y-%m}", cid) < COMPETING_PROB, lawsuit_history=history)
 
 
 def candidates_for(seed: int, company_id: int, ref: date, role: rules.Role, regime: EmployeeRegime) -> list[Candidate]:
@@ -138,31 +146,21 @@ def candidates_for(seed: int, company_id: int, ref: date, role: rules.Role, regi
     return [build_candidate(seed, company_id, ref, role, regime, i) for i in range(n)]
 
 
-def headhunter_search(seed: int, company_id: int, ref: date, role: rules.Role, regime: EmployeeRegime, max_salary: Decimal,
-                      min_level: EmployeeLevel) -> list[Candidate]:
-    """Até 3 candidatos do universo do headhunter que cumprem o briefing: pretensão <= teto, nível >= mínimo, regime pedido.
-    Ordem: maior nível primeiro e, no empate, menor pretensão."""
-    floor = LEVEL_ORDER.index(min_level)
-    pool = [build_candidate(seed, company_id, ref, role, regime, i, headhunter=True) for i in range(HEADHUNTER_POOL)]
-    ok = [c for c in pool if c.asking_salary <= max_salary and LEVEL_ORDER.index(c.level) >= floor]
-    ok.sort(key=lambda c: (-LEVEL_ORDER.index(c.level), c.asking_salary, c.id))
-    return ok[:HEADHUNTER_MAX]
-
-
 def resolve_token(seed: int, company_id: int, ref: date, token: str, seg: rules.Segment,
                   size: rules.CompanySize = rules.CompanySize.SMALL) -> Candidate:
     """Recalcula o candidato a partir do token. ValueError se o token não for da empresa/mês atual ou não existir."""
-    ym, role_key, regime, hh, idx = parse_token(token)
+    ym, role_key, regime, kind, idx = parse_token(token)
+    if kind != "c":
+        raise ValueError("candidato inválido")
     if ym != f"{ref:%Y%m}":
         raise ValueError("a lista de candidatos é de outro mês: consulte novamente")
     try:
         role = seg.role_for(role_key, size)
     except KeyError:
         raise ValueError("cargo inexistente neste segmento") from None
-    limit = HEADHUNTER_POOL if hh else visible_count(seed, company_id, ref, role_key, regime)
-    if idx >= limit:
+    if idx >= visible_count(seed, company_id, ref, role_key, regime):
         raise ValueError("candidato inexistente")
-    return build_candidate(seed, company_id, ref, role, regime, idx, headhunter=hh)
+    return build_candidate(seed, company_id, ref, role, regime, idx)
 
 
 # ------------------------------------------------------------------ proposta
@@ -201,9 +199,12 @@ def adjusted_asking(c: Candidate, hours_week: int, schedule: WorkSchedule) -> De
     return c.asking_salary * hours_factor(hours_week, c.hours_week) * schedule_factor(c, schedule) * comp
 
 
-def evaluate_offer(c: Candidate, salary: Decimal, hours_week: int, schedule: WorkSchedule) -> Offer:
+def evaluate_offer(c: Candidate, salary: Decimal, hours_week: int, schedule: WorkSchedule, extra_flex: float = 0.0) -> Offer:
+    """`extra_flex` = folga a mais que o candidato concede quando a negociação é conduzida por um contratador (0 no fluxo manual):
+    entra SOMADA à folga do próprio candidato, ou seja, só baixa o mínimo aceito; as demais regras (jornada > 52 h, concorrência,
+    contraproposta, recusa) continuam valendo como no fluxo manual."""
     adjusted = adjusted_asking(c, hours_week, schedule)
-    required = D(math.ceil(adjusted * D(str(1 - c.flex))))                              # reais inteiros, arredondando para cima
+    required = D(math.ceil(adjusted * D(str(1 - c.flex - extra_flex))))                 # reais inteiros, arredondando para cima
     if hours_week > HARD_WEEK:                                                           # regra dura: nunca abaixo de +40% da pretensão
         required = max(required, D(math.ceil(c.asking_salary * (1 + HARD_WEEK_MIN_PREMIUM))))
     if salary >= required:
@@ -225,6 +226,15 @@ def evaluate_offer(c: Candidate, salary: Decimal, hours_week: int, schedule: Wor
     return Offer("REFUSED", f"{c.name} recusou: a proposta ficou muito abaixo ({why}). Não está mais disponível neste mês.", required)
 
 
+def min_acceptable(c: Candidate, hours_week: int, schedule: WorkSchedule, extra_flex: float = 0.0) -> Decimal:
+    """MENOR salário (reais inteiros) que `evaluate_offer` aceita nestas condições: o mínimo da regra geral e, para PJ, da regra
+    "o valor cobriu a pretensão". Usado pelo contratador, que propõe exatamente este valor."""
+    required = evaluate_offer(c, D(10 ** 9), hours_week, schedule, extra_flex).required
+    if c.regime == EmployeeRegime.PJ:
+        required = min(required, D(math.ceil(c.asking_salary * hours_factor(hours_week, c.hours_week))))
+    return required
+
+
 # ------------------------------------------------------------------ cobertura, rescisão e processo
 
 def monthly_cost(salary: Decimal, regime: EmployeeRegime) -> Decimal:
@@ -244,13 +254,15 @@ def severance(regime: EmployeeRegime, salary: Decimal, tenure: int) -> Decimal:
     return quantize_money(salary * (rules.SEVERANCE_MONTHS + notice_months))
 
 
-def lawsuit_probability(regime: EmployeeRegime, hours_week: int, schedule: WorkSchedule, tenure: int) -> float:
+def lawsuit_probability(regime: EmployeeRegime, hours_week: int, schedule: WorkSchedule, tenure: int, lawsuit_history: int = 0) -> float:
     """Chance de processo trabalhista depois de demitir. CLT ~6%, PJ ~35% (alegam vínculo); jornada > 44 h (x1.5),
-    escala 6x1 (x1.2) e tempo de casa (até +50% com 5 anos) aumentam; teto de 90%."""
+    escala 6x1 (x1.2), tempo de casa (até +50% com 5 anos) e histórico de processos anteriores (x(1 + 0,6 por processo)) aumentam;
+    teto de 90%."""
     p = LAWSUIT_BASE[regime]
     if hours_week > STANDARD_WEEK:
         p *= LAWSUIT_LONG_HOURS
     if schedule == WorkSchedule.ESC_6X1:
         p *= LAWSUIT_6X1
     p *= 1 + LAWSUIT_TENURE_MAX * min(tenure, 60) / 60
+    p *= 1 + LAWSUIT_HISTORY_WEIGHT * max(0, min(lawsuit_history, LAWSUIT_HISTORY_MAX))
     return round(min(p, LAWSUIT_CAP), 4)

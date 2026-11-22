@@ -115,3 +115,6 @@ export const LEDGER_LINE_LABEL: Record<string, string> = {
   LOAN_PRINCIPAL: "Amortização", STOCK_PURCHASE: "Compra de estoque", SUPPLIES: "Insumos de fornecedores", LAND: "Compra de terreno", EQUIPMENT: "Equipamentos", FEES: "Multas e taxas", SETUP: "Estruturação",
   HIRING: "Contratação", RELOCATION: "Mudança de endereço", SEVERANCE: "Rescisão", EXPANSION: "Expansão", MARKETING: "Marketing", DISTRIBUTION: "Distribuição de lucros",
 };
+
+export const REGIME_POLICY_LABEL: Record<string, string> = { CLT_ONLY: "Só CLT", PJ_ONLY: "Só PJ", BOTH: "CLT e PJ" };
+export const RECRUITER_TIER_LABEL: Record<string, string> = { BASIC: "Básico", PRO: "Profissional", ELITE: "Elite" };

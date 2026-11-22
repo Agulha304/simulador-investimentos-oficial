@@ -16,6 +16,7 @@ from backend.schemas import companies as s
 from backend.services import budget_service as bs
 from backend.services import partners
 from backend.services import company_expansion as xp
+from backend.services import company_recruiter_service as recsvc
 from backend.services import company_rules as rules
 from backend.services import company_service as cs
 from backend.services import company_taxes as ctax
@@ -69,7 +70,8 @@ def _employee_out(e: Employee, labels: dict, ref) -> s.EmployeeOut:
         id=e.id, name=e.name, role=e.role, role_label=labels.get(e.role, e.role), level=e.level, regime=e.regime, schedule=e.schedule,
         education=e.education, education_label=team.EDUCATION_LABEL[e.education], experience_years=e.experience_years, salary=e.salary,
         total_cost=cs.employee_cost(e), severance_estimate=team.severance(e.regime, e.salary, tenure),
-        lawsuit_risk_pct=round(team.lawsuit_probability(e.regime, e.hours_week, e.schedule, tenure) * 100, 1),
+        lawsuit_risk_pct=round(team.lawsuit_probability(e.regime, e.hours_week, e.schedule, tenure, e.lawsuit_history) * 100, 1),
+        lawsuit_history=e.lawsuit_history,
         hours_week=e.hours_week, productivity=e.productivity, status=e.status, hired_on=e.hired_on, terminated_on=e.terminated_on)
 
 
@@ -78,7 +80,8 @@ def _candidate_out(x: team.Candidate, seg: rules.Segment) -> s.CandidateOut:
         id=x.id, name=x.name, role=x.role, role_label=seg.role(x.role).label, regime=x.regime, education=x.education,
         education_label=team.EDUCATION_LABEL[x.education], experience_years=x.experience_years, level=x.level,
         level_label=team.LEVEL_LABEL[x.level], productivity=x.productivity, asking_salary=x.asking_salary, hours_week=x.hours_week,
-        schedule=x.schedule, monthly_cost_at_asking=rules.payroll_cost(x.asking_salary, x.regime))
+        schedule=x.schedule, monthly_cost_at_asking=rules.payroll_cost(x.asking_salary, x.regime),
+        lawsuit_history=x.lawsuit_history)
 
 
 def _contract_out(c: Company, seg: rules.Segment, x: CompanySupplier, ref) -> s.SupplierContractOut:
@@ -91,7 +94,10 @@ def _contract_out(c: Company, seg: rules.Segment, x: CompanySupplier, ref) -> s.
         min_monthly_order=x.min_monthly_order, max_units_month=x.max_units_month, reliability=float(x.reliability),
         failure_probability_pct=round((1 - float(x.reliability)) * 100, 1), lead_days=x.lead_days, status=x.status,
         started_month=x.started_month, ended_month=x.ended_month, term_months=x.term_months, is_default=x.is_default,
-        volume_used=(x.volume_used if x.volume_month == ref else ZERO), early_end_fine=fine)
+        volume_used=(x.volume_used if x.volume_month == ref else ZERO), early_end_fine=fine,
+        max_monthly_spend=x.max_monthly_spend, volume_cap=x.volume_cap,
+        min_reliability=float(x.min_reliability) if x.min_reliability is not None else None, max_lead_days=x.max_lead_days,
+        spend_used=(x.spend_used if x.volume_month == ref else ZERO), effective_volume=cs.effective_volume(x))
 
 
 def _supply_out(db: Session, c: Company, seg: rules.Segment, open_ref) -> s.SupplyOut:
@@ -175,6 +181,7 @@ def _detail(db: Session, c: Company) -> s.CompanyDetailOut:
         roles=[_role_out(seg.role_for(r.key, c.size), c.channel) for r in seg.roles],
         compliance=s.ComplianceOut(**cs.compliance(db, c)),
         supply=_supply_out(db, c, seg, open_ref),
+        recruiter=s.RecruiterOut(**rv) if (rv := recsvc.view(db, c)) else None, recruiter_tiers=recsvc.tier_options(c),
         employees=[_employee_out(e, role_labels, open_ref) for e in employees],
         inventory=[s.InventoryOut(id=i.id, name=i.name, unit=i.unit, quantity=i.quantity, unit_cost=i.unit_cost,
                                   value=quantize_money(i.quantity * i.unit_cost), supplier=i.supplier, min_quantity=i.min_quantity,
@@ -355,19 +362,52 @@ def hire(company_id: int, body: s.HireIn, user: CurrentUser, db: DbSession):
     return _run(db, go)
 
 
-@router.post("/{company_id}/headhunter", response_model=s.HeadhunterOut)
-def headhunter(company_id: int, body: s.HeadhunterIn, user: CurrentUser, db: DbSession):
-    """Headhunter: cobra o honorário (1x o salário-teto; metade se ninguém servir) e devolve até 3 candidatos do briefing."""
+def _report(db: Session, user_id: int, company_id: int, rep: dict) -> s.RecruiterReportOut:
+    return s.RecruiterReportOut(**rep, company=_detail(db, cs.get_company(db, user_id, company_id)))
+
+
+@router.post("/{company_id}/recruiter", response_model=s.CompanyDetailOut)
+def recruiter_hire(company_id: int, body: s.RecruiterHireIn, user: CurrentUser, db: DbSession):
+    """Contrata o contratador (headhunter) no nível pedido ou troca o nível. Opcional; taxa mensal no fechamento."""
+    return _run(db, lambda: _act(db, user.id, company_id, lambda m: recsvc.hire_recruiter(db, user.id, m, company_id, body.tier, body.idempotency_key)))
+
+
+@router.delete("/{company_id}/recruiter", response_model=s.CompanyDetailOut)
+def recruiter_dismiss(company_id: int, user: CurrentUser, db: DbSession):
+    """Dispensa o contratador (sem multa)."""
+    return _run(db, lambda: _act(db, user.id, company_id, lambda m: recsvc.dismiss_recruiter(db, user.id, m, company_id)))
+
+
+@router.put("/{company_id}/recruiter/settings", response_model=s.CompanyDetailOut)
+def recruiter_settings(company_id: int, body: s.RecruiterSettingsIn, user: CurrentUser, db: DbSession):
+    """Briefing do contratador: salário máximo, escala, regime, teto de folha extra e critérios de fornecedores (geral e por categoria)."""
+    raw = body.model_dump(mode="json")
+    return _run(db, lambda: _act(db, user.id, company_id, lambda m: recsvc.update_briefing(db, user.id, m, company_id, raw)))
+
+
+@router.post("/{company_id}/recruiter/hire-mandatory", response_model=s.RecruiterReportOut)
+def recruiter_hire_mandatory(company_id: int, body: s.RecruiterKeyIn, user: CurrentUser, db: DbSession):
     def go():
         month = bs.ensure_setup(db, user.id)
-        found, fee = cs.headhunter(db, user.id, month, company_id, role_key=body.role, regime=body.regime, max_salary=body.max_salary,
-                                   min_level=body.min_level, idempotency_key=body.idempotency_key)
-        c = cs.get_company(db, user.id, company_id)
-        seg = rules.SEGMENTS[c.segment]
-        msg = (f"O headhunter encontrou {len(found)} candidato(s) dentro do briefing." if found
-               else "Nenhum candidato atendeu ao briefing: cobrança de metade do honorário. Revise orçamento ou nível mínimo.")
-        return s.HeadhunterOut(fee=fee, found=len(found), message=msg, candidates=[_candidate_out(x, seg) for x in found],
-                               company=_detail(db, c))
+        return _report(db, user.id, company_id, recsvc.hire_mandatory(db, user.id, month, company_id, body.idempotency_key))
+    return _run(db, go)
+
+
+@router.post("/{company_id}/recruiter/hire-team", response_model=s.RecruiterReportOut)
+def recruiter_hire_team(company_id: int, body: s.RecruiterTeamIn, user: CurrentUser, db: DbSession):
+    def go():
+        month = bs.ensure_setup(db, user.id)
+        return _report(db, user.id, company_id, recsvc.hire_team(
+            db, user.id, month, company_id, [r.model_dump() for r in body.roles], body.idempotency_key))
+    return _run(db, go)
+
+
+@router.post("/{company_id}/recruiter/contract-suppliers", response_model=s.RecruiterReportOut)
+def recruiter_contract_suppliers(company_id: int, body: s.RecruiterSuppliersIn, user: CurrentUser, db: DbSession):
+    def go():
+        month = bs.ensure_setup(db, user.id)
+        return _report(db, user.id, company_id, recsvc.contract_suppliers(
+            db, user.id, month, company_id, body.categories, body.idempotency_key))
     return _run(db, go)
 
 
@@ -415,6 +455,14 @@ def suppliers_negotiate(company_id: int, body: s.SupplierNegotiateIn, user: Curr
 @router.delete("/{company_id}/suppliers/{supplier_id}", response_model=s.CompanyDetailOut)
 def suppliers_end(company_id: int, supplier_id: int, user: CurrentUser, db: DbSession):
     return _run(db, lambda: _act(db, user.id, company_id, lambda m: cs.end_supplier(db, user.id, m, company_id, supplier_id)))
+
+
+@router.put("/{company_id}/suppliers/{supplier_id}/limits", response_model=s.CompanyDetailOut)
+def suppliers_limits(company_id: int, supplier_id: int, body: s.SupplierLimitsIn, user: CurrentUser, db: DbSession):
+    """Limites do contrato: gasto e volume mensais (valem nas compras) e confiabilidade/prazo (critérios do contratador)."""
+    return _run(db, lambda: _act(db, user.id, company_id, lambda m: cs.set_supplier_limits(
+        db, user.id, m, company_id, supplier_id, max_monthly_spend=body.max_monthly_spend, min_reliability=body.min_reliability,
+        max_lead_days=body.max_lead_days, volume_cap=body.volume_cap)))
 
 
 @router.post("/{company_id}/relocate/quote", response_model=s.RelocateQuoteOut)

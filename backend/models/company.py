@@ -85,6 +85,7 @@ class Employee(Base):
     education: Mapped[EmployeeEducation] = mapped_column(StrEnumType(EmployeeEducation, "employee_education"),
                                                          default=EmployeeEducation.MEDIO, server_default="MEDIO")
     experience_years: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    lawsuit_history: Mapped[int] = mapped_column(Integer, default=0, server_default="0")    # nº de processos trabalhistas anteriores (0..3)
 
 
 class CandidateBlock(Base):
@@ -151,6 +152,12 @@ class CompanySupplier(Base):
     volume_month: Mapped[date | None] = mapped_column(Date)                   # mês a que `volume_used` se refere
     volume_used: Mapped[Decimal] = mapped_column(Numeric(16, 3), default=Decimal("0"), server_default="0")
     idempotency_key: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    # limites do contrato (contratador/headhunter): os dois primeiros valem nas COMPRAS; os outros dois são critérios ao renovar/trocar
+    max_monthly_spend: Mapped[Decimal | None] = mapped_column(Numeric(16, 2), nullable=True)   # gasto máximo por mês com este contrato
+    volume_cap: Mapped[Decimal | None] = mapped_column(Numeric(16, 3), nullable=True)           # volume máximo por mês (<= max_units_month)
+    min_reliability: Mapped[Decimal | None] = mapped_column(Numeric(4, 3), nullable=True)
+    max_lead_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    spend_used: Mapped[Decimal] = mapped_column(Numeric(16, 2), default=Decimal("0"), server_default="0")   # gasto do mês `volume_month`
 
 
 class CompanyCost(Base):
@@ -348,4 +355,40 @@ class CompanyExpansion(Base):
     cost: Mapped[Decimal] = mapped_column(Money())
     message: Mapped[str] = mapped_column(String(400))
     effects: Mapped[list] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class CompanyRecruiter(Base):
+    """Contratador (headhunter) OPCIONAL da empresa: um por empresa (a linha é reaproveitada ao recontratar). Taxa mensal por nível
+    cobrada no fechamento (linha FEES) + comissão por contratação (HIRING). `settings` = briefing (JSON)."""
+
+    __tablename__ = "company_recruiters"
+    __table_args__ = (
+        UniqueConstraint("company_id", name="uq_company_recruiters_company"),
+        CheckConstraint("tier IN ('BASIC', 'PRO', 'ELITE')", name="ck_company_recruiters_tier"),
+        CheckConstraint("status IN ('ACTIVE', 'ENDED')", name="ck_company_recruiters_status"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id", ondelete="CASCADE"))
+    tier: Mapped[str] = mapped_column(String(8))
+    status: Mapped[str] = mapped_column(String(8), default="ACTIVE", server_default="ACTIVE")
+    hired_month: Mapped[date] = mapped_column(Date)
+    ended_month: Mapped[date | None] = mapped_column(Date)
+    settings: Mapped[dict] = mapped_column(JSON, default=dict)
+    last_key: Mapped[str | None] = mapped_column(String(100), nullable=True)               # última chave de idempotência (contratar/trocar)
+
+
+class CompanyRecruiterRun(Base):
+    """Operação do contratador já executada: a repetição da MESMA chave de idempotência devolve o mesmo relatório sem cobrar de novo."""
+
+    __tablename__ = "company_recruiter_runs"
+    __table_args__ = (UniqueConstraint("company_id", "idempotency_key", name="uq_company_recruiter_runs_idem"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id", ondelete="CASCADE"), index=True)
+    idempotency_key: Mapped[str] = mapped_column(String(100))
+    kind: Mapped[str] = mapped_column(String(20))                            # MANDATORY | TEAM | SUPPLIERS
+    ref_month: Mapped[date] = mapped_column(Date)
+    report: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

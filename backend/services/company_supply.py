@@ -134,6 +134,15 @@ def search(seed: int, company_id: int, ref: date, seg: rules.Segment, category: 
             for i in range(n)]
 
 
+def universe(seed: int, company_id: int, ref: date, seg: rules.Segment, category: str, n: int, *, size: rules.CompanySize, units: int,
+             capacity_level: int, price_mult: Decimal = D(1)) -> list[SupplierOffer]:
+    """Ofertas que um CONTRATADOR avalia: as `n` primeiras do universo da categoria (rede de contatos maior que a lista manual de 3 a 5;
+    as primeiras são as mesmas da lista manual, pois cada oferta depende só do índice)."""
+    cat = seg.supply(category)
+    return [build_offer(seg=seg, cat=cat, seed=seed, company_id=company_id, ref=ref, idx=i, size=size, units=units,
+                        capacity_level=capacity_level, price_mult=price_mult) for i in range(n)]
+
+
 def resolve_token(seed: int, company_id: int, ref: date, token: str, seg: rules.Segment, *, size: rules.CompanySize, units: int,
                   capacity_level: int, price_mult: Decimal = D(1)) -> SupplierOffer:
     """Recalcula a oferta a partir do token. ValueError se for de outro mês, de outra categoria ou não existir."""
@@ -172,14 +181,16 @@ def floor_fraction(offer: SupplierOffer, relevance: float, volume: Decimal) -> f
     return max(FLOOR_MIN, min(1.0, f))
 
 
-def minimum_price(offer: SupplierOffer, relevance: float, volume: Decimal) -> Decimal:
-    return D(math.ceil(float(offer.unit_price) * floor_fraction(offer, relevance, volume) * 100 - 1e-9)) / 100
+def minimum_price(offer: SupplierOffer, relevance: float, volume: Decimal, extra_discount: float = 0.0) -> Decimal:
+    """Menor preço que o fornecedor aceita. `extra_discount` (0 no fluxo manual) = desconto que um contratador consegue sobre esse
+    mínimo; ele só baixa o piso: a regra de aceitação/contraproposta/recusa de `evaluate` é a mesma."""
+    return D(math.ceil(float(offer.unit_price) * floor_fraction(offer, relevance, volume) * (1 - extra_discount) * 100 - 1e-9)) / 100
 
 
-def evaluate(offer: SupplierOffer, price: Decimal, relevance: float, volume: Decimal) -> Deal:
+def evaluate(offer: SupplierOffer, price: Decimal, relevance: float, volume: Decimal, extra_discount: float = 0.0) -> Deal:
     """Aceita se o preço >= piso; contrapõe o piso se a proposta ficou até 8% abaixo dele; recusa abaixo disso (o fornecedor
     fica indisponível no mês). Proposta acima da lista fecha na LISTA (ninguém paga mais do que o anunciado)."""
-    required = max(minimum_price(offer, relevance, volume), D("0.01"))
+    required = max(minimum_price(offer, relevance, volume, extra_discount), D("0.01"))
     if price >= required:
         final = min(price, offer.unit_price)
         return Deal("ACCEPTED", f"{offer.name} aceitou fornecer a {final} por unidade.", required, price=final)

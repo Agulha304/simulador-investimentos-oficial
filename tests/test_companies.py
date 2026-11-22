@@ -214,9 +214,9 @@ def test_catalog_has_twelve_segments_with_distinct_models(client, auth_headers):
 def test_catalog_channels_locations_and_metrics_kind_per_segment(client, auth_headers):
     by = {s["key"]: s for s in client.get(f"{C}/catalog", headers=auth_headers).json()["segments"]}
     assert by["ECOMMERCE"]["channels"] == ["ONLINE"] and by["ECOMMERCE"]["locations"] == []
-    for k in ("WORKSHOP", "INDUSTRY", "CONSTRUCTION", "TRANSPORT"):
+    for k in ("WORKSHOP", "INDUSTRY", "CONSTRUCTION", "TRANSPORT", "RESTAURANT", "CAFE", "SUPERMARKET"):      # só físicos (restaurante/café/supermercado não existem online)
         assert by[k]["channels"] == ["PHYSICAL"], k
-    for k in ("RESTAURANT", "CAFE", "CLOTHING", "SUPERMARKET", "TECH", "AGENCY", "REAL_ESTATE_AGENCY"):
+    for k in ("CLOTHING", "TECH", "AGENCY", "REAL_ESTATE_AGENCY"):
         assert set(by[k]["channels"]) == {"PHYSICAL", "ONLINE"}, k
     kinds = {k: v["metrics_kind"] for k, v in by.items()}
     assert {k for k, v in kinds.items() if v == "PRODUCTION"} == {"RESTAURANT", "CAFE", "INDUSTRY", "CONSTRUCTION"}
@@ -349,16 +349,16 @@ def test_channel_not_allowed_for_segment_is_rejected(client, rich, db):
 
 
 def test_online_has_no_lease_no_land_and_lower_fixed_costs(client, rich):
-    phys = quote(client, rich, "CAFE", "bairro", "SMALL")
-    onl = quote(client, rich, "CAFE", None, "SMALL", channel="ONLINE")
+    phys = quote(client, rich, "CLOTHING", "bairro", "SMALL")
+    onl = quote(client, rich, "CLOTHING", None, "SMALL", channel="ONLINE")
     assert onl["channel"] == "ONLINE" and onl["site_mode"] is None and D(onl["land_cost"]) == 0 and D(onl["monthly_rent"]) == 0
     assert D(onl["monthly_fixed"]) < D(phys["monthly_fixed"]) and D(onl["minimum_capital"]) < D(phys["minimum_capital"])
-    assert client.post(f"{C}/quote", headers=rich, json={"segment": "CAFE", "channel": "ONLINE", "site_mode": "BUY"}).status_code == 400
-    d = create_ok(client, rich, staff=False, name="Café online", channel="ONLINE", extra="0")
+    assert client.post(f"{C}/quote", headers=rich, json={"segment": "CLOTHING", "channel": "ONLINE", "site_mode": "BUY"}).status_code == 400
+    d = create_ok(client, rich, staff=False, name="Loja online", segment="CLOTHING", channel="ONLINE", extra="0")
     assert d["lease"] is None and d["company"]["channel"] == "ONLINE" and D(d["company"]["site_value"]) == 0
     assert d["company"]["location"] == "online" and d["company"]["location_label"] == "Operação online"
     assert not any(e["line"] in ("LAND", "RENT") for e in d["ledger"])
-    assert D(d["monthly_obligations"]) < D(quote(client, rich)["monthly_fixed"]) + D(quote(client, rich)["monthly_payroll"])
+    assert D(d["monthly_obligations"]) < D(quote(client, rich, "CLOTHING")["monthly_fixed"]) + D(quote(client, rich, "CLOTHING")["monthly_payroll"])
     assert client.post(f"{C}/{d['company']['id']}/lease", headers=rich, json={"kind": "EXTERNAL"}).status_code == 409
 
 
@@ -872,8 +872,9 @@ def test_company_accounts_and_data_are_isolated_between_users(client, rich):
                                ("post", f"/{cid}/candidates", {"role": "barista", "regime": "CLT"}),
                                ("post", f"/{cid}/hire", {"candidate_id": "202611-barista-CLT-c0", "salary": "2000", "hours_week": 44, "schedule": "5x2",
                                                          "regime": "CLT", "idempotency_key": key()}),
-                               ("post", f"/{cid}/headhunter", {"role": "barista", "regime": "CLT", "max_salary": "3000", "min_level": "MID",
-                                                               "idempotency_key": key()}),
+                               ("post", f"/{cid}/recruiter", {"tier": "BASIC", "idempotency_key": key()}),
+                               ("post", f"/{cid}/recruiter/hire-mandatory", {"idempotency_key": key()}),
+                               ("put", f"/{cid}/recruiter/settings", {"max_salary": "3000"}),
                                ("post", f"/{cid}/loans", {"amount": "1000", "term_months": 6}),
                                ("post", f"/{cid}/lease", {"kind": "EXTERNAL"}), ("post", f"/{cid}/distribute", {"amount": "1", "idempotency_key": key()})]:
         r = getattr(client, method)(f"{C}{path}", headers=bia, **({"json": body} if body else {}))
@@ -971,7 +972,7 @@ def test_new_company_has_no_staff_and_minimum_capital_covers_mandatory_team(clie
     base = (D("1800") + D("2400") + D("1520")) * part
     assert abs(D(q["monthly_payroll"]) - base * 2) < D("0.05")                                    # 1 mês, CLT 2x, salário-base do porte
     assert abs(D(q["mandatory_cost"]) - (D(q["monthly_payroll"]) + base / 2)) < D("0.05")          # + custo de contratação (0,5x)
-    online = quote(client, rich, channel="ONLINE", location=None)
+    online = quote(client, rich, "CLOTHING", channel="ONLINE", location=None)
     assert online["mandatory_roles"] == ["Contador", "Advogado"] and abs(D(online["monthly_payroll"]) - (D("1800") + D("2400")) * part * 2) < D("0.05")
     d = create_ok(client, rich, staff=False)
     assert d["employees"] == [] and d["compliance"]["regular"] is False
@@ -1135,43 +1136,6 @@ def test_clt_costs_double_and_pj_costs_single_in_payroll_and_obligations(client,
     assert D(m["payroll"]) == expected and m["irregular"] is False
     line = db.scalar(select(LedgerEntry).where(LedgerEntry.company_id == cid, LedgerEntry.line == "PAYROLL"))
     assert line.amount == expected
-
-
-def test_headhunter_charges_fee_respects_briefing_and_is_idempotent(client, rich, db):
-    cid = create_ok(client, rich, staff=False, extra="200000")["company"]["id"]
-    cash0 = D(detail(client, rich, cid)["company"]["cash"])
-    k = key()
-    body = {"role": "barista", "regime": "PJ", "max_salary": "6000", "min_level": "MID", "idempotency_key": k}
-    r = client.post(f"{C}/{cid}/headhunter", headers=rich, json=body)
-    assert r.status_code == 200, r.text
-    out = r.json()
-    assert D(out["fee"]) == D("6000.00") and 1 <= out["found"] <= 3 == 3 or out["found"] <= 3
-    assert out["found"] == len(out["candidates"]) > 0
-    for c in out["candidates"]:
-        assert D(c["asking_salary"]) <= D("6000") and c["level"] in ("MID", "SENIOR") and c["regime"] == "PJ" and c["id"].endswith(tuple("h%d" % i for i in range(12)))
-    levels = [["JUNIOR", "MID", "SENIOR"].index(c["level"]) for c in out["candidates"]]
-    assert levels == sorted(levels, reverse=True)                                             # melhores primeiro
-    assert D(out["company"]["company"]["cash"]) == cash0 - D("6000.00")
-    fee_lines = [e for e in out["company"]["ledger"] if e["line"] == "HIRING" and "headhunter" in e["description"]]
-    assert len(fee_lines) == 1 and D(fee_lines[0]["amount"]) == D("6000.00")
-    again = client.post(f"{C}/{cid}/headhunter", headers=rich, json=body).json()            # mesma chave: não cobra de novo, mesma lista
-    assert again["candidates"] == out["candidates"] and D(again["company"]["company"]["cash"]) == cash0 - D("6000.00")
-    # a contratação via headhunter segue o mesmo /hire
-    pick = out["candidates"][0]
-    res = propose(client, rich, cid, pick, D(pick["asking_salary"]) * D("1.2"), regime="PJ")
-    assert res["accepted"] is True and res["company"]["employees"][0]["regime"] == "PJ" and res["company"]["employees"][0]["name"] == pick["name"]
-    # briefing impossível: lista vazia e metade do honorário
-    cash1 = D(res["company"]["company"]["cash"])
-    none = client.post(f"{C}/{cid}/headhunter", headers=rich, json={"role": "barista", "regime": "CLT", "max_salary": "1000", "min_level": "SENIOR",
-                                                                   "idempotency_key": key()}).json()
-    assert none["candidates"] == [] and none["found"] == 0 and D(none["fee"]) == D("500.00")
-    assert D(none["company"]["company"]["cash"]) == cash1 - D("500.00")
-    # sem caixa para o honorário: nada é cobrado
-    acc = db.scalar(select(FinanceAccount).join(Company, Company.account_id == FinanceAccount.id).where(Company.id == cid))
-    acc.balance = D("100.00")
-    db.commit()
-    r = client.post(f"{C}/{cid}/headhunter", headers=rich, json={**body, "idempotency_key": key()})
-    assert r.status_code == 400 and "honorário" in r.json()["detail"]
 
 
 def test_irregular_company_has_no_sales_pays_fine_and_exposes_compliance(client, rich, db):
@@ -2468,7 +2432,7 @@ def test_incident_probabilities_follow_company_state():
 def test_eviction_only_hits_physical_companies_on_rented_sites(client, rich, db):
     rent = create_ok(client, rich, name="Alugada", extra="100000")["company"]["id"]
     own = create_ok(client, rich, name="Própria", extra="100000", site_mode="BUY")["company"]["id"]
-    web = create_ok(client, rich, name="Online", extra="100000", channel="ONLINE")["company"]["id"]
+    web = create_ok(client, rich, name="Online", segment="CLOTHING", extra="100000", channel="ONLINE")["company"]["id"]
     ref = open_ref(client, rich)
     assert incidents.eviction_prob(db, db.get(Company, rent), ref) > 0
     assert incidents.eviction_prob(db, db.get(Company, own), ref) == 0

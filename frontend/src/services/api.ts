@@ -301,32 +301,60 @@ export interface CoExpResult { success: boolean; outcome: "FULL" | "PARTIAL" | "
 export interface CoEmployee {
   id: number; name: string; role: string; role_label: string; level: string; regime: CoRegime; schedule: CoSchedule; education: string; education_label: string;
   experience_years: number; salary: Decimal; total_cost: Decimal; severance_estimate: Decimal; lawsuit_risk_pct: number; hours_week: number;
-  productivity: Decimal; status: string; hired_on: string; terminated_on: string | null;
+  productivity: Decimal; status: string; hired_on: string; terminated_on: string | null; lawsuit_history?: number;
 }
 export interface CoCompliance {
   regular: boolean; required: { role: string; label: string; present: boolean }[]; missing: string[]; missing_labels: string[]; estimated_fine: Decimal; grace_months?: number;
 }
 export interface CoCandidate {
   id: string; name: string; role: string; role_label: string; regime: CoRegime; education: string; education_label: string; experience_years: number;
-  level: string; level_label: string; productivity: Decimal; asking_salary: Decimal; hours_week: number; schedule: CoSchedule; monthly_cost_at_asking: Decimal;
+  level: string; level_label: string; productivity: Decimal; asking_salary: Decimal; hours_week: number; schedule: CoSchedule; monthly_cost_at_asking: Decimal; lawsuit_history?: number;
 }
 export interface CoHireBody { candidate_id: string; salary: string; hours_week: number; schedule: CoSchedule; regime: CoRegime; confirm_risk: boolean; idempotency_key: string }
 export interface CoHireResult { accepted: boolean; status: "ACCEPTED" | "COUNTER" | "REFUSED"; message: string; counter_offer: Decimal | null; company: CompanyDetail | null }
-export interface CoHeadhunterResult { fee: Decimal; found: number; message: string; candidates: CoCandidate[]; company: CompanyDetail }
+export type CoRecruiterTier = "BASIC" | "PRO" | "ELITE";
+export type CoRegimePolicy = "CLT_ONLY" | "PJ_ONLY" | "BOTH";
+export interface CoRecruiterTierInfo {
+  tier: CoRecruiterTier; label: string; monthly_fee: Decimal; commission_pct: number; pool: number; offers: number; find_chance_pct: number; discount_pct: number; success_pct: number;
+}
+export interface CoSupplierLimitsBrief { max_spend: string | null; min_reliability: number | null; max_lead_days: number | null; volume_cap: string | null }
+export interface CoRecruiterSettings {
+  max_salary: string | null; schedule: CoSchedule; hours_week: number; regime_policy: CoRegimePolicy; max_monthly_payroll: string | null;
+  supplier_max_total_spend: string | null; supplier_min_reliability: number | null; supplier_max_lead_days: number | null; supplier_volume_cap: string | null;
+  supplier_overrides: Record<string, CoSupplierLimitsBrief>;
+}
+export interface CoRecruiter {
+  tier: CoRecruiterTier; tier_label: string; status: "ACTIVE" | "ENDED"; hired_month: string; ended_month: string | null; monthly_fee: Decimal; commission_pct: number;
+  settings: CoRecruiterSettings; pool: number; offers: number; find_chance_pct: number; discount_pct: number; success_pct: number;
+}
+export interface CoRecruiterHired {
+  name: string; role: string; role_label: string; regime: CoRegime; level: string; salary: string; hours_week: number; schedule: CoSchedule; monthly_cost: string;
+  commission: string; lawsuit_history: number; why_regime: string; cost_benefit: number;
+}
+export interface CoRecruiterSkipped { role?: string; role_label?: string; category?: string; label?: string; requested?: number; hired?: number; missing?: number; reason: string }
+export interface CoRecruiterContracted {
+  category: string; label: string; supplier: string; unit: string; unit_price: string; reference_price: string; volume: string; expected_spend: string; reliability: number; lead_days: number;
+}
+export interface CoRecruiterReport {
+  kind: "MANDATORY" | "TEAM" | "SUPPLIERS"; message: string; replayed: boolean; hired: CoRecruiterHired[]; skipped: CoRecruiterSkipped[]; contracted: CoRecruiterContracted[];
+  total_monthly_cost: Decimal; total_commission: Decimal; total_expected_spend: Decimal; company: CompanyDetail;
+}
 export interface CoSupplyChecklist { category: string; label: string; present: boolean; supplier: string | null }
 export interface CoSupplierContract {
   id: number; category: string; category_label: string; unit: string; name: string; unit_price: Decimal; reference_price: Decimal; price_vs_reference_pct: number;
   min_monthly_order: Decimal; max_units_month: Decimal; reliability: number; failure_probability_pct: number; lead_days: number; status: string;
   started_month: string; ended_month: string | null; term_months: number; is_default: boolean; volume_used: Decimal; early_end_fine: Decimal;
+  max_monthly_spend?: Decimal | null; volume_cap?: Decimal | null; min_reliability?: number | null; max_lead_days?: number | null; spend_used?: Decimal; effective_volume?: Decimal | null;
 }
 export interface CoSupplierBudgetRow {
   category: string; label: string; unit: string; weight: Decimal; supplier_id: number | null; supplier: string | null; unit_price: Decimal; estimated: boolean;
   planned_volume: Decimal; planned_spend: Decimal; last_actual: Decimal; max_units_month: Decimal | null;
+  max_monthly_spend?: Decimal | null; volume_cap?: Decimal | null; over_limit?: boolean;
 }
 export interface CoSupply {
   required: boolean; ready: boolean; checklist: CoSupplyChecklist[]; contracts: CoSupplierContract[]; ended: CoSupplierContract[];
   effective_capacity: number | null; warning: string | null;
-  budget: { rows: CoSupplierBudgetRow[]; total_planned: Decimal; total_last_actual: Decimal; last_month: string | null };
+  budget: { rows: CoSupplierBudgetRow[]; total_planned: Decimal; total_last_actual: Decimal; last_month: string | null; total_limit?: Decimal | null; over_total?: boolean };
 }
 export interface CoSupplierOffer {
   id: string; category: string; category_label: string; unit: string; name: string; unit_price: Decimal; reference_price: Decimal; price_vs_reference_pct: number;
@@ -356,6 +384,7 @@ export interface CompanyDetail {
   inventory: { id: number; name: string; unit: string; quantity: Decimal; unit_cost: Decimal; value: Decimal; supplier: string;
     min_quantity: Decimal; monthly_consumption_est: Decimal; low: boolean; max_quantity?: Decimal; category?: string | null; contracted?: boolean }[];
   supply?: CoSupply | null;
+  recruiter?: CoRecruiter | null; recruiter_tiers?: CoRecruiterTierInfo[];
   costs: { id: number; kind: string; name: string; amount: Decimal; active: boolean }[];
   lease: { kind: string; good_id: number | null; name: string; monthly_rent: Decimal; start_month: string } | null;
   loans: { id: number; principal: Decimal; annual_rate_pct: Decimal; term_months: number; start_month: string; balance: Decimal; status: string;
@@ -514,8 +543,19 @@ export const api = {
     request<{ role: string; regime: CoRegime; month: string; candidates: CoCandidate[] }>(`/companies/${id}/candidates`, { method: "POST", body: JSON.stringify({ role, regime }) }),
   coHire: (id: number, body: Omit<CoHireBody, "idempotency_key"> & { idempotency_key?: string }) =>
     request<CoHireResult>(`/companies/${id}/hire`, { method: "POST", body: JSON.stringify({ ...body, idempotency_key: body.idempotency_key ?? crypto.randomUUID() }) }),
-  coHeadhunter: (id: number, body: { role: string; regime: CoRegime; max_salary: string; min_level: string; idempotency_key?: string }) =>
-    request<CoHeadhunterResult>(`/companies/${id}/headhunter`, { method: "POST", body: JSON.stringify({ ...body, idempotency_key: body.idempotency_key ?? crypto.randomUUID() }) }),
+  coRecruiterHire: (id: number, tier: CoRecruiterTier) =>
+    request<CompanyDetail>(`/companies/${id}/recruiter`, { method: "POST", body: JSON.stringify({ tier, idempotency_key: crypto.randomUUID() }) }),
+  coRecruiterDismiss: (id: number) => request<CompanyDetail>(`/companies/${id}/recruiter`, { method: "DELETE" }),
+  coRecruiterSettings: (id: number, body: CoRecruiterSettings) =>
+    request<CompanyDetail>(`/companies/${id}/recruiter/settings`, { method: "PUT", body: JSON.stringify(body) }),
+  coRecruiterMandatory: (id: number) =>
+    request<CoRecruiterReport>(`/companies/${id}/recruiter/hire-mandatory`, { method: "POST", body: JSON.stringify({ idempotency_key: crypto.randomUUID() }) }),
+  coRecruiterTeam: (id: number, roles: { role: string; count: number }[]) =>
+    request<CoRecruiterReport>(`/companies/${id}/recruiter/hire-team`, { method: "POST", body: JSON.stringify({ roles, idempotency_key: crypto.randomUUID() }) }),
+  coRecruiterSuppliers: (id: number, categories?: string[]) =>
+    request<CoRecruiterReport>(`/companies/${id}/recruiter/contract-suppliers`, { method: "POST", body: JSON.stringify({ categories: categories?.length ? categories : null, idempotency_key: crypto.randomUUID() }) }),
+  coSupplierLimits: (id: number, supplierId: number, body: { max_monthly_spend: string | null; min_reliability: number | null; max_lead_days: number | null; volume_cap: string | null }) =>
+    request<CompanyDetail>(`/companies/${id}/suppliers/${supplierId}/limits`, { method: "PUT", body: JSON.stringify(body) }),
   coFire: (id: number, employeeId: number) => request<CompanyDetail>(`/companies/${id}/employees/${employeeId}`, { method: "DELETE" }),
   coSupplierSearch: (id: number, category: string) =>
     request<CoSupplierSearch>(`/companies/${id}/suppliers/search`, { method: "POST", body: JSON.stringify({ category }) }),

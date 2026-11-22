@@ -69,12 +69,57 @@ class HireIn(BaseModel):
     idempotency_key: str = Field(min_length=8, max_length=100)
 
 
-class HeadhunterIn(BaseModel):
-    role: str
-    regime: EmployeeRegime = EmployeeRegime.CLT
-    max_salary: Decimal = Pos
-    min_level: EmployeeLevel = EmployeeLevel.JUNIOR
+class RecruiterHireIn(BaseModel):
+    tier: str = Field(min_length=1, max_length=8)                 # BASIC | PRO | ELITE (validado no serviço: 400)
     idempotency_key: str = Field(min_length=8, max_length=100)
+
+
+class SupplierLimitsBriefIn(BaseModel):
+    """Critérios de UMA categoria no briefing (prevalecem sobre o geral)."""
+    max_spend: Decimal | None = None
+    min_reliability: float | None = None
+    max_lead_days: int | None = None
+    volume_cap: Decimal | None = None
+
+
+class RecruiterSettingsIn(BaseModel):
+    """Briefing do contratador (substitui o anterior). Os intervalos são validados no serviço (400 com mensagem clara)."""
+    max_salary: Decimal | None = None
+    schedule: str = "5x2"
+    hours_week: int | None = None
+    regime_policy: str = "BOTH"
+    max_monthly_payroll: Decimal | None = None
+    supplier_max_total_spend: Decimal | None = None
+    supplier_min_reliability: float | None = None
+    supplier_max_lead_days: int | None = None
+    supplier_volume_cap: Decimal | None = None
+    supplier_overrides: dict[str, SupplierLimitsBriefIn] = {}
+
+
+class RecruiterRoleIn(BaseModel):
+    role: str = Field(min_length=1, max_length=40)
+    count: int = Field(ge=1, le=60)
+
+
+class RecruiterTeamIn(BaseModel):
+    roles: list[RecruiterRoleIn] = Field(min_length=1, max_length=40)
+    idempotency_key: str = Field(min_length=8, max_length=100)
+
+
+class RecruiterKeyIn(BaseModel):
+    idempotency_key: str = Field(min_length=8, max_length=100)
+
+
+class RecruiterSuppliersIn(BaseModel):
+    categories: list[str] | None = None
+    idempotency_key: str = Field(min_length=8, max_length=100)
+
+
+class SupplierLimitsIn(BaseModel):
+    max_monthly_spend: Decimal | None = None
+    min_reliability: float | None = None
+    max_lead_days: int | None = None
+    volume_cap: Decimal | None = None
 
 
 class StockIn(BaseModel):
@@ -282,6 +327,7 @@ class EmployeeOut(BaseModel):
     total_cost: Decimal                # custo mensal real: CLT 2x, PJ 1x
     severance_estimate: Decimal        # rescisão se demitir hoje
     lawsuit_risk_pct: float            # chance de processo trabalhista ao demitir hoje (%)
+    lawsuit_history: int = 0           # processos trabalhistas anteriores (0..3)
     hours_week: int
     productivity: Decimal
     status: EmployeeStatus
@@ -438,6 +484,12 @@ class SupplierContractOut(BaseModel):
     is_default: bool
     volume_used: Decimal               # comprado neste mês
     early_end_fine: Decimal            # multa se encerrar hoje
+    max_monthly_spend: Decimal | None = None   # limites do contrato (None = sem limite)
+    volume_cap: Decimal | None = None
+    min_reliability: float | None = None
+    max_lead_days: int | None = None
+    spend_used: Decimal = Decimal("0")         # gasto deste mês no contrato
+    effective_volume: Decimal | None = None    # min(volume do contrato, limite de volume)
 
 
 class SupplierBudgetRowOut(BaseModel):
@@ -453,6 +505,9 @@ class SupplierBudgetRowOut(BaseModel):
     planned_spend: Decimal
     last_actual: Decimal               # gasto realizado no último mês fechado
     max_units_month: Decimal | None
+    max_monthly_spend: Decimal | None = None   # limite de gasto do contrato (previsto x limite)
+    volume_cap: Decimal | None = None
+    over_limit: bool = False
 
 
 class SupplierBudgetOut(BaseModel):
@@ -460,6 +515,8 @@ class SupplierBudgetOut(BaseModel):
     total_planned: Decimal             # total de insumos previsto (só categorias contratadas)
     total_last_actual: Decimal
     last_month: date | None = None
+    total_limit: Decimal | None = None   # gasto máximo total com fornecedores do briefing do contratador (se ativo)
+    over_total: bool = False
 
 
 class SupplyOut(BaseModel):
@@ -510,6 +567,7 @@ class CandidateOut(BaseModel):
     hours_week: int                    # jornada pretendida
     schedule: WorkSchedule             # escala preferida
     monthly_cost_at_asking: Decimal    # custo real mensal se pagar a pretensão (CLT 2x / PJ 1x)
+    lawsuit_history: int = 0           # processos trabalhistas anteriores (0..3)
 
 
 class CandidatesOut(BaseModel):
@@ -622,6 +680,36 @@ class CompanyDetailOut(BaseModel):
     partners: list[dict] = []
     compliance: ComplianceOut | None = None
     supply: SupplyOut | None = None
+    recruiter: "RecruiterOut | None" = None            # contratador (headhunter) opcional
+    recruiter_tiers: list["RecruiterTierOut"] = []     # níveis e custos para o porte da empresa
+
+
+class RecruiterTierOut(BaseModel):
+    tier: str
+    label: str
+    monthly_fee: Decimal
+    commission_pct: float
+    pool: int                          # pessoas avaliadas por vaga
+    offers: int                        # ofertas avaliadas por categoria de fornecedor
+    find_chance_pct: int
+    discount_pct: float
+    success_pct: int
+
+
+class RecruiterOut(BaseModel):
+    tier: str
+    tier_label: str
+    status: str                        # ACTIVE | ENDED
+    hired_month: date
+    ended_month: date | None = None
+    monthly_fee: Decimal
+    commission_pct: float
+    settings: dict                     # briefing (ver RecruiterSettingsIn)
+    pool: int
+    offers: int
+    find_chance_pct: int
+    discount_pct: float
+    success_pct: int
 
 
 class ExpansionResultOut(BaseModel):
@@ -642,11 +730,16 @@ class HireOut(BaseModel):
     company: CompanyDetailOut | None = None
 
 
-class HeadhunterOut(BaseModel):
-    fee: Decimal
-    found: int
+class RecruiterReportOut(BaseModel):
+    kind: str                          # MANDATORY | TEAM | SUPPLIERS
     message: str
-    candidates: list[CandidateOut]
+    replayed: bool = False
+    hired: list[dict] = []             # nome, cargo, regime, salário, jornada, escala, custo mensal, comissão, histórico, motivo do regime
+    skipped: list[dict] = []           # o que NÃO foi contratado e o motivo
+    contracted: list[dict] = []        # fornecedores contratados
+    total_monthly_cost: Decimal
+    total_commission: Decimal
+    total_expected_spend: Decimal
     company: CompanyDetailOut
 
 
@@ -672,3 +765,4 @@ class OverviewOut(BaseModel):
 
 CompanyDetailOut.model_rebuild()
 ExpansionResultOut.model_rebuild()
+RecruiterReportOut.model_rebuild()

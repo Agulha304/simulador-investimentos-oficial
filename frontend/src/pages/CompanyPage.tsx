@@ -1,15 +1,16 @@
 import { Suspense, lazy, useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { EXPANSION_KINDS, ExpansionModal, HireModal, LeaseModal, LoanModal, MoneyModal, RelocateModal, SupplierModal } from "../components/CompanyModals";
+import { RecruiterCard, ReportPanel, SupplierLimitsModal, TeamModal } from "../components/CompanyRecruiter";
 import { StatCard } from "../components/StatCard";
-import { api, type CompanyDetail, type Good, type Listing } from "../services/api";
+import { api, type CoRecruiterReport, type CoSupplierContract, type CompanyDetail, type Good, type Listing } from "../services/api";
 import { cachedGet } from "../services/dataCache";
 import { CATEGORY_LABEL, CO_COST_LABEL, CO_EVENT_LABEL, EDUCATION_LABEL, LEDGER_LINE_LABEL, LEVEL_LABEL, fmtBRL, fmtMonth, fmtPct, parseMoneyInput, trend } from "../lib/format";
 
 const RevenueCostChart = lazy(() => import("../components/charts/CompanyCharts").then((m) => ({ default: m.RevenueCostChart })));
 const NetResultChart = lazy(() => import("../components/charts/CompanyCharts").then((m) => ({ default: m.NetResultChart })));
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : "Erro inesperado");
-type Modal = "contribute" | "distribute" | "hire" | "loan" | "lease" | "relocate" | "supplier" | "expansion" | null;
+type Modal = "contribute" | "distribute" | "hire" | "loan" | "lease" | "relocate" | "supplier" | "expansion" | "team" | "limits" | null;
 // rótulos por tipo de empresa (metrics_kind): produção/varejo têm estoque e produção; serviços têm capacidade de atendimento própria
 const CAP_LABEL: Record<string, string> = {
   "atendimento": "Capacidade de atendimento (clientes/mês)", "serviço": "Capacidade de atendimento (serviços/mês)", "contrato": "Projetos/mês",
@@ -28,6 +29,8 @@ export function CompanyPage() {
   const [modal, setModal] = useState<Modal>(null);
   const [hireRole, setHireRole] = useState<string | undefined>(undefined);
   const [supCat, setSupCat] = useState<string>("");
+  const [report, setReport] = useState<CoRecruiterReport | null>(null);
+  const [limitsCt, setLimitsCt] = useState<CoSupplierContract | null>(null);
   const [personalGoods, setPersonalGoods] = useState<Good[]>([]);
   const [market, setMarket] = useState<Listing[]>([]);
 
@@ -42,6 +45,11 @@ export function CompanyPage() {
   async function act(fn: () => Promise<CompanyDetail>, msg: string) {
     try { done(await fn(), msg); } catch (e) { setError(errMsg(e)); setNotice(null); }
   }
+  async function runReport(fn: () => Promise<CoRecruiterReport>) {
+    try { const r = await fn(); setD(r.company); setReport(r); setModal(null); setError(null); setNotice(null); } catch (e) { setError(errMsg(e)); setNotice(null); setModal(null); }
+  }
+  const hasRecruiter = d.recruiter?.status === "ACTIVE";
+  const recruiterHint = "Contrate um contratador (cartão \"Contratador\") para usar esta opção.";
   const lowRunway = d.runway_months != null && Number(d.runway_months) < 2;
 
   return (
@@ -157,9 +165,12 @@ export function CompanyPage() {
             <li key={p.person_id}><span><b>{p.name}</b> <span className="muted small">· situação {p.finance} · entrou com {fmtBRL(p.contribution)}</span></span>
               <span className={`chip ${p.status === "ACTIVE" ? "up" : "down"}`}>{p.share_pct}% · {p.status === "ACTIVE" ? "sócio(a)" : "deu calote"}</span></li>))}</ul>
         </section>)}
+      <RecruiterCard d={d} act={act} onReport={runReport} onTeam={() => setModal("team")} />
       {d.compliance && (
         <section className="card" aria-label="Cargos obrigatórios">
-          <h2>Obrigatórios</h2>
+          <div className="row"><h2>Obrigatórios</h2>
+            <button type="button" className="btn small ghost" disabled={!hasRecruiter || d.compliance.regular} title={!hasRecruiter ? recruiterHint : d.compliance.regular ? "Nada a contratar" : "O contratador contrata todos os que faltam"}
+              onClick={() => void runReport(() => api.coRecruiterMandatory(c.id))}>Contratar via contratador</button></div>
           {(d.compliance.grace_months ?? 0) > 0 && !d.compliance.regular && (
             <p className="muted small" role="status"><b>Período de adaptação: {d.compliance.grace_months} {d.compliance.grace_months === 1 ? "mês restante" : "meses restantes"}</b> — contrate os cargos obrigatórios antes que acabe.</p>)}
           <ul className="list-plain">{d.compliance.required.map((q) => (
@@ -186,18 +197,21 @@ export function CompanyPage() {
               return (
                 <tr key={r.category}>
                   <td><b>{r.label}</b><br /><span className="muted small">{Math.round(Number(r.weight) * 100)}% do custo</span></td>
-                  <td>{r.supplier ?? <span className="tone-down">sem contrato</span>}{ct && <><br /><span className="muted small">mín. {ct.min_monthly_order} · até {ct.max_units_month} {ct.unit}/mês · confiab. {Math.round(ct.reliability * 100)}% · prazo {ct.lead_days} d{ct.is_default ? " · contrato padrão" : ""}</span></>}</td>
+                  <td>{r.supplier ?? <span className="tone-down">sem contrato</span>}{ct && <><br /><span className="muted small">mín. {ct.min_monthly_order} · até {ct.effective_volume ?? ct.max_units_month} {ct.unit}/mês · confiab. {Math.round(ct.reliability * 100)}% · prazo {ct.lead_days} d{ct.is_default ? " · contrato padrão" : ""}</span>
+                    {(ct.max_monthly_spend != null || ct.volume_cap != null || ct.min_reliability != null || ct.max_lead_days != null) && <><br /><span className="muted small">limites: {[ct.max_monthly_spend != null ? `gasto até ${fmtBRL(ct.max_monthly_spend)}/mês (gasto no mês: ${fmtBRL(ct.spend_used ?? "0")})` : "", ct.volume_cap != null ? `volume até ${ct.volume_cap}` : "", ct.min_reliability != null ? `confiab. mín. ${Math.round(ct.min_reliability * 100)}%` : "", ct.max_lead_days != null ? `prazo até ${ct.max_lead_days} d` : ""].filter(Boolean).join(" · ")}</span></>}</>}</td>
                   <td className="r num">{fmtBRL(r.unit_price)}{r.estimated ? <span className="muted small"> (ref.)</span> : ""}<br /><span className="muted small">/{r.unit}</span></td>
                   <td className="r num">{r.planned_volume} {r.unit}</td>
-                  <td className="r num">{r.estimated ? <span className="muted">{fmtBRL(r.planned_spend)} (estimativa)</span> : fmtBRL(r.planned_spend)}</td>
+                  <td className="r num">{r.estimated ? <span className="muted">{fmtBRL(r.planned_spend)} (estimativa)</span> : fmtBRL(r.planned_spend)}{r.max_monthly_spend != null && <><br /><span className={`small ${r.over_limit ? "tone-down" : "muted"}`}>limite {fmtBRL(r.max_monthly_spend)}{r.over_limit ? " — previsto acima do limite: a reposição trava" : ""}</span></>}</td>
                   <td className="r num">{d.supply!.budget.last_month ? fmtBRL(r.last_actual) : "—"}</td>
                   <td className="r">
                     {!ct && <button className="btn small ghost" onClick={() => { setSupCat(r.category); setModal("supplier"); }}>Procurar fornecedores</button>}
+                    {ct && <button className="link-btn" onClick={() => { setLimitsCt(ct); setModal("limits"); }}>limites</button>}
                     {ct && <button className="link-btn" onClick={() => window.confirm(`Encerrar o contrato com ${ct.name}?${Number(ct.early_end_fine) > 0 ? `\nMulta por encerrar antes de 3 meses: ${fmtBRL(ct.early_end_fine)}.` : "\nSem multa."}\nSem contrato a categoria não é reposta${c.metrics_kind === "SERVICE" ? " e a operação fica bloqueada" : ""}.`) && act(() => api.coSupplierEnd(c.id, ct.id), "Contrato encerrado.")}>encerrar</button>}
                   </td>
                 </tr>);
             })}</tbody>
-            <tfoot><tr><td colSpan={4}><b>Total de insumos</b> (categorias contratadas)</td><td className="r num"><b>{fmtBRL(d.supply.budget.total_planned)}</b></td><td className="r num"><b>{d.supply.budget.last_month ? fmtBRL(d.supply.budget.total_last_actual) : "—"}</b></td><td /></tr></tfoot>
+            <tfoot><tr><td colSpan={4}><b>Total de insumos</b> (categorias contratadas)</td><td className="r num"><b>{fmtBRL(d.supply.budget.total_planned)}</b></td><td className="r num"><b>{d.supply.budget.last_month ? fmtBRL(d.supply.budget.total_last_actual) : "—"}</b></td><td /></tr>
+              {d.supply.budget.total_limit != null && <tr><td colSpan={4}>Gasto máximo total (briefing do contratador)</td><td className={`r num ${d.supply.budget.over_total ? "tone-down" : ""}`}>{fmtBRL(d.supply.budget.total_limit)}{d.supply.budget.over_total ? " — previsto acima" : ""}</td><td colSpan={2} /></tr>}</tfoot>
           </table></div>
           <p className="muted small" style={{ margin: 0 }}>
             Previsto = vendas esperadas do mês ({d.expected_demand} de demanda, limitadas pela equipe e pelos fornecedores) × consumo por venda × preço contratado.
@@ -208,14 +222,16 @@ export function CompanyPage() {
       )}
 
       <section className="card">
-        <div className="row"><h2>Funcionários</h2><button className="btn small ghost" onClick={() => { setHireRole(undefined); setModal("hire"); }}>+ Contratar</button></div>
+        <div className="row"><h2>Funcionários</h2><span className="row-gap">
+          <button className="btn small ghost" onClick={() => { setHireRole(undefined); setModal("hire"); }}>+ Contratar</button>
+          <button className="btn small ghost" disabled={!hasRecruiter} title={hasRecruiter ? "Escolha quantos de cada área" : recruiterHint} onClick={() => setModal("team")}>Contratar via contratador</button></span></div>
         {d.employees.length === 0 && <div className="empty">Nenhum funcionário. A empresa nasce sem equipe: sem funcionários produtivos só o dono produz ({d.expected_capacity} /mês).</div>}
         {d.employees.length > 0 && (
           <div className="table-wrap"><table>
             <thead><tr><th>Funcionário</th><th>Regime</th><th title={SCHEDULE_HELP}>Escala</th><th>Escolaridade</th><th>Nível</th><th className="r">Salário negociado</th><th className="r">Custo real/mês</th><th>Situação</th><th /></tr></thead>
             <tbody>{d.employees.map((e) => (
               <tr key={e.id} className={e.status === "ACTIVE" ? "" : "muted"}>
-                <td><b>{e.name || e.role_label}</b><br /><span className="muted small">{e.role_label} · {e.experience_years} ano(s) exp.</span></td>
+                <td><b>{e.name || e.role_label}</b><br /><span className="muted small">{e.role_label} · {e.experience_years} ano(s) exp.{(e.lawsuit_history ?? 0) > 0 ? ` · histórico: ${e.lawsuit_history} processo${(e.lawsuit_history ?? 0) > 1 ? "s" : ""} anterior${(e.lawsuit_history ?? 0) > 1 ? "es" : ""}` : ""}</span></td>
                 <td><span className={`chip ${e.regime === "CLT" ? "up" : "down"}`}>{e.regime}</span></td>
                 <td>{e.schedule} <span className="muted small">{e.hours_week} h</span></td><td>{EDUCATION_LABEL[e.education] ?? e.education_label}</td><td>{LEVEL_LABEL[e.level]}</td>
                 <td className="r num">{fmtBRL(e.salary)}</td><td className="r num">{fmtBRL(e.total_cost)}<br /><span className="muted small">{e.regime === "CLT" ? "2× o salário" : "1× o salário"}</span></td>
@@ -341,7 +357,10 @@ export function CompanyPage() {
       {modal === "distribute" && <MoneyModal title="Distribuir lucros" label="Valor (R$)" cta="Distribuir"
         hint={`Lucro distribuível: ${fmtBRL(d.distributable_profit)} (limitado também ao caixa). Sua parte (${c.owner_share_pct}%) entra na conta pessoal e a empresa registra a saída. Não é receita operacional.`}
         run={(a) => api.coDistribute(c.id, a)} onClose={() => setModal(null)} onDone={(x) => done(x, "Lucros distribuídos.")} />}
-      {modal === "hire" && <HireModal d={d} initialRole={hireRole} onClose={() => setModal(null)} onChange={(x) => setD(x)} onDone={(x, m) => done(x, m)} />}
+      {modal === "hire" && <HireModal d={d} initialRole={hireRole} onClose={() => setModal(null)} onDone={(x, m) => done(x, m)} />}
+      {modal === "team" && <TeamModal d={d} onClose={() => setModal(null)} onReport={runReport} />}
+      {modal === "limits" && limitsCt && <SupplierLimitsModal d={d} ct={limitsCt} onClose={() => setModal(null)} onDone={(x) => done(x, "Limites do contrato salvos.")} />}
+      {report && <ReportPanel r={report} onClose={() => setReport(null)} />}
       {modal === "supplier" && <SupplierModal d={d} category={supCat} onClose={() => setModal(null)} onDone={(x, m) => done(x, m)} />}
       {modal === "expansion" && <ExpansionModal d={d} onClose={() => setModal(null)} onDone={(x, m) => done(x, m)} />}
       {modal === "loan" && <LoanModal d={d} onClose={() => setModal(null)} onDone={(x) => done(x, "Empréstimo contratado.")} />}

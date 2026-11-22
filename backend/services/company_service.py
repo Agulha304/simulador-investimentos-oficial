@@ -21,8 +21,9 @@ from backend.models import (
     AccountKind, AmortizationSystem, Company, CompanyChannel, SiteMode, CompanyCost, CompanyEvent, CompanyEventType, CompanyLease, CompanyLoan,
     CandidateBlock, CompanyLoanInstallment, CompanyMonth, CompanyPartner, CompanySegment, CompanySize, CompanyStatus, Employee, EmployeeLevel, EmployeeStatus,
     EmployeeRegime, EntryOrigin, FinanceAccount, FlowKind, Frequency, Good, GoodCategory, GoodCost, GoodEvent, GoodEventType, GoodStatus,
-    InstallmentStatus, InventoryItem, CompanySupplier, CompanyUnit, LeaseKind, LedgerEntry, LoanStatus, Occupancy, Person, RealEstateDetails, SimMonth, WorkSchedule,
+    InstallmentStatus, InventoryItem, CompanyRecruiter, CompanySupplier, CompanyUnit, LeaseKind, LedgerEntry, LoanStatus, Occupancy, Person, RealEstateDetails, SimMonth, WorkSchedule,
 )
+from backend.services import company_recruiter as recruiter
 from backend.services import company_rules as rules
 from backend.services import company_supply as supply
 from backend.services import company_taxes
@@ -98,7 +99,17 @@ def monthly_obligations(db: Session, c: Company) -> Decimal:
     payroll = sum((employee_cost(e) for e in _employees(db, c)), ZERO) + c.owner_salary
     fixed = sum((x.amount * (c.units if x.scales_with_units else 1) for x in db.scalars(
         select(CompanyCost).where(CompanyCost.company_id == c.id, CompanyCost.active.is_(True)))), ZERO)
-    return quantize_money(payroll + fixed + _rent(db, c, seg))
+    return quantize_money(payroll + fixed + _rent(db, c, seg) + recruiter_fee(db, c))
+
+
+def active_recruiter(db: Session, c: Company) -> CompanyRecruiter | None:
+    return db.scalar(select(CompanyRecruiter).where(CompanyRecruiter.company_id == c.id, CompanyRecruiter.status == "ACTIVE"))
+
+
+def recruiter_fee(db: Session, c: Company) -> Decimal:
+    """Taxa mensal do contratador ativo (0 sem contratador): entra nas obrigações mensais e no runway."""
+    r = active_recruiter(db, c)
+    return recruiter.monthly_fee(r.tier, c.size) if r is not None else ZERO
 
 
 def employee_cost(e: Employee) -> Decimal:
@@ -376,42 +387,21 @@ def hire(db: Session, user_id: int, month: SimMonth, company_id: int, *, candida
             f"RISCO: após contratar, o caixa cobre apenas {months_cover:.1f} mês(es) de custos fixos e folha "
             f"(novo custo mensal total {quantize_money(obligations)}). Confirme explicitamente para contratar assim mesmo.")
     _post(db, c, ref, kind=FlowKind.EXPENSE, amount=cost, desc=f"Custo de contratação: {role.label} ({cand.name})", line="HIRING", key=hire_key)
-    e = Employee(company_id=c.id, role=role.key, level=cand.level, salary=salary, hours_week=hours_week, productivity=cand.productivity,
-                 hired_on=ref, name=cand.name, regime=regime, schedule=schedule, education=cand.education,
-                 experience_years=cand.experience_years)
-    db.add(e)
+    _create_employee(db, c, cand, role, salary, hours_week, schedule, regime, ref)
     _block(db, c, cand, ref, "HIRED")
-    _event(db, c, ref, CompanyEventType.HIRE,
-           f"Contratado: {cand.name}, {role.label} ({cand.level.value}, {regime.value}, {schedule.value}), salário {salary}", salary)
     return HireResult("ACCEPTED", offer.message)
 
 
-def headhunter(db: Session, user_id: int, month: SimMonth, company_id: int, *, role_key: str, regime: EmployeeRegime,
-               max_salary: Decimal, min_level: EmployeeLevel, idempotency_key: str) -> tuple[list[team.Candidate], Decimal]:
-    """Briefing -> até 3 candidatos que cumprem o briefing. Honorário = 1x o salário-teto; se nenhum servir, metade do honorário.
-    Idempotente: a mesma chave não cobra de novo (a lista é determinística)."""
-    require_open(month)
-    c = get_company(db, user_id, company_id, lock=True)
-    _active(c)
-    role = _role(rules.SEGMENTS[c.segment], role_key, c.size)
-    max_salary = quantize_money(max_salary)
-    if max_salary <= 0:
-        raise FinanceError("informe o salário máximo do briefing")
-    blocked = _blocked(db, c)
-    found = [x for x in team.headhunter_search(_seed(db, user_id), c.id, month.ref_month, role, regime, max_salary, min_level)
-             if x.id not in blocked]
-    fee = quantize_money(max_salary * team.HEADHUNTER_FEE_MONTHS * (1 if found else team.HEADHUNTER_EMPTY_FEE_FACTOR))
-    key = f"co:{c.id}:hh:{idempotency_key}"
-    if _replayed(db, key):
-        return found, fee
-    balance = cash(db, c)
-    if balance < fee:
-        raise FinanceError(f"a empresa não tem caixa para o honorário do headhunter ({fee}); caixa atual: {balance}")
-    _post(db, c, month.ref_month, kind=FlowKind.EXPENSE, amount=fee, desc=f"Honorário do headhunter: {role.label}", line="HIRING", key=key)
-    _event(db, c, month.ref_month, CompanyEventType.HIRE,
-           f"Headhunter contratado para {role.label} ({regime.value}, até {max_salary}): "
-           + (f"{len(found)} candidato(s)" if found else "nenhum candidato serviu ao briefing (honorário pela metade)"), fee)
-    return found, fee
+def _create_employee(db: Session, c: Company, cand: team.Candidate, role: rules.Role, salary: Decimal, hours_week: int,
+                     schedule: WorkSchedule, regime: EmployeeRegime, ref: date, via: str = "") -> Employee:
+    e = Employee(company_id=c.id, role=role.key, level=cand.level, salary=salary, hours_week=hours_week, productivity=cand.productivity,
+                 hired_on=ref, name=cand.name, regime=regime, schedule=schedule, education=cand.education,
+                 experience_years=cand.experience_years, lawsuit_history=cand.lawsuit_history)
+    db.add(e)
+    db.flush()
+    _event(db, c, ref, CompanyEventType.HIRE,
+           f"Contratado{via}: {cand.name}, {role.label} ({cand.level.value}, {regime.value}, {schedule.value}), salário {salary}", salary)
+    return e
 
 
 def _next_key(db: Session, c: Company) -> int:
@@ -437,7 +427,7 @@ def fire(db: Session, user_id: int, month: SimMonth, company_id: int, employee_i
     _event(db, c, ref, CompanyEventType.FIRE,
            f"Desligado: {e.name or e.role} ({e.regime.value}), rescisão {severance}" if severance > 0
            else f"Desligado: {e.name or e.role} ({e.regime.value}), sem rescisão", severance)
-    p = team.lawsuit_probability(e.regime, e.hours_week, e.schedule, tenure)
+    p = team.lawsuit_probability(e.regime, e.hours_week, e.schedule, tenure, e.lawsuit_history)
     if hash01(_seed(db, user_id), "lawsuit", c.id, e.id, f"{ref:%Y-%m}") < p:
         who = e.name or e.role
         ev = economy_service.spawn_company_event(
@@ -474,10 +464,40 @@ def missing_supply(seg: rules.Segment, contracts: dict[str, CompanySupplier]) ->
     return [x for x in seg.supply_categories if x.key not in contracts]
 
 
+def effective_volume(sup: CompanySupplier) -> Decimal:
+    """Volume mensal do contrato: o menor entre o que o fornecedor aguenta/contratado e o limite de volume do contrato (se houver)."""
+    return min(sup.max_units_month, sup.volume_cap) if sup.volume_cap is not None else sup.max_units_month
+
+
 def volume_left(sup: CompanySupplier, ref: date) -> Decimal:
-    """Volume que o fornecedor ainda entrega no mês (o contador zera a cada mês)."""
+    """Volume que o fornecedor ainda entrega no mês (o contador zera a cada mês), já respeitando o limite de volume do contrato."""
     used = sup.volume_used if sup.volume_month == ref else ZERO
-    return max(sup.max_units_month - used, ZERO)
+    return max(effective_volume(sup) - used, ZERO)
+
+
+def spend_left(sup: CompanySupplier, ref: date) -> Decimal | None:
+    """Quanto ainda pode ser gasto no mês neste contrato (None = sem limite de gasto)."""
+    if sup.max_monthly_spend is None:
+        return None
+    used = sup.spend_used if sup.volume_month == ref else ZERO
+    return max(sup.max_monthly_spend - used, ZERO)
+
+
+def _roll_usage(sup: CompanySupplier, ref: date) -> None:
+    """Zera os contadores do mês (volume e gasto) quando o mês muda."""
+    if sup.volume_month != ref:
+        sup.volume_used = ZERO
+        sup.spend_used = ZERO
+        sup.volume_month = ref
+
+
+def limit_note(sup: CompanySupplier) -> str:
+    bits = []
+    if sup.max_monthly_spend is not None:
+        bits.append(f"gasto máximo de {sup.max_monthly_spend}/mês")
+    if sup.volume_cap is not None:
+        bits.append(f"volume máximo de {sup.volume_cap}/mês")
+    return ", ".join(bits)
 
 
 def _price_mult(db: Session, c: Company, ref: date) -> Decimal:
@@ -557,17 +577,61 @@ def negotiate_supplier(db: Session, user_id: int, month: SimMonth, company_id: i
         return SupplierResult("REFUSED", deal.message)
     if deal.status == "COUNTER":
         return SupplierResult("COUNTER", deal.message, deal.counter_offer)
-    sup = CompanySupplier(company_id=c.id, category=offer.category, name=offer.name, unit_price=deal.price, reference_price=cat.ref_price,
+    sup = _sign_contract(db, c, offer, cat, deal.price, volume, ref, idempotency_key)
+    return SupplierResult("ACCEPTED", deal.message, contract=sup)
+
+
+def _sign_contract(db: Session, c: Company, offer: supply.SupplierOffer, cat: rules.SupplyCategory, price: Decimal, volume: Decimal, ref: date,
+                   idempotency_key: str, *, limits: recruiter.Limits | None = None, via: str = "") -> CompanySupplier:
+    """Cria o contrato ativo (a oferta já foi aceita). `limits` = critérios/limites guardados no contrato (contratador)."""
+    sup = CompanySupplier(company_id=c.id, category=offer.category, name=offer.name, unit_price=price, reference_price=cat.ref_price,
                           min_monthly_order=offer.min_monthly_order, max_units_month=volume, reliability=D(str(offer.reliability)),
                           lead_days=offer.lead_days, status="ACTIVE", started_month=ref, term_months=supply.CONTRACT_TERM_MONTHS,
                           idempotency_key=idempotency_key)
+    if limits is not None:
+        sup.max_monthly_spend, sup.volume_cap = limits.max_spend, limits.volume_cap
+        sup.min_reliability = D(str(limits.min_reliability)) if limits.min_reliability is not None else None
+        sup.max_lead_days = limits.max_lead_days
     db.add(sup)
     _block(db, c, _TokenBlock(offer.id), ref, "SIGNED")
     db.flush()
     _event(db, c, ref, CompanyEventType.STOCK,
-           f"Fornecedor contratado ({cat.label}): {offer.name}, {deal.price} por {cat.unit}, até {volume} {cat.unit}/mês, "
-           f"confiabilidade {round(offer.reliability * 100)}%", deal.price)
-    return SupplierResult("ACCEPTED", deal.message, contract=sup)
+           f"Fornecedor contratado{via} ({cat.label}): {offer.name}, {price} por {cat.unit}, até {volume} {cat.unit}/mês, "
+           f"confiabilidade {round(offer.reliability * 100)}%", price)
+    return sup
+
+
+def set_supplier_limits(db: Session, user_id: int, month: SimMonth, company_id: int, supplier_id: int, *, max_monthly_spend: Decimal | None,
+                        min_reliability: float | None, max_lead_days: int | None, volume_cap: Decimal | None) -> CompanySupplier:
+    """Limites do contrato (substitui os quatro; None = sem limite). Gasto e volume valem nas compras (manual e reposição automática);
+    confiabilidade mínima e prazo máximo são critérios do contratador ao renovar/trocar o fornecedor."""
+    require_open(month)
+    c = get_company(db, user_id, company_id, lock=True)
+    _active(c)
+    sup = db.get(CompanySupplier, supplier_id)
+    if sup is None or sup.company_id != c.id:
+        raise NotFoundError("contrato de fornecedor não encontrado")
+    if sup.status != "ACTIVE":
+        raise ConflictError("este contrato já foi encerrado")
+    try:
+        if max_monthly_spend is not None and max_monthly_spend <= 0:
+            raise ValueError("o gasto máximo mensal deve ser maior que zero")
+        if volume_cap is not None and volume_cap <= 0:
+            raise ValueError("o volume máximo deve ser maior que zero")
+        if min_reliability is not None and not 0 < min_reliability <= 1:
+            raise ValueError("a confiabilidade mínima deve ficar entre 0 e 1 (ex.: 0,9 = 90%)")
+        if max_lead_days is not None and not 1 <= max_lead_days <= recruiter.MAX_LEAD_LIMIT:
+            raise ValueError(f"o prazo máximo deve ficar entre 1 e {recruiter.MAX_LEAD_LIMIT} dias")
+    except ValueError as e:
+        raise FinanceError(str(e)) from None
+    sup.max_monthly_spend = quantize_money(max_monthly_spend) if max_monthly_spend is not None else None
+    sup.volume_cap = volume_cap.quantize(D("0.001")) if volume_cap is not None else None
+    sup.min_reliability = D(str(round(min_reliability, 3))) if min_reliability is not None else None
+    sup.max_lead_days = max_lead_days
+    db.flush()
+    _event(db, c, month.ref_month, CompanyEventType.STOCK, f"Limites do contrato com {sup.name} ({sup.category}) atualizados: "
+           + (limit_note(sup) or "sem limites de gasto/volume"))
+    return sup
 
 
 @dataclass(frozen=True)
@@ -623,8 +687,9 @@ def _buy_stock(db: Session, c: Company, item: InventoryItem, qty: Decimal, ref: 
     item.unit_cost = ((item.quantity * item.unit_cost + delivered * price) / new_qty).quantize(D("0.0001"))
     item.quantity = new_qty
     item.supplier = sup.name
-    sup.volume_used = (sup.volume_used if sup.volume_month == ref else ZERO) + delivered
-    sup.volume_month = ref
+    _roll_usage(sup, ref)
+    sup.volume_used += delivered
+    sup.spend_used += total
     return total
 
 
@@ -656,7 +721,14 @@ def buy_stock(db: Session, user_id: int, month: SimMonth, company_id: int, item_
         raise FinanceError(f"{sup.name} exige pedido mínimo de {sup.min_monthly_order} {item.unit}")
     left = volume_left(sup, ref)
     if q > left:
-        raise ConflictError(f"{sup.name} não aguenta esse volume: restam {left} {item.unit} no mês (contrato de {sup.max_units_month} por mês)")
+        capped = sup.volume_cap is not None and sup.volume_cap < sup.max_units_month
+        raise ConflictError(f"{sup.name} não aguenta esse volume: restam {left} {item.unit} no mês "
+                            + (f"(limite de volume do contrato: {sup.volume_cap} por mês)" if capped else f"(contrato de {sup.max_units_month} por mês)"))
+    room_spend = spend_left(sup, ref)
+    cost_est = quantize_money(q * sup.unit_price * rules.quality_cost_mult(float(c.quality)))
+    if room_spend is not None and cost_est > room_spend:
+        raise ConflictError(f"Limite de gasto do contrato atingido: {sup.name} permite no máximo {sup.max_monthly_spend} por mês e restam "
+                            f"{room_spend} (esta compra custaria cerca de {cost_est}). Aumente o limite do contrato ou compre menos.")
     total = _buy_stock(db, c, item, q, ref, f"company:{c.id}:stock:{key}", seg, sup)
     _event(db, c, ref, CompanyEventType.STOCK, f"Compra de {item.name}: {quantity} {item.unit} ({sup.name})", total)
     return item
@@ -672,7 +744,7 @@ def supply_state(db: Session, c: Company, ref: date, contracts: dict[str, Compan
     seg = rules.SEGMENTS[c.segment]
     contracts = contracts if contracts is not None else _contracts(db, c)
     service = seg.metrics_kind == rules.MetricsKind.SERVICE
-    volumes = {k: float(s.max_units_month) * (delivery_status(db, c, s, ref) if service else 1.0) for k, s in contracts.items()}
+    volumes = {k: float(effective_volume(s)) * (delivery_status(db, c, s, ref) if service else 1.0) for k, s in contracts.items()}
     cap = rules.supply_capacity(seg, volumes, missing_is_zero=service)
     return {"missing": missing_supply(seg, contracts), "cap": cap, "failed": [s for s in contracts.values() if delivery_status(db, c, s, ref) < 1]}
 
@@ -754,10 +826,17 @@ def supplier_budget(db: Session, c: Company, ref: date | None = None) -> dict:
                 LedgerEntry.line.in_(["STOCK_PURCHASE", "SUPPLIES"]), LedgerEntry.origin_ref.in_(by_cat[cat.key]))))
         rows.append({"category": cat.key, "label": cat.label, "unit": cat.unit, "weight": cat.weight, "supplier_id": sup.id if sup else None,
                      "supplier": sup.name if sup else None, "unit_price": price, "estimated": sup is None, "planned_volume": volume,
-                     "planned_spend": spend, "last_actual": actual, "max_units_month": sup.max_units_month if sup else None})
+                     "planned_spend": spend, "last_actual": actual, "max_units_month": sup.max_units_month if sup else None,
+                     "max_monthly_spend": sup.max_monthly_spend if sup else None, "volume_cap": sup.volume_cap if sup else None,
+                     "over_limit": bool(sup and sup.max_monthly_spend is not None and spend > sup.max_monthly_spend)})
         total += spend if sup else ZERO
         total_last += actual
-    return {"rows": rows, "total_planned": quantize_money(total), "total_last_actual": quantize_money(total_last), "last_month": last}
+    total_limit = None
+    rec = active_recruiter(db, c)
+    if rec is not None:
+        total_limit = recruiter.settings_from_json(rec.settings, {x.key for x in seg.supply_categories}).supplier_max_total_spend
+    return {"rows": rows, "total_planned": quantize_money(total), "total_last_actual": quantize_money(total_last), "last_month": last,
+            "total_limit": total_limit, "over_total": bool(total_limit is not None and total > total_limit)}
 
 
 def grant_default_suppliers(db: Session, c: Company, ref: date | None = None) -> list[CompanySupplier]:
@@ -1237,8 +1316,9 @@ def _process_company(db: Session, c: Company, month: SimMonth) -> CompanyMonth:
             variable += amount
             _post(db, c, ref, kind=FlowKind.EXPENSE, amount=amount, desc=f"Insumos do serviço: {cat.label} — {sup.name}", line="SUPPLIES",
                   key=f"{k}:supplies:{sup.id}", overdraft=True, origin_ref=_supplier_ref(c, sup))
+            _roll_usage(sup, ref)
             sup.volume_used = D(str(sold)) * cat.per_sale
-            sup.volume_month = ref
+            sup.spend_used = amount
     else:
         variable = quantize_money(revenue * seg.variable_pct / 100 * qmult)
         _post(db, c, ref, kind=FlowKind.EXPENSE, amount=variable, desc="Custos variáveis (frete, taxas, comissões)", line="VARIABLE", key=f"{k}:variable", overdraft=True)
@@ -1272,6 +1352,11 @@ def _process_company(db: Session, c: Company, month: SimMonth) -> CompanyMonth:
     fixed_costs = quantize_money(sum((x.amount * (c.units if x.scales_with_units else 1) for x in db.scalars(
         select(CompanyCost).where(CompanyCost.company_id == c.id, CompanyCost.active.is_(True)))), ZERO))
     _post(db, c, ref, kind=FlowKind.EXPENSE, amount=fixed_costs, desc="Custos fixos (energia, ferramentas, contabilidade)", line="FIXED", key=f"{k}:fixed", overdraft=True)
+    rfee = recruiter_fee(db, c)
+    if rfee > 0:                                          # contratador (headhunter) opcional: taxa mensal por nível, linha FEES
+        rec = active_recruiter(db, c)
+        _post(db, c, ref, kind=FlowKind.EXPENSE, amount=rfee, desc=f"Taxa mensal do contratador ({recruiter.tier_of(rec.tier).label})",
+              line="FEES", key=f"{k}:recruiter", overdraft=True)
     asset_costs = ZERO
     for g in db.scalars(select(Good).where(Good.owner_account_id == c.account_id, Good.status == GoodStatus.ACTIVE)):
         for gc in db.scalars(select(GoodCost).where(GoodCost.good_id == g.id)):
@@ -1315,9 +1400,19 @@ def _process_company(db: Session, c: Company, month: SimMonth) -> CompanyMonth:
             if i.quantity < max(need * D("0.6"), i.min_quantity):
                 price = sup.unit_price * rules.quality_cost_mult(float(c.quality))
                 room = max(rules.storage_cap_qty(seg, c.size, c.units, i, float(c.storage_boost)) - i.quantity, ZERO)      # teto de estoque do porte
-                buy = min(need - i.quantity, room, volume_left(sup, ref))                           # e o volume que o fornecedor aguenta
-                if buy < sup.min_monthly_order:                           # pedido mínimo: sobe até ele se couber no depósito e no volume
-                    buy = sup.min_monthly_order if min(room, volume_left(sup, ref)) >= sup.min_monthly_order else ZERO
+                limit_room = volume_left(sup, ref)                                                   # volume que o fornecedor aguenta/contrato permite
+                spend_room = spend_left(sup, ref)                                                    # e o gasto máximo do contrato
+                if spend_room is not None and price > 0:
+                    limit_room = min(limit_room, spend_room / price)
+                if not seg.fractional:
+                    limit_room = D(math.floor(limit_room))                                           # a compra é arredondada para cima: não estourar o limite
+                room = min(room, limit_room)
+                buy = min(need - i.quantity, room)
+                if buy < sup.min_monthly_order:                           # pedido mínimo: sobe até ele se couber no depósito e nos limites
+                    buy = sup.min_monthly_order if room >= sup.min_monthly_order else ZERO
+                    if buy == 0 and limit_room < sup.min_monthly_order and limit_note(sup):
+                        _event(db, c, ref, CompanyEventType.STOCK,
+                               f"Reposição de {i.name} travada pelo limite do contrato com {sup.name} ({limit_note(sup)}): aumente o limite para repor")
                 affordable = (max(cash(db, c), ZERO) * D("0.9") / price) if price > 0 else D(0)
                 qty = min(buy, affordable)
                 if qty >= sup.min_monthly_order and (qty >= 1 or (seg.fractional and qty > 0)):
