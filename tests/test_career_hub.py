@@ -259,3 +259,66 @@ def test_relationship_reacts_to_activities_with_small_or_big_gains(client, auth_
         assert (res["delta"] < 0) == (res["reaction"] == "DISLIKED") and (after - before == res["delta"] or after in (0, 100))
         seen.add(res["reaction"])
     assert len(seen) >= 2                                                                              # reações variam conforme a atividade e a pessoa
+
+
+# ---------------------------------------------------------------- pedido de aumento POR EMPREGO
+def _add_job(db, game_id, *, kind, title, net, months_ago):
+    from sqlalchemy import select
+
+    from backend.models import CareerJob, Game
+    from backend.services import budget_service as bsvc
+    uid = db.scalar(select(Game.world_user_id).where(Game.id == game_id))
+    month = career_ref = None
+    from backend.services.budget_service import open_month
+    month = open_month(db, uid).ref_month
+    j = CareerJob(user_id=uid, title=title, employer="Teste S.A.", field="comercio", kind=kind, level=1, net=net,
+                  start_month=bsvc.shift_month(month, -months_ago), legacy=False)
+    db.add(j)
+    db.commit()
+    return j.id
+
+
+def test_raise_can_be_asked_per_job_even_when_a_pj_pays_more(client, auth_headers, db, monkeypatch):
+    from backend.services import career_hub as chub
+    g, h = _free_world(client, auth_headers, cash=30000, income=4000, expenses=1500, rent=0, name="Dois empregos", seed=31)
+    _advance(client, h, 7)                                                     # o CLT inicial já tem mais de 6 meses de casa
+    pj = _add_job(db, g["id"], kind="PJ", title="Consultoria", net=D("90000"), months_ago=8)
+    real = chub.job_net
+    monkeypatch.setattr(chub, "job_net", lambda d, j, ref: D("90000") if j.id == pj else real(d, j, ref))   # o PJ é o emprego mais bem pago
+    c = career(client, h)
+    clt = next(x for x in c["jobs"] if x["kind"] == "CLT" and x["status"] == "ACTIVE")
+    pjo = next(x for x in c["jobs"] if x["id"] == pj)
+    assert clt["can_raise"] is True and clt["raise_note"] is None
+    assert pjo["can_raise"] is False and "PJ" in pjo["raise_note"]
+    assert client.post(f"{C}/jobs/{pj}/raise/ask", headers=h).status_code == 409           # PJ não pede aumento
+    r = client.post(f"{C}/jobs/{clt['id']}/raise/ask", headers=h)                           # ANTES do ajuste isto era 409: o "top job" era o PJ
+    assert r.status_code == 200, r.text
+    assert clt["title"] in r.json()["raise_result"]["text"]
+    assert client.post(f"{C}/jobs/{clt['id']}/raise/ask", headers=h).status_code == 409    # intervalo de 6 meses neste emprego
+    after = next(x for x in career(client, h)["jobs"] if x["id"] == clt["id"])
+    assert after["can_raise"] is False and after["raise_ready_in"] == 6
+    assert client.post(f"{C}/jobs/999999/raise/ask", headers=h).status_code == 409         # emprego que não é seu / não existe
+
+
+def test_legacy_raise_endpoint_targets_the_best_clt_job_not_the_top_pj(client, auth_headers, db, monkeypatch):
+    from backend.services import career_hub as chub
+    g, h = _free_world(client, auth_headers, cash=30000, income=4000, expenses=1500, rent=0, name="Legado", seed=32)
+    _advance(client, h, 7)
+    pj = _add_job(db, g["id"], kind="PJ", title="Freela grande", net=D("90000"), months_ago=8)
+    real = chub.job_net
+    monkeypatch.setattr(chub, "job_net", lambda d, j, ref: D("90000") if j.id == pj else real(d, j, ref))
+    assert client.post(f"{C}/raise/ask", headers=h).status_code == 200
+
+
+def test_each_job_has_its_own_six_month_interval(client, auth_headers, db, monkeypatch):
+    from backend.services import career_hub as chub
+    g, h = _free_world(client, auth_headers, cash=30000, income=4000, expenses=1500, rent=0, name="Intervalos", seed=33)
+    _advance(client, h, 7)
+    second = _add_job(db, g["id"], kind="CLT", title="Segundo CLT", net=D("3000"), months_ago=9)
+    real = chub.job_net
+    monkeypatch.setattr(chub, "job_net", lambda d, j, ref: D("3000") if j.id == second else real(d, j, ref))
+    c = career(client, h)
+    first = next(x for x in c["jobs"] if x["kind"] == "CLT" and x["id"] != second and x["status"] == "ACTIVE")
+    assert client.post(f"{C}/jobs/{first['id']}/raise/ask", headers=h).status_code == 200
+    assert client.post(f"{C}/jobs/{first['id']}/raise/ask", headers=h).status_code == 409
+    assert client.post(f"{C}/jobs/{second}/raise/ask", headers=h).status_code == 200       # o outro emprego não foi travado pelo primeiro

@@ -30,6 +30,7 @@ class CareerJob(Base):
     recurring_item_id: Mapped[int | None] = mapped_column(Integer)
     legacy: Mapped[bool] = mapped_column(Boolean, default=False)
     in_resume: Mapped[bool] = mapped_column(Boolean, default=True)
+    raise_asked_month: Mapped[date | None] = mapped_column(Date)                # último pedido de aumento NESTE emprego (intervalo de 6 meses por emprego)
 
 
 class Education(Base):

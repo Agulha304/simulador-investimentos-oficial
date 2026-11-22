@@ -46,8 +46,12 @@ function JobCard({ j, busy, act }: { j: HubJob; busy: boolean; act: Act }) {
       <span>Salário líquido: <b className="num">{fmtBRL(j.net)}</b>/mês</span>
       <ul className="list-plain small">{j.perks.map((p) => <li key={p}><span>✔ {p}</span></li>)}</ul>
       {j.hours > 0 && <span className="muted small">⏱ Consome {j.hours}h livres por mês.</span>}
+      {j.status === "ACTIVE" && !j.can_raise && j.raise_note && <span className="muted small">📈 Aumento: {j.raise_note}{j.raise_ready_in ? ` (faltam ${j.raise_ready_in} mês(es))` : ""}.</span>}
       <div className="row">
         <label className="check"><input type="checkbox" checked={j.in_resume} disabled={busy} onChange={(e) => void act(() => sim.careerResume("job", j.id, e.target.checked))} />Mostrar no currículo</label>
+        {j.status === "ACTIVE" && (
+          <button className="btn primary small" disabled={busy || !j.can_raise} title={j.can_raise ? "Pedir aumento neste emprego" : (j.raise_note ?? "")}
+            onClick={() => void act(() => sim.careerAskRaise(j.id), (r) => r.raise_result ? (r.raise_result.granted ? "🎉 " : "😕 ") + r.raise_result.text : null)}>Pedir aumento</button>)}
         {j.status !== "ENDED" && <button className="btn danger small" disabled={busy} onClick={() => window.confirm(`Pedir demissão de ${j.title}? Você perde esse salário.`) && void act(() => sim.careerQuit(j.id), () => "Você pediu demissão.")}>Pedir demissão</button>}
       </div>
     </div>
@@ -73,8 +77,7 @@ function Now({ c, busy, act }: P) {
       <section className="card stack">
         <h2>📈 Reconhecimento e aumento</h2>
         <div className="row"><span style={{ width: 150 }}>Mérito no trabalho</span><div className="meter-bar" style={{ flex: 1 }}><i style={{ width: `${c.merit}%` }} /></div><b className="num">{c.merit}/{c.merit_needed}+</b></div>
-        <p className="muted small" style={{ margin: 0 }}>Trabalhar bastante (jornada intensa) e tomar boas decisões no trabalho acumula mérito. Com {c.merit_needed} ou mais, a empresa pode dar um aumento por conta própria. Você também pode pedir: a chance hoje é de <b>{c.raise_chance}%</b> e depende do seu mérito (só CLT, a cada 6 meses).</p>
-        <div><button className="btn primary small" disabled={busy || cur.length === 0} onClick={() => void act(sim.careerAskRaise, (r) => r.raise_result ? (r.raise_result.granted ? "🎉 " : "😕 ") + r.raise_result.text : null)}>Pedir aumento</button></div>
+        <p className="muted small" style={{ margin: 0 }}>Trabalhar bastante (jornada intensa) e tomar boas decisões no trabalho acumula mérito. Com {c.merit_needed} ou mais, a empresa pode dar um aumento por conta própria. Você também pode pedir: a chance hoje é de <b>{c.raise_chance}%</b> e depende do seu mérito. O pedido é feito em cada emprego CLT, no botão <b>Pedir aumento</b> do cartão dele (a cada 6 meses por emprego; no PJ você renegocia ao trocar de cliente).</p>
       </section>
       <h2>Empregos atuais</h2>
       {cur.length === 0 && <p className="muted">Nenhum emprego no momento. Use a aba <b>Procurar emprego</b>.</p>}

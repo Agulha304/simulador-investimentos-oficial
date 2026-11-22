@@ -52,7 +52,9 @@ def _job_out(db, j: CareerJob, ref) -> dict:
     clt = j.kind == "CLT"
     perks = (["13º salário", "Férias + 1/3", "FGTS (8% do bruto)"] + ([f"Vale-refeição R$ {j.vr}"] if j.vr > 0 else []) + (["Plano de saúde"] if j.health_plan else [])) if clt \
         else ["Sem 13º, férias, FGTS ou benefícios", "Ganha mais no bolso", "Pode acumular outros trabalhos"]
-    return {"id": j.id, "title": j.title, "employer": j.employer, "field": j.field, "field_label": career_rules.FIELDS[j.field]["label"], "kind": j.kind,
+    can_raise, raise_note, raise_wait = ch.raise_status(j, ref)
+    return {"can_raise": can_raise, "raise_note": raise_note, "raise_ready_in": raise_wait,
+            "id": j.id, "title": j.title, "employer": j.employer, "field": j.field, "field_label": career_rules.FIELDS[j.field]["label"], "kind": j.kind,
             "level_name": H.LEVEL_NAME[j.level], "net": str(ch.job_net(db, j, ref) if status != "ENDED" else j.net), "hired_net": str(j.net), "since": j.start_month.isoformat(),
             "until": j.end_month.isoformat() if j.end_month else None, "status": status, "in_resume": j.in_resume, "hours": j.hours, "perks": perks, "end_reason": j.end_reason}
 
@@ -151,6 +153,15 @@ def work(body: WorkIn, user: CurrentUser, db: DbSession):
 def ask_raise(user: CurrentUser, db: DbSession):
     def go():
         res = ch.ask_raise(db, user.id, bs.ensure_setup(db, user.id))
+        return {**_overview(db, user.id), "raise_result": res}
+    return _run(db, go)
+
+
+@router.post("/jobs/{job_id}/raise/ask")
+def ask_raise_for_job(job_id: int, user: CurrentUser, db: DbSession):
+    """Pede aumento NESTE emprego (cada emprego CLT tem o seu botão e o seu intervalo de 6 meses)."""
+    def go():
+        res = ch.ask_raise(db, user.id, bs.ensure_setup(db, user.id), job_id)
         return {**_overview(db, user.id), "raise_result": res}
     return _run(db, go)
 

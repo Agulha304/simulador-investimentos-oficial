@@ -439,9 +439,25 @@ RAISE_COOLDOWN = 6                     # meses entre aumentos / pedidos
 MERIT_NEEDED = 60
 
 
-def _top_job(db: Session, user_id: int, ref: date) -> CareerJob | None:
-    act = [j for j in active_jobs(db, user_id, ref)]
+def _top_job(db: Session, user_id: int, ref: date, kind: str | None = None) -> CareerJob | None:
+    act = [j for j in active_jobs(db, user_id, ref) if kind is None or j.kind == kind]
     return max(act, key=lambda j: job_net(db, j, ref), default=None)
+
+
+def raise_status(j: CareerJob, ref: date) -> tuple[bool, str | None, int]:
+    """Pode pedir aumento NESTE emprego agora? (ok, motivo se não, meses até poder). Vale por emprego."""
+    if j.start_month > ref or (j.end_month is not None and j.end_month < ref):
+        return False, "emprego não está ativo", 0
+    if j.kind == "PJ":
+        return False, "no PJ você renegocia o contrato ao trocar de cliente: aumento só em emprego CLT", 0
+    wait_tenure = max(0, RAISE_COOLDOWN - budget_service.months_between(j.start_month, ref))
+    wait_ask = max(0, RAISE_COOLDOWN - budget_service.months_between(j.raise_asked_month, ref)) if j.raise_asked_month else 0
+    wait = max(wait_tenure, wait_ask)
+    if wait_tenure and wait_tenure >= wait_ask:
+        return False, "espere pelo menos 6 meses no emprego antes de pedir aumento", wait
+    if wait_ask:
+        return False, "você já pediu aumento neste emprego há pouco tempo: espere 6 meses", wait
+    return True, None, 0
 
 
 def raise_salary(db: Session, user_id: int, job: CareerJob, effective: date, pct: float) -> None:
@@ -477,35 +493,39 @@ def raise_chance(db: Session, p: LifeProfile, ref: date) -> int:
     return int(round(max(0.05, min(0.70, ch)) * 100))
 
 
-def ask_raise(db: Session, user_id: int, month: SimMonth) -> dict:
+def ask_raise(db: Session, user_id: int, month: SimMonth, job_id: int | None = None) -> dict:
+    """Pede aumento em UM emprego (`job_id`); sem `job_id`, no CLT de maior salário. Cada emprego tem o seu intervalo de 6 meses."""
     budget_service.require_open(month)
     ensure_jobs(db, user_id, month)
     p = _profile(db, user_id)
     ref = month.ref_month
-    job = _top_job(db, user_id, ref)
-    if job is None:
-        raise ConflictError("você não tem emprego para pedir aumento")
-    if job.kind == "PJ":
-        raise ConflictError("no PJ você renegocia o contrato ao trocar de cliente: aumento só em emprego CLT")
-    if budget_service.months_between(job.start_month, ref) < RAISE_COOLDOWN:
-        raise ConflictError("espere pelo menos 6 meses no emprego antes de pedir aumento")
-    if p.raise_asked_month and budget_service.months_between(p.raise_asked_month, ref) < RAISE_COOLDOWN:
-        raise ConflictError("você já pediu aumento há pouco tempo: espere 6 meses")
+    if job_id is not None:
+        job = next((j for j in active_jobs(db, user_id, ref) if j.id == job_id), None)
+        if job is None:
+            raise ConflictError("emprego não encontrado entre os seus empregos atuais")
+    else:
+        job = _top_job(db, user_id, ref, kind="CLT") or _top_job(db, user_id, ref)
+        if job is None:
+            raise ConflictError("você não tem emprego para pedir aumento")
+    ok_ask, why, _wait = raise_status(job, ref)
+    if not ok_ask:
+        raise ConflictError(why or "não é possível pedir aumento agora")
     chance = raise_chance(db, p, ref)
     p.raise_asked_month = ref
-    ok = hash01("ask-raise", user_id, ref.isoformat()) * 100 < chance
+    job.raise_asked_month = ref
+    ok = hash01("ask-raise", user_id, job.id, ref.isoformat()) * 100 < chance
     if ok:
-        pct = round(5 + 7 * hash01("raise-pct", user_id, ref.isoformat()), 1)
+        pct = round(5 + 7 * hash01("raise-pct", user_id, job.id, ref.isoformat()), 1)
         raise_salary(db, user_id, job, budget_service.shift_month(ref, 1), pct)
         p.last_raise_month, p.merit = ref, max(0, (p.merit or 0) - 25)
         p.satisfaction = ls._clamp(p.satisfaction + 4)
-        text = f"Seu chefe concedeu um aumento de {pct:.1f}% a partir do mês que vem!"
+        text = f"Seu chefe em {job.title} concedeu um aumento de {pct:.1f}% a partir do mês que vem!"
     else:
         pct = 0.0
         add_merit(p, -5)
         ls._hit_mood(p, -2, -3)
-        text = "Seu chefe disse que agora não dá. Mostre mais resultado e tente de novo em 6 meses."
-    ls.log(db, user_id, ref, "RAISE_ASK", f"Pedido de aumento: {text}")
+        text = f"Seu chefe em {job.title} disse que agora não dá. Mostre mais resultado e tente de novo em 6 meses."
+    ls.log(db, user_id, ref, "RAISE_ASK", f"Pedido de aumento ({job.title}): {text}")
     db.flush()
     ls.sync_month(db, user_id, month)
     return {"granted": ok, "pct": pct, "chance": chance, "text": text}
@@ -517,8 +537,8 @@ def merit_raise_on_open(db: Session, user_id: int, new_month: SimMonth) -> None:
     if p is None or (p.merit or 0) < MERIT_NEEDED:
         return
     ref = new_month.ref_month
-    job = _top_job(db, user_id, ref)
-    if job is None or job.kind != "CLT" or months_since_raise(db, p, ref) < RAISE_COOLDOWN:
+    job = _top_job(db, user_id, ref, kind="CLT")                    # o melhor emprego CLT (um PJ mais bem pago não bloqueia o aumento do CLT)
+    if job is None or months_since_raise(db, p, ref) < RAISE_COOLDOWN:
         return
     if hash01("merit-raise", user_id, ref.isoformat()) > 0.45:
         return

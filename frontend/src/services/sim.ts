@@ -122,7 +122,7 @@ export interface BudgetImpact {
   effects: { label: string; text: string; spend: string | null; level: string | null; health: number; wellbeing: number; satisfaction: number; quality: number }[];
 }
 
-export interface HubJob { id: number; title: string; employer: string; field: string; field_label: string; kind: "CLT" | "PJ"; level_name: string; net: string; hired_net: string; since: string; until: string | null; status: "ACTIVE" | "PENDING" | "ENDED"; in_resume: boolean; hours: number; perks: string[]; end_reason: string | null }
+export interface HubJob { id: number; title: string; employer: string; field: string; field_label: string; kind: "CLT" | "PJ"; level_name: string; net: string; hired_net: string; since: string; until: string | null; status: "ACTIVE" | "PENDING" | "ENDED"; in_resume: boolean; hours: number; perks: string[]; end_reason: string | null; can_raise?: boolean; raise_note?: string | null; raise_ready_in?: number }
 export interface JobOffer { key: string; field: string; field_label: string; level: number; level_name: string; need: number; title: string; employer: string; chance: number; applied: string | null; clt: { net: number; gross: number; vr: number; health_plan: boolean; fgts_month: number }; pj: { net: number } }
 export interface HubApplication { id: number; title: string; employer: string; status: "APPROVED" | "REJECTED" | "ACCEPTED"; chance: number; offer: JobOffer; can_accept: boolean }
 export interface CareerHub {
@@ -151,7 +151,7 @@ export const sim = {
   careerQuit: (id: number) => request<CareerHub>(`/career/jobs/${id}/quit`, post()),
   careerResume: (kind: string, id: number, in_resume: boolean) => request<CareerHub>("/career/resume", put({ kind, id, in_resume })),
   careerWork: (work_level: string) => request<CareerHub>("/career/work", put({ work_level })),
-  careerAskRaise: () => request<CareerHub>("/career/raise/ask", post()),
+  careerAskRaise: (jobId?: number) => request<CareerHub>(jobId != null ? `/career/jobs/${jobId}/raise/ask` : "/career/raise/ask", post()),
   careerFgts: () => request<CareerHub>("/career/fgts/withdraw", post()),
   freelance: (field: string) => request<{ field: string; free_hours: number; score: number; gigs: Gig[] }>(`/career/freelance?field=${field}`),
   freelanceAccept: (field: string, key: string) => request<CareerHub>("/career/freelance/accept", post({ field, key })),
