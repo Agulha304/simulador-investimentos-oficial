@@ -83,6 +83,18 @@ class StockIn(BaseModel):
     idempotency_key: str = Field(min_length=8, max_length=100)
 
 
+class SupplierSearchIn(BaseModel):
+    category: str = Field(min_length=1, max_length=32)
+
+
+class SupplierNegotiateIn(BaseModel):
+    """Proposta de preço. Só o id do fornecedor identifica quem é: lista, piso, volume máximo e confiabilidade são recalculados no servidor."""
+    supplier_id: str = Field(min_length=3, max_length=80)
+    unit_price: Decimal = Field(gt=0, max_digits=14, decimal_places=4)
+    monthly_volume: Decimal | None = Field(None, gt=0, max_digits=16, decimal_places=3)    # padrão: tudo o que o fornecedor aguenta
+    idempotency_key: str = Field(min_length=8, max_length=100)
+
+
 class RelocateIn(BaseModel):
     location: str = Field(min_length=1, max_length=32)
     site_mode: SiteMode | None = None
@@ -96,8 +108,17 @@ class RelocateQuoteIn(BaseModel):
     size: CompanySize | None = None
 
 
-class ExpandIn(BaseModel):
-    kind: str = Field(pattern="^(CAPACITY|NEW_UNIT|LARGER_PREMISES|MARKETING)$")
+class ExpansionOptionsIn(BaseModel):
+    kind: str = Field(pattern="^(CAPACITY|NEW_UNIT|QUALITY|MARKETING|LARGER_PREMISES)$")
+    tier: str = Field(pattern="^(BARATO|MEDIO|CARO)$")
+
+
+class ExpansionExecuteIn(ExpansionOptionsIn):
+    option_key: str = Field(min_length=1, max_length=40)
+    channel: CompanyChannel | None = None             # só NEW_UNIT
+    site_mode: SiteMode | None = None                 # só NEW_UNIT
+    location: str | None = Field(None, max_length=32)  # só NEW_UNIT
+    idempotency_key: str = Field(min_length=8, max_length=100)
 
 
 class LeaseIn(BaseModel):
@@ -150,6 +171,15 @@ class SegmentTaxInfoOut(BaseModel):
     simplifications: list[str] = []
 
 
+class SupplyCategoryOut(BaseModel):
+    key: str
+    label: str
+    unit: str
+    weight: Decimal                    # fatia do custo do produto/serviço (soma 1,0)
+    per_sale: Decimal                  # consumo por unidade vendida
+    reference_price: Decimal           # preço de referência por unidade de compra
+
+
 class SegmentOut(BaseModel):
     key: CompanySegment
     label: str
@@ -164,6 +194,7 @@ class SegmentOut(BaseModel):
     locations: list[LocationOut]
     metrics_kind: str                  # PRODUCTION | RETAIL | SERVICE
     default_location: str
+    supply_categories: list[SupplyCategoryOut] = []    # vazio: o segmento não precisa de fornecedor
 
 
 class CatalogOut(BaseModel):
@@ -181,7 +212,9 @@ class QuoteOut(BaseModel):
     extra_capital: Decimal
     total_owner_cost: Decimal          # owner_cost + extra_capital: o que sai da conta pessoal
     setup_cost: Decimal
-    initial_stock: Decimal
+    initial_stock: Decimal             # fase 4: RESERVA em caixa para a 1ª compra de fornecedores (a empresa nasce sem estoque)
+    first_purchase_reserve: Decimal = Decimal("0")   # o mesmo valor, com o nome certo
+    supply_categories: list[SupplyCategoryOut] = []
     land_cost: Decimal
     monthly_fixed: Decimal             # custos fixos + aluguel, por mês
     monthly_rent: Decimal
@@ -220,11 +253,18 @@ class CompanyOut(BaseModel):
     status: CompanyStatus
     founded_on: date
     marketing_until: date | None
+    quality: float = 50                 # 0-100: sobe com aportes de qualidade (mais relevância e tolerância a preço; insumos mais caros)
+    capacity_boost: float = 0           # níveis efetivos de capacidade ampliada (1 = +25%)
+    storage_boost: float = 0
+    marketing_boost: float = 0.12
+    suspended_until: date | None = None   # despejo: sem operar até este mês ou até mudar de endereço
     cash: Decimal
     debts: Decimal
     equity: Decimal
     last_revenue: Decimal | None
     last_net_result: Decimal | None
+    supplier_budget: Decimal = Decimal("0")     # gasto PREVISTO do mês com fornecedores (demanda esperada x consumo x preço contratado)
+    supply_ready: bool = True                   # todas as categorias têm contrato ativo (true também sem categorias)
 
 
 class EmployeeOut(BaseModel):
@@ -261,6 +301,8 @@ class InventoryOut(BaseModel):
     monthly_consumption_est: Decimal
     low: bool
     max_quantity: Decimal = Decimal("0")      # teto de estoque do porte (espaço de armazenagem)
+    category: str | None = None               # categoria de fornecimento que abastece o item
+    contracted: bool = True                   # há contrato ativo da categoria (sem ele o item não é reposto)
 
 
 class CostOut(BaseModel):
@@ -332,6 +374,7 @@ class MonthOut(BaseModel):
     zero_sales: bool = False           # mês sorteado sem nenhuma venda (relevância baixa ou preço fora do mercado)
     irregular: bool = False            # fechou sem cargos obrigatórios: vendas zeradas
     fines: Decimal = Decimal("0")      # multas do mês (dentro dos custos fixos)
+    units_detail: list[dict] | None = None   # fase 5: resultado do mês por unidade (matriz + filiais)
 
 
 class EventOut(BaseModel):
@@ -364,6 +407,91 @@ class ComplianceOut(BaseModel):
     missing: list[str]                 # chaves dos cargos obrigatórios que faltam
     missing_labels: list[str]
     estimated_fine: Decimal            # multa que seria aplicada se o mês fechasse agora
+    grace_months: int = 0              # período de adaptação (empresas legadas): meses restantes sem bloqueio/multa
+
+
+class SupplyChecklistOut(BaseModel):
+    category: str
+    label: str
+    present: bool
+    supplier: str | None = None
+
+
+class SupplierContractOut(BaseModel):
+    id: int
+    category: str
+    category_label: str
+    unit: str
+    name: str
+    unit_price: Decimal
+    reference_price: Decimal
+    price_vs_reference_pct: float
+    min_monthly_order: Decimal
+    max_units_month: Decimal
+    reliability: float
+    failure_probability_pct: float
+    lead_days: int
+    status: str
+    started_month: date
+    ended_month: date | None
+    term_months: int
+    is_default: bool
+    volume_used: Decimal               # comprado neste mês
+    early_end_fine: Decimal            # multa se encerrar hoje
+
+
+class SupplierBudgetRowOut(BaseModel):
+    category: str
+    label: str
+    unit: str
+    weight: Decimal
+    supplier_id: int | None
+    supplier: str | None
+    unit_price: Decimal                # contratado (ou de referência, se `estimated`)
+    estimated: bool
+    planned_volume: Decimal
+    planned_spend: Decimal
+    last_actual: Decimal               # gasto realizado no último mês fechado
+    max_units_month: Decimal | None
+
+
+class SupplierBudgetOut(BaseModel):
+    rows: list[SupplierBudgetRowOut]
+    total_planned: Decimal             # total de insumos previsto (só categorias contratadas)
+    total_last_actual: Decimal
+    last_month: date | None = None
+
+
+class SupplyOut(BaseModel):
+    required: bool                     # o segmento usa fornecedores
+    ready: bool                        # todas as categorias contratadas
+    checklist: list[SupplyChecklistOut]
+    contracts: list[SupplierContractOut]       # ativos
+    ended: list[SupplierContractOut] = []
+    effective_capacity: float | None = None    # capacidade efetiva (unidades/mês) limitada pelo menor volume contratado
+    budget: SupplierBudgetOut
+    warning: str | None = None
+
+
+class SupplierOfferOut(BaseModel):
+    id: str
+    category: str
+    category_label: str
+    unit: str
+    name: str
+    unit_price: Decimal
+    reference_price: Decimal
+    price_vs_reference_pct: float
+    min_monthly_order: Decimal
+    max_units_month: Decimal
+    reliability: float
+    lead_days: int
+
+
+class SupplierSearchOut(BaseModel):
+    category: str
+    month: date
+    offers: list[SupplierOfferOut]
 
 
 class CandidateOut(BaseModel):
@@ -389,6 +517,53 @@ class CandidatesOut(BaseModel):
     regime: EmployeeRegime
     month: date
     candidates: list[CandidateOut]
+
+
+class UnitOut(BaseModel):
+    id: int | None                      # None = matriz (a própria empresa)
+    kind: str                           # HQ | BRANCH
+    name: str
+    location: str
+    location_label: str
+    channel: CompanyChannel
+    site_mode: SiteMode | None
+    site_value: Decimal
+    monthly_rent: Decimal
+    relevance: float
+    viability: float | None = None      # 0,3-1,4 (só filiais): >1 vende mais que o esperado da matriz
+    status: str
+    opened_month: date | None = None
+    closed_month: date | None = None
+    closed_reason: str | None = None
+    cumulative_result: Decimal | None = None
+    investment: Decimal | None = None
+
+
+class ExpansionOptionOut(BaseModel):
+    key: str
+    title: str
+    description: str
+    cost: Decimal
+    side_effects: list[str]
+    risk_hint: str
+
+
+class ExpansionSiteOut(BaseModel):
+    channel: CompanyChannel
+    location: str
+    label: str
+    monthly_rent: Decimal
+    land_cost: Decimal
+
+
+class ExpansionOptionsOut(BaseModel):
+    kind: str
+    tier: str
+    tier_label: str
+    tier_cost: Decimal
+    ref_month: date
+    options: list[ExpansionOptionOut]
+    sites: list[ExpansionSiteOut] = []      # só NEW_UNIT
 
 
 class MarketOut(BaseModel):
@@ -431,7 +606,9 @@ class CompanyDetailOut(BaseModel):
     expected_demand: float
     expected_capacity: float
     market: MarketOut | None = None
-    expansion_costs: dict[str, Decimal]
+    expansion_costs: dict[str, dict[str, Decimal]]     # por tipo e nível (BARATO/MEDIO/CARO)
+    expansion_tiers: dict[str, list[dict]] = {}        # por tipo: nível, rótulo, custo e chances (para a escolha do nível)
+    units_list: list["UnitOut"] = []                   # matriz + filiais (abertas e fechadas)
     roles: list[RoleOut]
     employees: list[EmployeeOut]
     inventory: list[InventoryOut]
@@ -444,6 +621,17 @@ class CompanyDetailOut(BaseModel):
     ledger: list[LedgerLineOut]
     partners: list[dict] = []
     compliance: ComplianceOut | None = None
+    supply: SupplyOut | None = None
+
+
+class ExpansionResultOut(BaseModel):
+    success: bool                 # efeito completo ou parcial
+    outcome: str                  # FULL | PARTIAL | FAIL
+    message: str
+    effects: list[str]
+    cost: Decimal
+    replayed: bool = False
+    company: "CompanyDetailOut"
 
 
 class HireOut(BaseModel):
@@ -462,6 +650,14 @@ class HeadhunterOut(BaseModel):
     company: CompanyDetailOut
 
 
+class SupplierNegotiateOut(BaseModel):
+    accepted: bool
+    status: str                        # ACCEPTED | COUNTER | REFUSED
+    message: str
+    counter_offer: Decimal | None = None
+    company: CompanyDetailOut | None = None
+
+
 class OverviewOut(BaseModel):
     count: int
     equity_total: Decimal              # patrimônio empresarial (100%)
@@ -472,3 +668,7 @@ class OverviewOut(BaseModel):
     expenses_last_month: Decimal
     net_last_month: Decimal
     companies: list[CompanyOut]
+
+
+CompanyDetailOut.model_rebuild()
+ExpansionResultOut.model_rebuild()

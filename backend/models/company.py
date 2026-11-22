@@ -46,6 +46,14 @@ class Company(Base):
     relevance: Mapped[Decimal] = mapped_column(Numeric(5, 2), default=Decimal("0"), server_default="0")   # 0..100: sobe devagar (fase 3a)
     relocated_on: Mapped[date | None] = mapped_column(Date)               # mês da última mudança de endereço (vendas reduzidas nele)
     marketing_until: Mapped[date | None] = mapped_column(Date)             # campanha ativa até este mês (inclusive)
+    # empresas v2 (fase 5): campanha com efeito incerto, capacidade fracionária, qualidade, armazenagem, despejo/imprevistos
+    marketing_boost: Mapped[Decimal] = mapped_column(Numeric(5, 3), default=Decimal("0.12"), server_default="0.12")   # alta de demanda da campanha
+    capacity_boost: Mapped[Decimal] = mapped_column(Numeric(5, 3), default=Decimal("0"), server_default="0")   # níveis EFETIVOS de capacidade (1 = +25%)
+    storage_boost: Mapped[Decimal] = mapped_column(Numeric(5, 3), default=Decimal("0"), server_default="0")    # +x no teto de estoque
+    quality: Mapped[Decimal] = mapped_column(Numeric(5, 2), default=Decimal("50"), server_default="50")        # 0..100 (começa em 50)
+    suspended_until: Mapped[date | None] = mapped_column(Date)             # despejo: sem operar até este mês (inclusive) ou até relocar
+    incident_shield_until: Mapped[date | None] = mapped_column(Date)       # conserto premium: sem quebra de equipamento até este mês
+    compliance_grace_months: Mapped[int] = mapped_column(Integer, default=0, server_default="0")   # adaptação de empresas legadas: meses sem multa/bloqueio por cargos obrigatórios
     owner_share_pct: Mapped[Decimal] = mapped_column(Numeric(5, 2), default=Decimal("100"))
     owner_salary: Mapped[Decimal] = mapped_column(Money(), default=Decimal("0"), server_default="0")  # pró-labore mensal
     auto_restock: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
@@ -110,6 +118,39 @@ class InventoryItem(Base):
     min_quantity: Mapped[Decimal] = mapped_column(Numeric(16, 3), default=Decimal("0"))
     units_per_sale: Mapped[Decimal] = mapped_column(Numeric(10, 3))           # consumo por unidade vendida
     waste_pct: Mapped[Decimal] = mapped_column(Numeric(5, 2), default=Decimal("0"))   # desperdício
+    category: Mapped[str | None] = mapped_column(String(32), nullable=True)   # categoria de fornecimento (fase 4): 1 item por categoria
+
+
+class CompanySupplier(Base):
+    """Contrato com fornecedor (fase 4): um contrato ATIVO por (empresa, categoria). Preço, pedido mínimo e volume máximo valem
+    para as compras de estoque e para o custo variável dos serviços; o fornecedor falha na entrega com prob. (1 - reliability)."""
+
+    __tablename__ = "company_suppliers"
+    __table_args__ = (
+        Index("uq_company_suppliers_active", "company_id", "category", unique=True, postgresql_where=text("status = 'ACTIVE'")),
+        UniqueConstraint("company_id", "idempotency_key", name="uq_company_suppliers_idem"),
+        CheckConstraint("status IN ('ACTIVE', 'ENDED')", name="ck_company_suppliers_status"),
+        CheckConstraint("unit_price > 0", name="ck_company_suppliers_price"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id", ondelete="CASCADE"), index=True)
+    category: Mapped[str] = mapped_column(String(32))
+    name: Mapped[str] = mapped_column(String(80))
+    unit_price: Mapped[Decimal] = mapped_column(Numeric(14, 4))               # preço contratado por unidade de compra
+    reference_price: Mapped[Decimal] = mapped_column(Numeric(14, 4))          # referência do segmento na assinatura
+    min_monthly_order: Mapped[Decimal] = mapped_column(Numeric(16, 3))        # pedido mínimo (unidades por compra)
+    max_units_month: Mapped[Decimal] = mapped_column(Numeric(16, 3))          # volume contratado por mês (o que ele aguenta)
+    reliability: Mapped[Decimal] = mapped_column(Numeric(4, 3))               # 0..1
+    lead_days: Mapped[int] = mapped_column(Integer, default=3)
+    status: Mapped[str] = mapped_column(String(10), default="ACTIVE", server_default="ACTIVE")   # ACTIVE | ENDED
+    started_month: Mapped[date] = mapped_column(Date)
+    ended_month: Mapped[date | None] = mapped_column(Date)
+    term_months: Mapped[int] = mapped_column(Integer, default=6, server_default="6")
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")     # "Fornecedor padrão" das empresas antigas
+    volume_month: Mapped[date | None] = mapped_column(Date)                   # mês a que `volume_used` se refere
+    volume_used: Mapped[Decimal] = mapped_column(Numeric(16, 3), default=Decimal("0"), server_default="0")
+    idempotency_key: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
 
 class CompanyCost(Base):
@@ -208,6 +249,7 @@ class CompanyMonth(Base):
     zero_sales: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")     # mês sorteado sem nenhuma venda
     irregular: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")      # sem cargos obrigatórios no fechamento
     fines: Mapped[Decimal] = mapped_column(Money(), default=Decimal("0"), server_default="0")   # multas do mês (já dentro de fixed_costs)
+    units_detail: Mapped[list | None] = mapped_column(JSON, nullable=True)   # fase 5: resultado do mês por unidade (matriz + filiais)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -254,3 +296,56 @@ class CompanyPartner(Base):
     status: Mapped[str] = mapped_column(String(10), default="ACTIVE")       # ACTIVE | DEFAULTED | LEFT
     joined_month: Mapped[date] = mapped_column(Date)
     left_month: Mapped[date | None] = mapped_column(Date)
+
+
+class CompanyUnit(Base):
+    """Unidade da empresa (fase 5). A MATRIZ é a própria `Company` (não tem linha aqui); cada FILIAL é uma linha. `Company.units` =
+    1 + filiais abertas. A filial vende com a sua própria relevância (fração da relevância da marca ao abrir) e uma `viability`
+    sorteada (0,3 a 1,4) que decide se ela vende menos ou mais do que a matriz; pode FALIR (status CLOSED)."""
+
+    __tablename__ = "company_units"
+    __table_args__ = (
+        CheckConstraint("status IN ('OPEN', 'CLOSED')", name="ck_company_units_status"),
+        CheckConstraint("kind IN ('HQ', 'BRANCH')", name="ck_company_units_kind"),
+        Index("ix_company_units_company_status", "company_id", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id", ondelete="CASCADE"))
+    kind: Mapped[str] = mapped_column(String(8), default="BRANCH", server_default="BRANCH")          # HQ | BRANCH
+    name: Mapped[str] = mapped_column(String(80), default="", server_default="")
+    location: Mapped[str] = mapped_column(String(32))
+    channel: Mapped[CompanyChannel] = mapped_column(StrEnumType(CompanyChannel, "company_channel"), default=CompanyChannel.PHYSICAL,
+                                                    server_default="PHYSICAL")
+    site_mode: Mapped[SiteMode | None] = mapped_column(StrEnumType(SiteMode, "company_site_mode"), nullable=True, default=None)
+    site_value: Mapped[Decimal] = mapped_column(Money(), default=Decimal("0"), server_default="0")
+    monthly_rent: Mapped[Decimal] = mapped_column(Money(), default=Decimal("0"), server_default="0")
+    relevance: Mapped[Decimal] = mapped_column(Numeric(5, 2), default=Decimal("0"), server_default="0")
+    viability: Mapped[Decimal] = mapped_column(Numeric(4, 3), default=Decimal("1"), server_default="1")
+    status: Mapped[str] = mapped_column(String(8), default="OPEN", server_default="OPEN")            # OPEN | CLOSED
+    opened_month: Mapped[date] = mapped_column(Date)
+    closed_month: Mapped[date | None] = mapped_column(Date)
+    closed_reason: Mapped[str | None] = mapped_column(String(160))
+    cumulative_result: Mapped[Decimal] = mapped_column(Money(), default=Decimal("0"), server_default="0")
+    investment: Mapped[Decimal] = mapped_column(Money(), default=Decimal("0"), server_default="0")    # custo de abertura (sem o terreno)
+
+
+class CompanyExpansion(Base):
+    """Aporte de expansão já executado (fase 5): guarda o resultado para a repetição da MESMA chave de idempotência devolver o mesmo
+    resultado sem cobrar de novo, e conta quantos aportes do tipo a empresa já fez (entra na semente do sorteio)."""
+
+    __tablename__ = "company_expansions"
+    __table_args__ = (UniqueConstraint("company_id", "idempotency_key", name="uq_company_expansions_idem"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id", ondelete="CASCADE"), index=True)
+    idempotency_key: Mapped[str] = mapped_column(String(100))
+    ref_month: Mapped[date] = mapped_column(Date)
+    kind: Mapped[str] = mapped_column(String(20))
+    tier: Mapped[str] = mapped_column(String(8))
+    option_key: Mapped[str] = mapped_column(String(40))
+    outcome: Mapped[str] = mapped_column(String(8))                        # FULL | PARTIAL | FAIL
+    cost: Mapped[Decimal] = mapped_column(Money())
+    message: Mapped[str] = mapped_column(String(400))
+    effects: Mapped[list] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

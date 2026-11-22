@@ -7,8 +7,8 @@ from backend.models.career import CareerJob, Education, Gig, JobApplication
 from backend.models.chart_layout import ChartLayout
 from backend.models.company import (
     CompanyPartner, PartnerInvite,
-    Company, CompanyCost, CompanyEvent, CompanyLease, CompanyLoan, CompanyLoanInstallment, CompanyMonth, Employee,
-    InventoryItem, CandidateBlock,
+    Company, CompanyCost, CompanyEvent, CompanyLease, CompanySupplier, CompanyLoan, CompanyLoanInstallment, CompanyMonth, Employee,
+    InventoryItem, CandidateBlock, CompanyUnit, CompanyExpansion,
 )
 from backend.models.distribution import Dividend, DividendEligibility, DividendPayment
 from backend.models.enums import (
@@ -38,9 +38,9 @@ __all__ = [
     "Achievement", "Goal", "MonthReport",
     "EconomicCrisis", "EconomyState", "GameProfile", "SimPrice", "WorldEvent",
     "Child", "LifeLog", "LifeProfile", "Person", "Relationship",
-    "Company", "CompanyChannel", "SiteMode", "CompanyCost", "CompanyCostKind", "CompanyEvent", "CompanyEventType", "CompanyLease", "CompanyLoan",
+    "Company", "CompanyChannel", "SiteMode", "CompanyCost", "CompanyCostKind", "CompanyEvent", "CompanyEventType", "CompanyLease", "CompanySupplier", "CompanyLoan",
     "CompanyLoanInstallment", "CompanyMonth", "CompanySegment", "CompanySize", "CompanyStatus", "Employee", "EmployeeLevel",
-    "EmployeeStatus", "EmployeeRegime", "WorkSchedule", "EmployeeEducation", "CandidateBlock", "InventoryItem", "LeaseKind",
+    "EmployeeStatus", "EmployeeRegime", "WorkSchedule", "EmployeeEducation", "CandidateBlock", "CompanyUnit", "CompanyExpansion", "InventoryItem", "LeaseKind",
     "AmortizationSystem", "Condition", "CostKind", "Good", "GoodCategory", "GoodCost", "GoodEvent", "GoodEventType",
     "GoodStatus", "GoodValue", "InstallmentStatus", "Loan", "LoanInstallment", "LoanStatus", "Occupancy", "REAL_ESTATE",
     "RealEstateDetails", "ValuationRule", "ValueSource", "VehicleDetails",

@@ -7,6 +7,7 @@ resultado (testável e sem surpresa a cada recarga de tela).
 Empresas v2 (fase 1): cada segmento define os canais permitidos (ONLINE/PHYSICAL), a sua própria lista de localizações
 (com demanda, aluguel e preço do terreno) e o tipo de métricas (`MetricsKind`).
 """
+import logging
 import math
 from dataclasses import dataclass, replace
 from decimal import Decimal
@@ -15,6 +16,8 @@ from enum import StrEnum
 from backend.core.money import quantize_money
 from backend.models import CompanyChannel, CompanyCostKind, CompanySegment, CompanySize, EmployeeLevel, EmployeeRegime, SiteMode
 from backend.services.goods_rules import hash01
+
+log = logging.getLogger(__name__)
 
 D = Decimal
 CLT_COST_MULT = D("2.0")            # CLT custa 2x o salário negociado (encargos, benefícios, 13º, férias e provisões)
@@ -49,6 +52,41 @@ RELOCATION_BREAK_MONTHS = D("2")    # + multa de 2 aluguéis se o contrato de al
 RELOCATION_SALES_MULT = 0.35        # no fechamento do mês da mudança a empresa vende só 35% (ficou parte do mês sem operar)
 LAND_RESALE = D("0.92")             # venda do terreno antigo (comprado) na mudança: 92% do valor contábil
 
+# ---- fase 5: qualidade, campanhas e aportes em 3 níveis
+QUALITY_BASE = 50.0                 # qualidade inicial (0..100)
+QUALITY_PRICE_TOL = 0.20            # qualidade 100 tolera preço +20% sobre o de mercado (qualidade 0: -20%); 50 = neutro
+QUALITY_COST_SLOPE = 0.25           # custo de insumos/variável: +25% com qualidade 100 (-25% com 0), proporcional a (q-50)/50
+QUALITY_REL_GAIN = 0.40             # ganho mensal extra de relevância com qualidade 100 (proporcional a (q-50)/50)
+TIERS = ("BARATO", "MEDIO", "CARO")
+TIER_LABEL = {"BARATO": "Barato", "MEDIO": "Médio", "CARO": "Caro"}
+# custo do aporte POR TIPO e NÍVEL (barato, médio, caro): fração de `setup_cost x porte` (CAPACITY, NEW_UNIT, QUALITY, LARGER_PREMISES: do
+# porte seguinte) ou múltiplo do custo-base de marketing do segmento x fator fixo do porte (MARKETING)
+TIER_COST = {
+    "CAPACITY": (D("0.10"), D("0.22"), D("0.45")),
+    "NEW_UNIT": (D("0.60"), D("1.00"), D("1.70")),
+    "QUALITY": (D("0.05"), D("0.12"), D("0.28")),
+    "MARKETING": (D("0.5"), D("1.5"), D("4.0")),
+    "LARGER_PREMISES": (D("0.40"), D("0.60"), D("1.00")),
+}
+EXPANSION_KINDS = tuple(TIER_COST)
+# resultado possível de cada nível: (chance de efeito COMPLETO, chance de efeito PARCIAL); o resto é fracasso. Nunca garantido.
+TIER_ODDS = {"CAPACITY": ((0.35, 0.30), (0.55, 0.28), (0.72, 0.20)), "QUALITY": ((0.40, 0.30), (0.58, 0.27), (0.75, 0.18)),
+             "LARGER_PREMISES": ((0.45, 0.25), (0.70, 0.18), (0.88, 0.09))}
+CAPACITY_GAIN = (0.40, 0.80, 1.40)  # níveis de capacidade (1 nível = +25%) no efeito completo; parcial = metade
+QUALITY_GAIN = (5.0, 10.0, 20.0)    # pontos de qualidade no efeito completo; parcial = metade
+BRANCH_REL_FRAC = (0.25, 0.40, 0.60)  # relevância inicial da filial = fração da relevância da marca (matriz), por nível
+BRANCH_FAIL = (0.12, 0.07, 0.03)    # chance de a filial nem abrir (ponto/licença não vingou: perde metade do custo)
+BRANCH_VIAB_SHAPE = (1.25, 1.0, 0.8)  # viabilidade = 0,3 + 1,1 * u**forma: nível maior => forma menor => média maior
+VIAB_MIN, VIAB_MAX = 0.3, 1.4
+BRANCH_CLOSE_LOSS = D("0.60")       # filial fecha se o resultado acumulado cair abaixo de -60% do custo de abertura (>= 3 meses)
+BRANCH_MIN_AGE = 3
+BRANCH_LAND_RESALE = LAND_RESALE
+CAMPAIGN_FAIL = (0.30, 0.18, 0.10)  # chance de a campanha não ter NENHUM efeito
+CAMPAIGN_VIRAL = (0.10, 0.17, 0.28)  # chance de efeito viral (acima do esperado)
+CAMPAIGN_BOOST = (0.08, 0.14, 0.25)  # alta de demanda durante a campanha (efeito normal)
+CAMPAIGN_MONTHS = (2, 3, 4)
+CAMPAIGN_REL = (0.8, 2.0, 4.5)      # pontos de relevância imediatos (encolhem perto de 100)
+
 
 class MetricsKind(StrEnum):
     PRODUCTION = "PRODUCTION"       # produz e controla estoque/insumos
@@ -72,6 +110,21 @@ class Stock:
     unit_cost: Decimal
     units_per_sale: Decimal
     supplier: str
+    waste_pct: Decimal = D(0)
+    category: str = ""             # chave da categoria de fornecimento que abastece o item (fase 4)
+
+
+@dataclass(frozen=True)
+class SupplyCategory:
+    """Categoria de fornecimento do segmento (fase 4). `weight` = fatia do custo do produto/serviço (soma 1,0 no segmento);
+    `per_sale` = unidades da categoria consumidas por unidade vendida; `ref_price` = preço de referência por unidade de compra
+    (derivado: custo de referência por venda x peso / consumo), base das ofertas dos fornecedores."""
+    key: str
+    label: str
+    unit: str
+    weight: Decimal
+    per_sale: Decimal
+    ref_price: Decimal
     waste_pct: Decimal = D(0)
 
 
@@ -107,6 +160,17 @@ class Segment:
     channels: tuple[CompanyChannel, ...] = (CompanyChannel.PHYSICAL,)
     locations: tuple[Location, ...] = ()
     metrics_kind: MetricsKind = MetricsKind.PRODUCTION
+    supply_categories: tuple[SupplyCategory, ...] = ()
+
+    @property
+    def needs_suppliers(self) -> bool:
+        return bool(self.supply_categories)
+
+    def supply(self, key: str) -> SupplyCategory:
+        for c in self.supply_categories:
+            if c.key == key:
+                return c
+        raise KeyError(key)
 
     def role(self, key: str) -> Role:
         for r in self.roles:
@@ -198,12 +262,30 @@ def _locs(seg_rent, rows) -> tuple[Location, ...]:
                  for k, label, dem, rf, months in rows)
 
 
+def _supply(price, var_pct, stock, rows) -> tuple[tuple[SupplyCategory, ...], tuple[Stock, ...]]:
+    """Categorias de fornecimento (fase 4). Custo de referência por venda: o do estoque antigo (segmentos com estoque) ou
+    `preço x custo variável%` (serviços com fornecedor). rows: (chave, nome, unidade, peso, consumo por venda)."""
+    if not rows:
+        return (), tuple(stock)
+    if stock:
+        total = sum((x.unit_cost * x.units_per_sale for x in stock), D(0))
+        waste = stock[0].waste_pct
+    else:
+        total, waste = D(price) * D(var_pct) / 100, D(0)
+    cats = tuple(SupplyCategory(k, label, unit, D(str(w)), D(str(ps)), (total * D(str(w)) / D(str(ps))).quantize(D("0.0001")), waste)
+                 for k, label, unit, w, ps in rows)
+    assert sum((c.weight for c in cats), D(0)) == D(1), "pesos das categorias devem somar 1,0"
+    items = tuple(Stock(c.label, c.unit, c.ref_price, c.per_sale, "", c.waste_pct, c.key) for c in cats) if stock else ()
+    return cats, items
+
+
 def _seg(key, label, unit_label, price, demand, elast, vol, owner_cap, roles, staff, stock, var_pct, fixed, rent, setup,
-         mkt, desc, *, kind, channels, locations, fractional=False) -> Segment:
+         mkt, desc, *, kind, channels, locations, fractional=False, supply=()) -> Segment:
+    cats, items = _supply(price, var_pct, stock, supply)
     return Segment(CompanySegment(key), label, unit_label, D(price), demand, elast, vol, owner_cap,
-                   tuple(roles) + GENERIC_ROLES, tuple(staff), tuple(stock), D(var_pct),
+                   tuple(roles) + GENERIC_ROLES, tuple(staff), items, D(var_pct),
                    tuple((k, n, D(a)) for k, n, a in fixed), D(rent), D(setup), D(mkt), desc, fractional,
-                   tuple(channels), _locs(rent, locations), kind)
+                   tuple(channels), _locs(rent, locations), kind, cats)
 
 
 SEGMENTS: dict[CompanySegment, Segment] = {s.key: s for s in [
@@ -215,6 +297,8 @@ SEGMENTS: dict[CompanySegment, Segment] = {s.key: s for s in [
          [(K.UTILITIES, "Energia, água e gás", 2200), (K.TOOLS, "Limpeza e utensílios", 500), (K.ACCOUNTING, "Contabilidade", 600)],
          6000, 40000, 3000, "Compra ingredientes, atende por capacidade de cozinha e salão e sofre com desperdício.",
          kind=PRODUCTION, channels=[PHYSICAL, ONLINE],
+         supply=[("carnes", "Carnes e peixes", "kg", "0.40", "0.12"), ("horti", "Hortifrúti", "kg", "0.25", "0.35"),
+                 ("bebidas", "Bebidas", "litro", "0.20", "0.25"), ("embalagens", "Embalagens e descartáveis", "un", "0.15", "1")],
          locations=[("gastro", "Rua gastronômica", 1.35, 1.7, 90), ("centro", "Centro da capital", 1.25, 1.6, 95),
                     ("shopping", "Praça de alimentação de shopping", 1.4, 2.2, 80), ("bairro", "Bairro residencial", 1.0, 1.0, 100),
                     ("beira_mar", "Beira-mar", 1.3, 2.0, 120), ("interior", "Cidade do interior", 0.7, 0.6, 70)]),
@@ -225,6 +309,8 @@ SEGMENTS: dict[CompanySegment, Segment] = {s.key: s for s in [
          [(K.UTILITIES, "Energia e água", 1500), (K.TOOLS, "Manutenção de máquinas", 300), (K.ACCOUNTING, "Contabilidade", 600)],
          4500, 30000, 2500, "Alto volume e ticket baixo: depende do fluxo de pessoas e do preço.",
          kind=PRODUCTION, channels=[PHYSICAL, ONLINE],
+         supply=[("graos", "Grãos e insumos de café", "kg", "0.45", "0.02"), ("laticinios", "Laticínios e padaria", "kg", "0.35", "0.1"),
+                 ("embalagens", "Embalagens", "un", "0.20", "1")],
          locations=[("centro", "Centro da capital", 1.25, 1.6, 95), ("shopping", "Shopping center", 1.4, 2.2, 80),
                     ("bairro", "Bairro residencial", 1.0, 1.0, 100), ("universitario", "Entorno de universidade", 1.2, 1.2, 90),
                     ("corporativo", "Região corporativa", 1.3, 1.8, 110), ("interior", "Cidade do interior", 0.7, 0.6, 70)]),
@@ -235,6 +321,8 @@ SEGMENTS: dict[CompanySegment, Segment] = {s.key: s for s in [
          [(K.UTILITIES, "Energia e internet", 1100), (K.TOOLS, "Vitrine e sistema", 400), (K.ACCOUNTING, "Contabilidade", 500)],
          5500, 45000, 3500, "Estoque de mercadorias, margem de revenda e forte sazonalidade.",
          kind=RETAIL, channels=[PHYSICAL, ONLINE],
+         supply=[("confeccoes", "Confecções no atacado", "peça", "0.78", "1"), ("acessorios", "Acessórios", "un", "0.14", "0.3"),
+                 ("embalagens", "Embalagens", "un", "0.08", "1")],
          locations=[("centro", "Centro comercial", 1.25, 1.6, 95), ("shopping", "Shopping center", 1.4, 2.2, 80),
                     ("bairro", "Bairro residencial", 1.0, 1.0, 100), ("rua_popular", "Rua de comércio popular", 1.2, 1.1, 90),
                     ("outlet", "Polo de moda e outlet", 1.1, 0.9, 85), ("interior", "Cidade do interior", 0.7, 0.6, 70)]),
@@ -245,6 +333,8 @@ SEGMENTS: dict[CompanySegment, Segment] = {s.key: s for s in [
          [(K.UTILITIES, "Energia (refrigeração)", 3500), (K.TOOLS, "Sistema e equipamentos", 700), (K.ACCOUNTING, "Contabilidade", 700)],
          8500, 120000, 6000, "Margem apertada e demanda sensível ao preço; perecíveis geram perdas.",
          kind=RETAIL, channels=[PHYSICAL, ONLINE],
+         supply=[("secos", "Alimentos secos", "kg", "0.40", "4"), ("horti_frios", "Hortifrúti e frios", "kg", "0.30", "2.5"),
+                 ("limpeza", "Limpeza e higiene", "un", "0.15", "1"), ("bebidas", "Bebidas", "litro", "0.15", "2")],
          locations=[("bairro", "Bairro residencial", 1.0, 1.0, 100), ("centro", "Centro da capital", 1.25, 1.6, 95),
                     ("avenida", "Avenida de grande fluxo", 1.3, 1.8, 110), ("conjunto", "Entorno de conjunto habitacional", 1.15, 0.9, 85),
                     ("rodovia", "Atacarejo na rodovia", 1.1, 0.8, 75), ("interior", "Cidade do interior", 0.7, 0.6, 70)]),
@@ -256,6 +346,7 @@ SEGMENTS: dict[CompanySegment, Segment] = {s.key: s for s in [
          [(K.UTILITIES, "Energia e água", 1800), (K.TOOLS, "Ferramental", 900), (K.ACCOUNTING, "Contabilidade", 600)],
          5000, 60000, 3000, "Serviço com peças: a capacidade depende dos mecânicos; peças e fluidos entram nos custos variáveis.",
          kind=SERVICE, channels=[PHYSICAL],
+         supply=[("pecas", "Peças e fluidos", "kit", "0.75", "1"), ("ferramentas", "Ferramentas e consumíveis", "un", "0.25", "1")],
          locations=[("avenida", "Avenida de grande fluxo", 1.3, 1.5, 105), ("bairro", "Bairro residencial", 1.0, 1.0, 100),
                     ("rodovia", "Beira de rodovia", 1.1, 0.8, 75), ("polo_auto", "Polo automotivo", 1.2, 1.0, 90),
                     ("interior", "Cidade do interior", 0.7, 0.6, 70)]),
@@ -290,6 +381,8 @@ SEGMENTS: dict[CompanySegment, Segment] = {s.key: s for s in [
          [(K.UTILITIES, "Energia industrial", 4500), (K.TOOLS, "Manutenção de máquinas", 1800), (K.ACCOUNTING, "Contabilidade", 1000)],
          10000, 250000, 8000, "Matéria-prima, equipamentos e capacidade produtiva limitam a produção.",
          kind=PRODUCTION, channels=[PHYSICAL],
+         supply=[("materia_prima", "Matéria-prima", "kg", "0.55", "1"), ("componentes", "Componentes", "un", "0.25", "2"),
+                 ("embalagens", "Embalagens", "un", "0.08", "1"), ("insumos", "Insumos industriais", "un", "0.12", "1")],
          locations=[("polo", "Polo industrial/logístico", 0.9, 0.8, 100), ("distrito", "Distrito industrial", 1.1, 1.0, 105),
                     ("rural", "Zona rural", 0.7, 0.5, 60), ("rodovia", "Margem de rodovia", 1.0, 0.9, 85),
                     ("porto", "Região portuária", 1.3, 1.5, 120)]),
@@ -302,6 +395,8 @@ SEGMENTS: dict[CompanySegment, Segment] = {s.key: s for s in [
          [(K.UTILITIES, "Energia e canteiro", 1500), (K.TOOLS, "Equipamentos e EPI", 3000), (K.ACCOUNTING, "Contabilidade", 1500)],
          6000, 80000, 5000, "Poucas obras grandes por mês: receita volátil e dependente de materiais.",
          kind=PRODUCTION, channels=[PHYSICAL], fractional=True,
+         supply=[("cimento", "Cimento e agregados", "saco", "0.30", "100"), ("aco", "Aço e ferragens", "kg", "0.40", "1000"),
+                 ("acabamentos", "Acabamentos", "m²", "0.30", "100")],
          locations=[("centro", "Centro empresarial", 1.25, 1.6, 95), ("bairro", "Bairro residencial", 1.0, 1.0, 100),
                     ("polo", "Polo industrial/logístico", 0.9, 0.8, 100), ("litoral", "Litoral de alto padrão", 1.35, 1.8, 115),
                     ("interior", "Cidade do interior", 0.7, 0.6, 70)]),
@@ -313,6 +408,7 @@ SEGMENTS: dict[CompanySegment, Segment] = {s.key: s for s in [
          [(K.UTILITIES, "Rastreamento e pátio", 600), (K.INSURANCE, "Seguro da frota", 2500), (K.TOOLS, "Manutenção de frota", 900)],
          3500, 150000, 4000, "Capacidade da frota e dos motoristas; combustível e pedágios entram nos custos variáveis.",
          kind=SERVICE, channels=[PHYSICAL],
+         supply=[("combustivel", "Combustível", "litro", "0.60", "110"), ("pneus", "Pneus e manutenção", "kit", "0.40", "1")],
          locations=[("polo", "Polo industrial/logístico", 0.9, 0.8, 100), ("rodovia", "Margem de rodovia", 1.0, 0.7, 80),
                     ("porto", "Região portuária", 1.3, 1.4, 115), ("cd_urbano", "Centro de distribuição urbano", 1.15, 1.1, 100),
                     ("interior", "Cidade do interior", 0.7, 0.6, 70)]),
@@ -349,8 +445,11 @@ def resolve_location(seg: Segment, key: str) -> Location:
     if found:
         return found
     legacy = LEGACY_LOCATIONS.get(key)
-    if legacy is None:
-        raise KeyError(key)
+    if legacy is None:                  # localização desconhecida (dado antigo/corrompido): nunca derruba a listagem
+        log.warning("localização desconhecida %r no segmento %s: usando o local de menor demanda", key, seg.key)
+        if seg.locations:
+            return min(seg.locations, key=lambda x: (x.demand, x.key))
+        return ONLINE_LOCATION
     demand, rent = legacy
     if seg.locations:
         return min(seg.locations, key=lambda x: (abs(x.demand - demand), x.key))
@@ -473,10 +572,24 @@ def price_ceiling(seg: Segment) -> float:
     return PRICE_CEILING.get(seg.key.value, DEFAULT_CEILING)
 
 
-def price_factor(seg: Segment, price: Decimal) -> float:
+def quality_price_ref(seg: Segment, quality: float = QUALITY_BASE) -> float:
+    """Preço de mercado ajustado pela qualidade: produto melhor aguenta preço maior sem derrubar as vendas."""
+    return float(seg.price) * (1 + QUALITY_PRICE_TOL * (float(quality) - QUALITY_BASE) / 50)
+
+
+def price_ratio(seg: Segment, price: Decimal, quality: float = QUALITY_BASE) -> float:
+    return float(price) / quality_price_ref(seg, quality)
+
+
+def quality_cost_mult(quality: float = QUALITY_BASE) -> Decimal:
+    """Multiplicador do custo de insumos/variável pela qualidade (1,00 com 50; 1,25 com 100)."""
+    return D(1) + D(str(QUALITY_COST_SLOPE)) * (D(str(float(quality))) - D(str(QUALITY_BASE))) / 50
+
+
+def price_factor(seg: Segment, price: Decimal, quality: float = QUALITY_BASE) -> float:
     """Preço abaixo do mercado vende mais, mas o ganho SATURA (+30%); acima do mercado a demanda desaba (elasticidade alta)
-    e, passando do teto do setor, ninguém compra."""
-    r = float(price) / float(seg.price)
+    e, passando do teto do setor, ninguém compra. O "mercado" sobe com a qualidade (ver `quality_price_ref`)."""
+    r = price_ratio(seg, price, quality)
     if r <= 1:
         return min(PRICE_GAIN_CAP, r ** -seg.elasticity)
     ceil = price_ceiling(seg)
@@ -504,14 +617,16 @@ def is_zero_month(seed: int, company_id: int, ref, relevance: float, price_ratio
 
 
 def demand_units(seg: Segment, *, location: str, size: CompanySize, units: int, reputation: int, price: Decimal,
-                 company_id: int, ref, marketing: bool, season: bool = True, relevance: float = 100.0) -> float:
-    """Demanda do mês (unidades). `relevance` padrão 100 = mercado maduro; o motor passa a relevância real da empresa."""
+                 company_id: int, ref, marketing: bool, season: bool = True, relevance: float = 100.0,
+                 quality: float = QUALITY_BASE, marketing_boost: float = float(MARKETING_BOOST)) -> float:
+    """Demanda do mês (unidades). `relevance` padrão 100 = mercado maduro; o motor passa a relevância real da empresa.
+    `quality` (fase 5) desloca o preço de mercado; `marketing_boost` = alta de demanda da campanha ativa (padrão: a antiga, 12%)."""
     base = seg.base_demand * resolve_location(seg, location).demand * SIZES[size].demand * units
-    d = base * relevance_factor(relevance) * reputation_factor(reputation) * price_factor(seg, price)
+    d = base * relevance_factor(relevance) * reputation_factor(reputation) * price_factor(seg, price, quality)
     if season:
         d *= season_factor(seg, company_id, ref)
     if marketing:
-        d *= 1 + float(MARKETING_BOOST)
+        d *= 1 + marketing_boost
     return d
 
 
@@ -526,14 +641,14 @@ def production_ceiling(seg: Segment, size: CompanySize, units: int, capacity_lev
     return reference_units(seg, size, units) * CEILING_FACTOR * (1 + 0.25 * capacity_level)
 
 
-def storage_cap_units(seg: Segment, size: CompanySize, units: int) -> float:
-    """Capacidade de estoque/armazenagem em UNIDADES VENDÁVEIS (quanto de vendas o depósito comporta)."""
-    return reference_units(seg, size, units) * STORAGE_MONTHS
+def storage_cap_units(seg: Segment, size: CompanySize, units: int, boost: float = 0.0) -> float:
+    """Capacidade de estoque/armazenagem em UNIDADES VENDÁVEIS (quanto de vendas o depósito comporta). `boost` = ampliações (fase 5)."""
+    return reference_units(seg, size, units) * STORAGE_MONTHS * (1 + float(boost))
 
 
-def storage_cap_qty(seg: Segment, size: CompanySize, units: int, stock: "InventoryLike") -> Decimal:
+def storage_cap_qty(seg: Segment, size: CompanySize, units: int, stock: "InventoryLike", boost: float = 0.0) -> Decimal:
     """Teto de estoque de um item, na unidade do item (considera consumo por venda e desperdício)."""
-    sold_units = D(str(storage_cap_units(seg, size, units)))
+    sold_units = D(str(storage_cap_units(seg, size, units, boost)))
     return (sold_units * D(stock.units_per_sale) * (1 + D(stock.waste_pct) / 100)).quantize(D("0.001"))
 
 
@@ -541,10 +656,12 @@ def max_staff(size: CompanySize, units: int) -> int:
     return SIZES[size].max_staff * max(units, 1)
 
 
-def capacity_units(seg: Segment, *, size: CompanySize, units: int, capacity_level: int, staff: list[tuple[str, Decimal]],
-                   equipment_factor: float = 1.0) -> float:
-    """Capacidade da equipe (dono + pessoas), limitada pelo TETO de produção/atendimento do porte."""
-    people = sum(seg.role(r).units * float(prod) for r, prod in staff if any(x.key == r for x in seg.roles))
+def capacity_units(seg: Segment, *, size: CompanySize, units: int, capacity_level: float, staff: list[tuple[str, Decimal]],
+                   equipment_factor: float = 1.0, people_share: float = 1.0) -> float:
+    """Capacidade da equipe (dono + pessoas), limitada pelo TETO de produção/atendimento do porte. `capacity_level` pode ser
+    fracionário (aportes parciais). `people_share` (fase 5, filiais) = fatia da capacidade dos cargos produtivos GLOBAIS que
+    cabe a esta unidade (a fatia da matriz + a das filiais soma 1)."""
+    people = sum(seg.role(r).units * float(prod) for r, prod in staff if any(x.key == r for x in seg.roles)) * people_share
     raw = (seg.owner_capacity * SIZES[size].capacity + people) * units * (1 + 0.25 * capacity_level) * equipment_factor
     return min(raw, production_ceiling(seg, size, units, capacity_level))
 
@@ -573,6 +690,32 @@ def initial_stock_quantities(seg: Segment, location: str, size: CompanySize) -> 
     for s in seg.stock:
         qty = D(str(exp)) * s.units_per_sale * (1 + s.waste_pct / 100)
         out.append((s, qty.quantize(D("0.001")) if seg.fractional else D(math.ceil(qty))))
+    return out
+
+
+def first_purchase_reserve(seg: Segment, location: str, size: CompanySize) -> Decimal:
+    """Fase 4: a empresa NÃO nasce com estoque. O capital mínimo reserva em caixa o valor da 1ª compra (~2 meses da demanda do
+    começo, a preço de referência) para o jogador comprar dos fornecedores que contratar. Serviços: zero."""
+    return quantize_money(sum((q * s.unit_cost for s, q in initial_stock_quantities(seg, location, size)), D(0)))
+
+
+def supply_cost_per_sale(seg: Segment, price_mult: Decimal = D(1)) -> Decimal:
+    """Custo de insumos/fornecedores por unidade vendida (com desperdício), com os contratos a `price_mult` x o preço de referência."""
+    return sum((c.per_sale * c.ref_price * price_mult * (1 + c.waste_pct / 100) for c in seg.supply_categories), D(0))
+
+
+def supply_capacity(seg: Segment, volumes: dict[str, float], *, missing_is_zero: bool = True) -> float:
+    """Capacidade efetiva em UNIDADES VENDIDAS pelos fornecedores: o menor `max_units_month / (consumo por venda x (1 + perda))`
+    entre as categorias. `volumes` = volume mensal disponível (já com falha de entrega) de cada categoria; categoria sem contrato
+    conta 0 (serviços) ou é ignorada (`missing_is_zero=False`: nos segmentos com estoque o que limita é o estoque, não a capacidade)."""
+    if not seg.supply_categories:
+        return math.inf
+    out = math.inf
+    for c in seg.supply_categories:
+        if c.key not in volumes and not missing_is_zero:
+            continue
+        per = float(c.per_sale * (1 + c.waste_pct / 100))
+        out = min(out, volumes.get(c.key, 0.0) / per if per > 0 else math.inf)
     return out
 
 
@@ -606,26 +749,26 @@ def operating_reserve(seg: Segment, location: str, size: CompanySize, channel: C
 
 def minimum_capital(seg: Segment, location: str, size: CompanySize, channel: CompanyChannel = PHYSICAL,
                     site_mode: SiteMode | None = SiteMode.RENT) -> Decimal:
-    """Mínimo para abrir: estrutura + estoque inicial + (terreno, se comprado) + a RESERVA de operação (`RESERVE_MONTHS` meses de
+    """Mínimo para abrir: estrutura + reserva da 1ª compra de fornecedores (fase 4: o estoque NÃO nasce pronto) + (terreno, se comprado) + a RESERVA de operação (`RESERVE_MONTHS` meses de
     custos fixos e folha) + o custo de contratar os cargos obrigatórios. A empresa nasce sem funcionários: o dono contrata a
     equipe depois e o caixa já cobre vários meses de operação com vendas fracas."""
-    stock = sum((q * s.unit_cost for s, q in initial_stock_quantities(seg, location, size)), D(0))
+    stock = first_purchase_reserve(seg, location, size)
     hiring = mandatory_setup_cost(seg, channel, size) - mandatory_monthly_payroll(seg, channel, size)
     return quantize_money(setup_cost(seg, size, channel) + stock + operating_reserve(seg, location, size, channel, site_mode)
                           + hiring + land_value(seg, channel, site_mode, location, size))
 
 
-def expansion_cost(seg: Segment, kind: str, size: CompanySize, units: int) -> Decimal:
-    if kind == "CAPACITY":
-        return quantize_money(seg.setup_cost * D("0.15") * SIZES[size].setup)
-    if kind == "NEW_UNIT":
-        return quantize_money(seg.setup_cost * D("0.8") * SIZES[size].setup)
+def expansion_cost(seg: Segment, kind: str, size: CompanySize, units: int, tier: str = "MEDIO") -> Decimal:
+    """Custo do aporte `kind` no nível `tier` (BARATO/MEDIO/CARO). Cada tipo tem a sua escala (ver `TIER_COST`)."""
+    if kind not in TIER_COST or tier not in TIERS:
+        raise KeyError(kind)
+    f = TIER_COST[kind][TIERS.index(tier)]
+    if kind == "MARKETING":
+        return quantize_money(seg.marketing_cost * SIZES[size].fixed * f)
     if kind == "LARGER_PREMISES":
         nxt = SIZE_ORDER[min(SIZE_ORDER.index(size) + 1, 2)]
-        return quantize_money(seg.setup_cost * D("0.6") * SIZES[nxt].setup)
-    if kind == "MARKETING":
-        return quantize_money(seg.marketing_cost * SIZES[size].fixed)
-    raise KeyError(kind)
+        return quantize_money(seg.setup_cost * SIZES[nxt].setup * f)
+    return quantize_money(seg.setup_cost * SIZES[size].setup * f)
 
 
 # ------------------------------------------------------------------ vendas do mês e relevância (puras: motor e simulação)
@@ -640,15 +783,21 @@ class Sales:
     stockout: bool
 
 
-def sales_month(seg: Segment, *, location: str, size: CompanySize, units: int, capacity_level: int, relevance: float, reputation: int,
-                price: Decimal, company_id: int, ref, seed: int, marketing: bool, staff: list[tuple[str, Decimal]],
+def sales_month(seg: Segment, *, location: str, size: CompanySize, units: int, capacity_level: float, relevance: float, reputation: int,
+                price: Decimal, company_id, ref, seed: int, marketing: bool, staff: list[tuple[str, Decimal]],
                 econ_mult: float = 1.0, relocation_mult: float = 1.0, equipment_factor: float = 1.0, stock_cap: float = math.inf,
-                irregular: bool = False, season: bool = True) -> Sales:
-    """Vendas do mês. UMA função usada pelo fechamento mensal e pela simulação de balanceamento."""
+                irregular: bool = False, season: bool = True, supply_cap: float = math.inf, quality: float = QUALITY_BASE,
+                marketing_boost: float = float(MARKETING_BOOST), people_share: float = 1.0) -> Sales:
+    """Vendas do mês. UMA função usada pelo fechamento mensal e pela simulação de balanceamento. Fase 5: `quality`, campanha com
+    alta própria e `people_share` (filiais: cada unidade é calculada com `units=1` e a sua fatia da equipe; `company_id` pode ser
+    um texto "empresa-unidade" para sorteios próprios da unidade)."""
     demand = demand_units(seg, location=location, size=size, units=units, reputation=reputation, price=price, company_id=company_id,
-                          ref=ref, marketing=marketing, season=season, relevance=relevance) * econ_mult * relocation_mult
-    capacity = capacity_units(seg, size=size, units=units, capacity_level=capacity_level, staff=staff, equipment_factor=equipment_factor)
-    zero = (not irregular) and is_zero_month(seed, company_id, ref, relevance, float(price) / float(seg.price))
+                          ref=ref, marketing=marketing, season=season, relevance=relevance, quality=quality,
+                          marketing_boost=marketing_boost) * econ_mult * relocation_mult
+    capacity = min(capacity_units(seg, size=size, units=units, capacity_level=capacity_level, staff=staff,
+                                  equipment_factor=equipment_factor, people_share=people_share),
+                   supply_cap)          # fase 4: fornecedores limitam a capacidade
+    zero = (not irregular) and is_zero_month(seed, company_id, ref, relevance, price_ratio(seg, price, quality))
     potential = 0.0 if irregular or zero else min(demand, capacity)
     sold = min(potential, stock_cap)
     sold = round(max(sold, 0), 2) if seg.fractional else math.floor(max(sold, 0))
@@ -656,7 +805,7 @@ def sales_month(seg: Segment, *, location: str, size: CompanySize, units: int, c
 
 
 def next_relevance(relevance: float, *, sold: float, demand: float, reputation: int, marketing: bool, stockout: bool,
-                   price_ratio: float, irregular: bool) -> float:
+                   price_ratio: float, irregular: bool, quality: float = QUALITY_BASE) -> float:
     """Relevância do mês seguinte (0-100). Sobe devagar com clientes atendidos (vendas >= 60% da demanda), reputação, marketing e
     estoque em dia; o ganho encolhe perto de 100. Cai em meses sem vendas ou irregulares."""
     if irregular:
@@ -666,6 +815,7 @@ def next_relevance(relevance: float, *, sold: float, demand: float, reputation: 
     served = sold >= 0.6 * demand
     gain = (1.0 if served else 0.3) + 0.5 * (reputation - 50) / 50 + (0.3 if marketing else 0.0) + (0.15 if not stockout else 0.0)
     gain += 0.1 if price_ratio <= 1.1 else (-0.3 if price_ratio > 1.3 else 0.0)
+    gain += QUALITY_REL_GAIN * (float(quality) - QUALITY_BASE) / 50          # fase 5: produto melhor conquista a clientela mais rápido
     gain = max(0.05, min(1.5, gain)) * (1 - relevance / 100) ** 0.7
     return min(100.0, relevance + gain)
 

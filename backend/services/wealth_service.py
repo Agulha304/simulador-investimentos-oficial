@@ -48,7 +48,10 @@ def company_equity(db: Session, company: Company) -> Decimal:
         Good.owner_account_id == company.account_id, Good.status == GoodStatus.ACTIVE))
     loans = db.scalar(select(func.coalesce(func.sum(CompanyLoan.balance), 0)).where(
         CompanyLoan.company_id == company.id, CompanyLoan.status == LoanStatus.ACTIVE))
-    return quantize_money(cash + stock + assets + (company.site_value or 0) - loans)
+    from backend.models import CompanyUnit
+    branch_land = db.scalar(select(func.coalesce(func.sum(CompanyUnit.site_value), 0)).where(
+        CompanyUnit.company_id == company.id, CompanyUnit.status == "OPEN"))      # terrenos das filiais abertas
+    return quantize_money(cash + stock + assets + (company.site_value or 0) + branch_land - loans)
 
 
 def companies_net_value(db: Session, user_id: int) -> Decimal:

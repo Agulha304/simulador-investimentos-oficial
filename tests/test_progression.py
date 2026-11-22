@@ -383,24 +383,17 @@ def test_inflation_chain_raises_family_budget_and_restaurant_costs(client, auth_
     credit(client, auth_headers, "5000000")
     co = create_ok(client, auth_headers, name="Restaurante da Cadeia", segment="RESTAURANT")["company"]
     u = uid(client, auth_headers)
+    # fase 4: o contrato já assinado tem preço FIXO; a inflação dos alimentos reprecifica as OFERTAS de novos fornecedores (mesmo índice)
+    def list_price():
+        offers = client.post(f"/api/companies/{co['id']}/suppliers/search", headers=auth_headers, json={"category": "carnes"}).json()["offers"]
+        return float(offers[0]["unit_price"])
+    first = list_price()
     with SessionLocal() as s:
-        month = s.scalar(select(SimMonth).where(SimMonth.user_id == u, SimMonth.status == "OPEN"))
-        c = s.get(Company, co["id"])
-        from backend.models import InventoryItem
-        item = s.scalar(select(InventoryItem).where(InventoryItem.company_id == c.id).order_by(InventoryItem.id))
-        company_service.buy_stock(s, u, month, c.id, item.id, D("100"), "chain-1")
-        first = s.scalar(select(LedgerEntry.amount).where(LedgerEntry.user_id == u, LedgerEntry.idempotency_key.like("%chain-1%")))
         st = s.scalar(select(EconomyState).where(EconomyState.user_id == u).order_by(EconomyState.ref_month.desc()))
         st.indices = {**st.indices, "alimentacao": st.indices["alimentacao"] * 1.5}
         s.commit()
-    with SessionLocal() as s:
-        month = s.scalar(select(SimMonth).where(SimMonth.user_id == u, SimMonth.status == "OPEN"))
-        c = s.get(Company, co["id"])
-        item = s.scalar(select(InventoryItem).where(InventoryItem.company_id == c.id).order_by(InventoryItem.id))
-        company_service.buy_stock(s, u, month, c.id, item.id, D("100"), "chain-2")
-        second = s.scalar(select(LedgerEntry.amount).where(LedgerEntry.user_id == u, LedgerEntry.idempotency_key.like("%chain-2%")))
-        s.commit()
-    assert first is not None and second is not None and float(second) == pytest.approx(float(first) * 1.5, rel=0.01)
+    second = list_price()
+    assert second == pytest.approx(first * 1.5, rel=0.01)
     # a família usa o mesmo índice na abertura do mês seguinte
     advance(client, auth_headers)
     with SessionLocal() as s:

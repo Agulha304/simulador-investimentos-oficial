@@ -88,3 +88,51 @@ frontend e `pytest` completo verde. Código de referência: `backend/services/co
    variam por tipo de empresa e por mês; efeito incerto.
 6. **Imprevistos** decididos ao passar o mês (sistema de eventos com opções existente): **despejo** (terreno alugado), **processo
    trabalhista** (jornada longa; sobretudo PJ alegando vínculo), **quebra de equipamento** (custo extra, decisão de como consertar).
+
+### Fase 4 — decisões de implementação (fornecedores)
+- Categorias por segmento em `company_rules.SEGMENTS[..].supply_categories` (peso, unidade, consumo por venda, preço de referência derivado do
+  custo de referência por venda; pesos somam 1,0). Segmentos com estoque: **1 `InventoryItem` por categoria** (campo `category`).
+  Serviços (oficina, transporte): sem estoque; o custo variável é `vendas × Σ consumo × preço contratado` (linha `SUPPLIES`, no lugar de `VARIABLE`).
+  Tecnologia, agência, imobiliária e e-commerce: nenhuma categoria.
+- `CompanySupplier`: 1 contrato ATIVO por (empresa, categoria) (índice parcial único); volume = `max_units_month` do contrato (para mais volume,
+  encerre e contrate outro). Pedido mínimo = unidades por compra. Encerrar antes de 3 meses: multa de 2 pedidos mínimos (linha FEES); depois, sem multa.
+- Busca determinística (3–5 ofertas; token `AAAAMM-categoria-i` recalculado no servidor); piso de negociação 85–100% da lista, até −5 pts com
+  relevância 100 e −3 pts com volume cheio (mín. 80%); contraproposta se a proposta for ≥ 92% do piso; recusa bloqueia o fornecedor no mês
+  (reusa `company_candidate_blocks`). Proposta acima da lista fecha na lista.
+- Falha de entrega: prob. (1 − confiabilidade) por (semente, contrato, mês); entrega 30–70% do pedido (estoque: paga só o entregue) ou reduz a
+  capacidade do mês (serviços). Capacidade efetiva = `min_categorias(max_units_month / (consumo × (1 + perda)))`.
+- Sem contrato: estoque não é reposto (ruptura); serviços ficam bloqueados (vendas 0, evento). Empresas antigas: contratos "Fornecedor padrão"
+  ao preço de referência, volume ilimitado, confiabilidade 100% (migration `b8c9d0e1f2a3`); empresas novas nascem sem contratos nem estoque; o
+  capital mínimo mantém a reserva da 1ª compra em caixa.
+
+### Fase 5 — decisões de implementação (expansão e imprevistos)
+- **Níveis** (`company_rules.TIER_COST`; API `BARATO|MEDIO|CARO`): CAPACITY 10/22/45% e NEW_UNIT 60/100/170% e QUALITY 5/12/28% de `setup x porte`;
+  LARGER_PREMISES 40/60/100% de `setup x porte seguinte`; MARKETING 0,5x/1,5x/4x de `marketing_cost x fator fixo do porte`. A opção sorteada
+  multiplica o custo do nível (0,45x a 1,6x). Chances (efeito completo/parcial; o resto é fracasso): CAPACITY 35/30, 55/28, 72/20 %; QUALITY
+  40/30, 58/27, 75/18 %; LARGER_PREMISES 45/25, 70/18, 88/9 %; o `risk` da opção soma/subtrai da chance de efeito completo. Efeito completo:
+  capacidade +0,4/0,8/1,4 níveis (1 nível = +25%), qualidade +5/10/20 pontos (parcial = metade). Nunca garantido.
+- **Opções**: `POST /companies/{id}/expansion/options` sorteia 3 opções por `hash01(semente, empresa, mês, tipo, nível, opção)` de um conjunto por
+  família (`metrics_kind`: 9 opções/família em CAPACITY, NEW_UNIT e QUALITY; 9 em LARGER_PREMISES; 7 campanhas por segmento) em
+  `company_expansion_data.py`. `POST .../expansion/execute` RECALCULA as 3 e recusa qualquer outra; resultado = `hash01(semente, empresa, mês, tipo,
+  nível, opção, nº de aportes anteriores do tipo)`; idempotente por `idempotency_key` (tabela `company_expansions`). `/expand` foi removido.
+- **Capacidade**: `Company.capacity_boost` (níveis efetivos, fracionário; `capacity_level` = nº de aportes que funcionaram). Teto de 4 níveis. Efeitos
+  colaterais: custo fixo recorrente (`CompanyCost`), `storage_boost` (teto de estoque), gerente (Employee `production_manager`, não conta como
+  capacidade), pedidos de demissão determinísticos (só produtivos, no máx. 40%), turno extra (+6 h e +10% de salário: sobe o risco de processo).
+  A capacidade efetiva continua `min(equipe, teto, fornecedores)`: a resposta avisa que é preciso comprar mais dos fornecedores.
+- **Filiais** (`CompanyUnit`; a matriz é a própria empresa): relevância inicial = 25/40/60% da relevância da marca (+ ajuste da opção); viabilidade
+  = 0,3 + 1,1 x u^forma (forma 1,25/1,0/0,8 por nível) em [0,3; 1,4]; chance de nem abrir 12/7/3% (perde metade do custo). Cada unidade tem
+  demanda própria (`demand_units(units=1)` x viabilidade); a equipe produtiva global é repartida pela demanda de cada unidade (`people_share`);
+  fornecedores e estoque limitam o TOTAL (rateio proporcional). Folha rateada pela fatia de equipe, custo variável pelas vendas, fixos da filial =
+  aluguel + custos por unidade; a matriz fica com o resto, então `units_detail` soma o total do mês. Fecha se resultado acumulado < -60% do
+  investimento (>= 3 meses) ou se o caixa da empresa está negativo e a filial no vermelho: encerra o aluguel, vende o terreno a 92%, perde o investimento.
+- **Qualidade** (50 inicial): preço de mercado efetivo = preço x (1 + 0,20 (q-50)/50); ganho de relevância +0,4 (q-50)/50 ao mês; compra de
+  insumos e custo variável x (1 + 0,25 (q-50)/50).
+- **Campanha**: chance de nenhum efeito 30/18/10%, viral 10/17/28% (+-risco); efeito: demanda +8/14/25% por 2/3/4 meses e relevância +0,8/2,0/4,5
+  (x poder da opção; viral = 1,8x a demanda, +1 mês, 2x a relevância). `marketing_until` segue valendo; `marketing_boost` (padrão 12%) guarda a alta.
+- **Imprevistos** (`company_incidents.py`, eventos com decisão; no máx. 2 por mês na carteira, mesmo tipo/empresa só a cada 6 meses): despejo
+  (1,0%/mês x contrato antigo 1-2x x aluguel atrasado 3x x relevância 1,3x..0,5x; só PHYSICAL+RENT; opções negociar = 3 aluguéis, 85% renova;
+  mudar = relocate automático para ponto equivalente; justiça = exige advogado ativo, 50%, 1,5 aluguel de custas; ignorar = sem operar 2 meses ou
+  até relocar), processo trabalhista (0,4% + jornada média > 48 h (1,5% + 0,4 pt/h) + 0,5% x (1 + tempo de casa/36) por PJ, teto 12%; valor =
+  folha real x (2,0 / 0,5-3,5 / 4,0) x multiplicador da causa 1,0-1,75) e quebra de equipamento (3%/mês x capacidade ampliada x turno extra; conserto
+  barato 4,5% do setup, médio 8%, premium 16% + 12 meses sem quebra, adiar = -30% de vendas e 40% de piorar). Custo esperado entra em
+  `company_balance` (`incidents_on`); virada continua entre os meses 12 e 16.

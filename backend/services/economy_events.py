@@ -49,6 +49,7 @@ class EventDef:
     options: tuple[Option, ...] = ()
     sectors: tuple[str, ...] = ()     # segmentos possíveis (SECTOR); vazio = todos
     company_needs: str = ""           # COMPANY: só empresas com 'employees' ou 'partners'
+    co_prob: Callable | None = None   # imprevisto POR EMPRESA (fase 5): (db, empresa, mês) -> prob. mensal; sorteado em `_spawn_incidents`
 
 
 def _lo_conf(m, c): return 2.5 if m["confidence"] < 40 else 1.0 if m["confidence"] < 55 else 0.2
@@ -63,9 +64,18 @@ def _family(m, c): return 1.5 if c["children"] or c["partner"] else 0.6
 def _renting(m, c): return 1.0 if c["housing_kind"] in ("RENT", "SHARED") else 0.0
 
 
+def _inc(name: str) -> Callable:
+    """Probabilidade mensal de um imprevisto POR EMPRESA (importação tardia: `company_incidents` usa o serviço de empresas)."""
+    def f(db, c, ref):
+        from backend.services import company_incidents
+        return getattr(company_incidents, name)(db, c, ref)
+    return f
+
+
 CATALOG: tuple[EventDef, ...] = (
     EventDef("processo_trabalhista", "Funcionário processa a empresa", "Um funcionário entrou com um processo trabalhista pedindo verbas. Como reagir?",
-             "BUSINESS", "COMPANY", False, 2, (1, 1), 0.012, lambda m, c: _has_employees(m, c) * (1.6 if m["unemployment"] > 10 else 1.0), company_needs="employees",
+             "BUSINESS", "COMPANY", False, 2, (1, 1), 0.0, lambda m, c: _has_employees(m, c) * (1.6 if m["unemployment"] > 10 else 1.0),
+             co_prob=lambda db, c, ref: _inc("lawsuit_prob")(db, c, ref), company_needs="employees",
              options=(Option("acordo", "Fazer um acordo", "Paga agora e encerra o assunto.", (Outcome(1.0, "Acordo fechado: o processo foi encerrado.", {"company_oneoff": {"payroll_mult": 2.0, "label": "Acordo trabalhista"}}, 1),)),
                       Option("contestar", "Contestar na justiça", "Advogado custa; você pode ganhar ou perder feio.",
                              (Outcome(0.5, "Você ganhou o processo e só pagou o advogado.", {"company_oneoff": {"payroll_mult": 0.5, "label": "Advogado (processo trabalhista)"}}, 1),
@@ -183,9 +193,22 @@ CATALOG: tuple[EventDef, ...] = (
     # ------------------------------------------------------------ empresariais
     EventDef("fornecedor_sobe", "Fornecedor aumenta preços", "Seu principal fornecedor reajusta a tabela.",
              "BUSINESS", "COMPANY", False, 2, (3, 5), 0.07, _has_company, {"supplier_pct": 12}),
-    EventDef("equipamento_quebra", "Equipamento quebrou", "Um equipamento essencial precisou de conserto urgente.",
-             "BUSINESS", "COMPANY", False, 2, (1, 1), 0.05, _has_company,
-             {"company_oneoff": {"amount": 4500, "price_cat": "insumos", "label": "Conserto de equipamento"}}),
+    EventDef("equipamento_quebra", "Equipamento quebrou", "Um equipamento essencial quebrou. Como consertar?",
+             "BUSINESS", "COMPANY", False, 2, (1, 1), 0.0, co_prob=lambda db, c, ref: _inc("breakage_prob")(db, c, ref),
+             options=(
+                 Option("barato", "Conserto barato", "Resolve rápido e pelo menor preço, mas pode quebrar de novo.",
+                        (Outcome(0.70, "O conserto barato segurou.", {"company_oneoff": {"setup_mult": 0.045, "label": "Conserto barato de equipamento"}}, 1),
+                         Outcome(0.30, "O conserto barato não durou: quebrou de novo e custou o dobro.", {"company_oneoff": {"setup_mult": 0.10, "label": "Conserto barato + reincidência"}}, 1))),
+                 Option("medio", "Conserto médio", "Preço de mercado; raramente dá problema.",
+                        (Outcome(0.90, "Equipamento consertado.", {"company_oneoff": {"setup_mult": 0.08, "label": "Conserto de equipamento"}}, 1),
+                         Outcome(0.10, "O conserto deixou a desejar e foi preciso refazer.", {"company_oneoff": {"setup_mult": 0.12, "label": "Conserto de equipamento (refeito)"}}, 1))),
+                 Option("premium", "Conserto premium com revisão geral", "Mais caro, mas dura mais: sem novas quebras por 12 meses.",
+                        (Outcome(1.0, "Revisão completa: o equipamento ficou como novo.", {"company_oneoff": {"setup_mult": 0.16, "label": "Conserto premium de equipamento"},
+                                                                                       "company_action": {"type": "shield", "months": 12}}, 1),)),
+                 Option("adiar", "Adiar o conserto", "Não gasta agora, mas a operação fica reduzida no mês.",
+                        (Outcome(0.60, "A operação rodou no limite, com vendas menores.", {"company_demand_pct": -30}, 1),
+                         Outcome(0.40, "O adiamento piorou o defeito: a operação parou parte do mês e o conserto saiu mais caro.",
+                                 {"company_demand_pct": -30, "company_oneoff": {"setup_mult": 0.14, "label": "Conserto adiado (dano maior)"}}, 1)), default=True))),
     EventDef("concorrente", "Concorrente entra no mercado", "Um novo concorrente abre perto do seu negócio.",
              "BUSINESS", "COMPANY", False, 2, (1, 1), 0.05, _has_company,
              options=(
@@ -208,6 +231,23 @@ CATALOG: tuple[EventDef, ...] = (
                         (Outcome(0.6, "A expansão atraiu mais clientes.", {"company_demand_pct": 20}, 8),
                          Outcome(0.4, "O ponto não rendeu o esperado.", {"company_demand_pct": 2}, 8)), cost=15000),
                  Option("passar", "Deixar passar", "Sem risco.", (Outcome(1.0, "Você deixou a oportunidade passar.", {}, 1),), default=True))),
+    EventDef("despejo", "Ameaça de despejo", "O proprietário do ponto quer o imóvel de volta. O que fazer?",
+             "BUSINESS", "COMPANY", False, 3, (1, 1), 0.0, co_prob=lambda db, c, ref: _inc("eviction_prob")(db, c, ref),
+             options=(
+                 Option("negociar", "Negociar a permanência", "Paga 3 aluguéis para renovar; o proprietário pode recusar.",
+                        (Outcome(0.85, "O proprietário aceitou: contrato renovado.", {"company_oneoff": {"rent_mult": 3.0, "label": "Negociação de permanência (aluguel)"},
+                                                                                      "company_action": {"type": "renew_lease"}}, 1),
+                         Outcome(0.15, "O proprietário recusou o dinheiro: despejo.", {"company_oneoff": {"rent_mult": 1.0, "label": "Taxa da negociação fracassada"},
+                                                                                       "company_action": {"type": "evict", "months": 2}}, 1))),
+                 Option("mudar", "Mudar de endereço", "Paga a mudança para um ponto equivalente (3 aluguéis, reinstalação e multa); vende menos no mês.",
+                        (Outcome(1.0, "A empresa se mudou para um ponto equivalente.", {"company_action": {"type": "relocate_equiv"}}, 1),)),
+                 Option("justica", "Brigar na justiça", "Precisa de advogado ativo; custa e o resultado é incerto.",
+                        (Outcome(0.50, "A justiça garantiu a permanência: contrato renovado.", {"company_oneoff": {"rent_mult": 1.5, "label": "Advogado e custas (despejo)"},
+                                                                                              "company_action": {"type": "renew_lease"}}, 1),
+                         Outcome(0.50, "A ação foi perdida: despejo e custas.", {"company_oneoff": {"rent_mult": 1.5, "label": "Advogado e custas (despejo)"},
+                                                                                 "company_action": {"type": "evict", "months": 2}}, 1))),
+                 Option("ignorar", "Não fazer nada", "O despejo acontece: a empresa fica sem operar por 2 meses ou até mudar de endereço.",
+                        (Outcome(1.0, "A empresa foi despejada e ficou sem ponto.", {"company_action": {"type": "evict", "months": 2}}, 1),), default=True))),
 )
 CATALOG_BY_KEY = {e.key: e for e in CATALOG}
 

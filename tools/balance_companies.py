@@ -8,6 +8,8 @@ Uso (na raiz do projeto):
     .venv/bin/python tools/balance_companies.py --segment CAFE       # mês a mês de um segmento
     .venv/bin/python tools/balance_companies.py --draw --seed 3      # com sorteio dos meses zerados (como no jogo)
     .venv/bin/python tools/balance_companies.py --regime PJ --marketing
+    .venv/bin/python tools/balance_companies.py --supplier-mult 1.15   # contratos 15% acima da referência (fase 4)
+    .venv/bin/python tools/balance_companies.py --no-incidents         # sem o custo esperado dos imprevistos (fase 5)
 """
 import argparse
 import sys
@@ -27,9 +29,13 @@ def main() -> None:
     ap.add_argument("--regime", default="CLT", choices=[r.value for r in EmployeeRegime])
     ap.add_argument("--marketing", action="store_true", help="campanha de marketing ativa o tempo todo")
     ap.add_argument("--draw", action="store_true", help="sorteia os meses zerados (hash01) em vez do valor esperado")
+    ap.add_argument("--supplier-mult", type=float, default=1.0,
+                    help="preço contratado dos fornecedores / preço de referência (1.0 = ~preço de lista; 0.9 = negociou 10%% abaixo)")
+    ap.add_argument("--no-incidents", action="store_true", help="sem o custo esperado dos imprevistos (fase 5): reproduz a tabela de antes")
     ap.add_argument("--seed", type=int, default=bal.SIM_SEED)
     a = ap.parse_args()
-    kw = dict(size=CompanySize(a.size), regime=EmployeeRegime(a.regime), marketing=a.marketing, expected=not a.draw, seed=a.seed)
+    kw = dict(size=CompanySize(a.size), regime=EmployeeRegime(a.regime), marketing=a.marketing, expected=not a.draw, seed=a.seed, supplier_mult=a.supplier_mult,
+              incidents_on=not a.no_incidents)
     if a.segment:
         r = bal.simulate(CompanySegment(a.segment), months=a.months, **kw)
         print(f"{r.segment}: capital mínimo {bal.brl(r.minimum_capital)} | caixa inicial {bal.brl(r.start_cash)} | custo fixo+folha {bal.brl(r.monthly_cost)}/mês")

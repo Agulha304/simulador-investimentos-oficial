@@ -251,7 +251,9 @@ export interface CoSegment {
   key: Segment; label: string; description: string; unit_label: string; price: Decimal; tax: CoTaxInfo;
   roles: CoRole[]; stock: string[]; minimum_capital: Decimal;
   channels: CoChannel[]; locations: CoLocation[]; metrics_kind: CoMetricsKind; default_location: string;
+  supply_categories?: CoSupplyCategory[];
 }
+export interface CoSupplyCategory { key: string; label: string; unit: string; weight: Decimal; per_sale: Decimal; reference_price: Decimal }
 export type CoChannel = "ONLINE" | "PHYSICAL";
 export type CoSiteMode = "BUY" | "RENT";
 export type CoMetricsKind = "PRODUCTION" | "RETAIL" | "SERVICE";
@@ -264,27 +266,45 @@ export interface CoQuote {
   channel: CoChannel; site_mode: CoSiteMode | null; location: string; owner_share_pct: Decimal;
   minimum_capital: Decimal; owner_cost: Decimal; extra_capital: Decimal; total_owner_cost: Decimal;
   setup_cost: Decimal; initial_stock: Decimal; land_cost: Decimal; monthly_fixed: Decimal; monthly_rent: Decimal; monthly_payroll: Decimal; mandatory_cost: Decimal; mandatory_roles: string[]; expected_units: number;
-  first_month_units?: number; operating_reserve?: Decimal; reserve_months?: number; max_staff?: number; tax?: CoTaxInfo | null;
+  first_purchase_reserve?: Decimal; supply_categories?: CoSupplyCategory[]; first_month_units?: number; operating_reserve?: Decimal; reserve_months?: number; max_staff?: number; tax?: CoTaxInfo | null;
 }
 export interface CoSiteInput { channel?: CoChannel; site_mode?: CoSiteMode; location?: string }
 export interface Company {
   id: number; name: string; segment: Segment; segment_label: string; unit_label: string; metrics_kind: CoMetricsKind; channel: CoChannel; site_mode: CoSiteMode | null; site_value: Decimal; location: string; location_label: string;
   size: string; units: number; capacity_level: number; price: Decimal; reputation: number; relevance: number; owner_share_pct: Decimal; owner_salary: Decimal;
-  auto_restock: boolean; status: string; founded_on: string; marketing_until: string | null; cash: Decimal; debts: Decimal; equity: Decimal;
-  last_revenue: Decimal | null; last_net_result: Decimal | null;
+  auto_restock: boolean; status: string; founded_on: string; marketing_until: string | null;
+  quality?: number; capacity_boost?: number; storage_boost?: number; marketing_boost?: number; suspended_until?: string | null; cash: Decimal; debts: Decimal; equity: Decimal;
+  last_revenue: Decimal | null; last_net_result: Decimal | null; supplier_budget?: Decimal; supply_ready?: boolean;
 }
 export interface CoMonth {
   ref_month: string; demand_units: Decimal; capacity_units: Decimal; units_sold: Decimal; stockout: boolean; revenue: Decimal;
   variable_costs: Decimal; fixed_costs: Decimal; payroll: Decimal; taxes: Decimal; tax_regime?: string | null; tax_breakdown?: CoTaxLine[] | null; interest: Decimal; operating_result: Decimal;
   net_result: Decimal; cash_end: Decimal; debts_end: Decimal; equity_end: Decimal; reputation_end: number; relevance_end?: number; zero_sales?: boolean; irregular?: boolean; fines?: Decimal;
+  units_detail?: CoUnitMonth[] | null;
 }
+export interface CoUnitMonth {
+  unit_id: number | null; name: string; kind: "HQ" | "BRANCH"; location: string; demand: number; capacity: number; sold: number; relevance: number;
+  revenue: Decimal; variable_costs: Decimal; fixed_costs: Decimal; payroll: Decimal; result: Decimal; cumulative_result: Decimal | null;
+}
+export interface CoUnit {
+  id: number | null; kind: "HQ" | "BRANCH"; name: string; location: string; location_label: string; channel: CoChannel; site_mode: CoSiteMode | null; site_value: Decimal;
+  monthly_rent: Decimal; relevance: number; viability: number | null; status: "OPEN" | "CLOSED"; opened_month: string | null; closed_month: string | null;
+  closed_reason: string | null; cumulative_result: Decimal | null; investment: Decimal | null;
+}
+export type CoExpKind = "CAPACITY" | "NEW_UNIT" | "QUALITY" | "MARKETING" | "LARGER_PREMISES";
+export type CoTier = "BARATO" | "MEDIO" | "CARO";
+export interface CoTierInfo { tier: CoTier; label: string; cost: Decimal; chance: string }
+export interface CoExpOption { key: string; title: string; description: string; cost: Decimal; side_effects: string[]; risk_hint: string }
+export interface CoExpSite { channel: CoChannel; location: string; label: string; monthly_rent: Decimal; land_cost: Decimal }
+export interface CoExpOptions { kind: CoExpKind; tier: CoTier; tier_label: string; tier_cost: Decimal; ref_month: string; options: CoExpOption[]; sites: CoExpSite[] }
+export interface CoExpResult { success: boolean; outcome: "FULL" | "PARTIAL" | "FAIL"; message: string; effects: string[]; cost: Decimal; replayed: boolean; company: CompanyDetail }
 export interface CoEmployee {
   id: number; name: string; role: string; role_label: string; level: string; regime: CoRegime; schedule: CoSchedule; education: string; education_label: string;
   experience_years: number; salary: Decimal; total_cost: Decimal; severance_estimate: Decimal; lawsuit_risk_pct: number; hours_week: number;
   productivity: Decimal; status: string; hired_on: string; terminated_on: string | null;
 }
 export interface CoCompliance {
-  regular: boolean; required: { role: string; label: string; present: boolean }[]; missing: string[]; missing_labels: string[]; estimated_fine: Decimal;
+  regular: boolean; required: { role: string; label: string; present: boolean }[]; missing: string[]; missing_labels: string[]; estimated_fine: Decimal; grace_months?: number;
 }
 export interface CoCandidate {
   id: string; name: string; role: string; role_label: string; regime: CoRegime; education: string; education_label: string; experience_years: number;
@@ -293,6 +313,27 @@ export interface CoCandidate {
 export interface CoHireBody { candidate_id: string; salary: string; hours_week: number; schedule: CoSchedule; regime: CoRegime; confirm_risk: boolean; idempotency_key: string }
 export interface CoHireResult { accepted: boolean; status: "ACCEPTED" | "COUNTER" | "REFUSED"; message: string; counter_offer: Decimal | null; company: CompanyDetail | null }
 export interface CoHeadhunterResult { fee: Decimal; found: number; message: string; candidates: CoCandidate[]; company: CompanyDetail }
+export interface CoSupplyChecklist { category: string; label: string; present: boolean; supplier: string | null }
+export interface CoSupplierContract {
+  id: number; category: string; category_label: string; unit: string; name: string; unit_price: Decimal; reference_price: Decimal; price_vs_reference_pct: number;
+  min_monthly_order: Decimal; max_units_month: Decimal; reliability: number; failure_probability_pct: number; lead_days: number; status: string;
+  started_month: string; ended_month: string | null; term_months: number; is_default: boolean; volume_used: Decimal; early_end_fine: Decimal;
+}
+export interface CoSupplierBudgetRow {
+  category: string; label: string; unit: string; weight: Decimal; supplier_id: number | null; supplier: string | null; unit_price: Decimal; estimated: boolean;
+  planned_volume: Decimal; planned_spend: Decimal; last_actual: Decimal; max_units_month: Decimal | null;
+}
+export interface CoSupply {
+  required: boolean; ready: boolean; checklist: CoSupplyChecklist[]; contracts: CoSupplierContract[]; ended: CoSupplierContract[];
+  effective_capacity: number | null; warning: string | null;
+  budget: { rows: CoSupplierBudgetRow[]; total_planned: Decimal; total_last_actual: Decimal; last_month: string | null };
+}
+export interface CoSupplierOffer {
+  id: string; category: string; category_label: string; unit: string; name: string; unit_price: Decimal; reference_price: Decimal; price_vs_reference_pct: number;
+  min_monthly_order: Decimal; max_units_month: Decimal; reliability: number; lead_days: number;
+}
+export interface CoSupplierSearch { category: string; month: string; offers: CoSupplierOffer[] }
+export interface CoSupplierResult { accepted: boolean; status: "ACCEPTED" | "COUNTER" | "REFUSED"; message: string; counter_offer: Decimal | null; company: CompanyDetail | null }
 export interface CoCrisisInfo {
   active: boolean; sector_pct: number; demand_index: number; sales_mult: number;
   crises: { type: string; label: string; phase: string; intensity: number; sector_pct_at_peak: number }[];
@@ -308,11 +349,13 @@ export interface CoRelocateQuote {
 export interface CompanyDetail {
   partners?: { person_id: number; name: string; share_pct: string; contribution: string; status: string; joined_month: string; finance: string }[];
   company: Company; distributable_profit: Decimal; runway_months: Decimal | null; monthly_obligations: Decimal; loan_limit: Decimal;
-  expected_demand: number; expected_capacity: number; market?: CoMarket | null; expansion_costs: Record<string, Decimal>; roles: CoRole[];
+  expected_demand: number; expected_capacity: number; market?: CoMarket | null; expansion_costs: Record<string, Record<string, Decimal>>;
+  expansion_tiers?: Record<string, CoTierInfo[]>; units_list?: CoUnit[]; roles: CoRole[];
   employees: CoEmployee[];
   compliance?: CoCompliance | null;
   inventory: { id: number; name: string; unit: string; quantity: Decimal; unit_cost: Decimal; value: Decimal; supplier: string;
-    min_quantity: Decimal; monthly_consumption_est: Decimal; low: boolean; max_quantity?: Decimal }[];
+    min_quantity: Decimal; monthly_consumption_est: Decimal; low: boolean; max_quantity?: Decimal; category?: string | null; contracted?: boolean }[];
+  supply?: CoSupply | null;
   costs: { id: number; kind: string; name: string; amount: Decimal; active: boolean }[];
   lease: { kind: string; good_id: number | null; name: string; monthly_rent: Decimal; start_month: string } | null;
   loans: { id: number; principal: Decimal; annual_rate_pct: Decimal; term_months: number; start_month: string; balance: Decimal; status: string;
@@ -474,13 +517,21 @@ export const api = {
   coHeadhunter: (id: number, body: { role: string; regime: CoRegime; max_salary: string; min_level: string; idempotency_key?: string }) =>
     request<CoHeadhunterResult>(`/companies/${id}/headhunter`, { method: "POST", body: JSON.stringify({ ...body, idempotency_key: body.idempotency_key ?? crypto.randomUUID() }) }),
   coFire: (id: number, employeeId: number) => request<CompanyDetail>(`/companies/${id}/employees/${employeeId}`, { method: "DELETE" }),
+  coSupplierSearch: (id: number, category: string) =>
+    request<CoSupplierSearch>(`/companies/${id}/suppliers/search`, { method: "POST", body: JSON.stringify({ category }) }),
+  coSupplierNegotiate: (id: number, body: { supplier_id: string; unit_price: string; monthly_volume?: string; idempotency_key?: string }) =>
+    request<CoSupplierResult>(`/companies/${id}/suppliers/negotiate`, { method: "POST", body: JSON.stringify({ ...body, idempotency_key: body.idempotency_key ?? crypto.randomUUID() }) }),
+  coSupplierEnd: (id: number, supplierId: number) => request<CompanyDetail>(`/companies/${id}/suppliers/${supplierId}`, { method: "DELETE" }),
   coStock: (id: number, item_id: number, quantity: string) =>
     request<CompanyDetail>(`/companies/${id}/stock`, { method: "POST", body: JSON.stringify({ item_id, quantity, idempotency_key: crypto.randomUUID() }) }),
   coRelocateQuote: (id: number, body: { location: string; site_mode?: CoSiteMode; size?: string }) =>
     request<CoRelocateQuote>(`/companies/${id}/relocate/quote`, { method: "POST", body: JSON.stringify(body) }),
   coRelocate: (id: number, body: { location: string; site_mode?: CoSiteMode; size?: string }) =>
     request<CompanyDetail>(`/companies/${id}/relocate`, { method: "POST", body: JSON.stringify({ ...body, idempotency_key: crypto.randomUUID() }) }),
-  coExpand: (id: number, kind: string) => request<CompanyDetail>(`/companies/${id}/expand`, { method: "POST", body: JSON.stringify({ kind }) }),
+  coExpansionOptions: (id: number, kind: CoExpKind, tier: CoTier) =>
+    request<CoExpOptions>(`/companies/${id}/expansion/options`, { method: "POST", body: JSON.stringify({ kind, tier }) }),
+  coExpansionExecute: (id: number, body: { kind: CoExpKind; tier: CoTier; option_key: string; idempotency_key: string; channel?: CoChannel; site_mode?: CoSiteMode; location?: string }) =>
+    request<CoExpResult>(`/companies/${id}/expansion/execute`, { method: "POST", body: JSON.stringify(body) }),
   coLease: (id: number, body: { kind: string; good_id?: number; monthly_rent?: string }) =>
     request<CompanyDetail>(`/companies/${id}/lease`, { method: "POST", body: JSON.stringify(body) }),
   coLoan: (id: number, amount: string, term_months: number) =>

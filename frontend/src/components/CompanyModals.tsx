@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
-import { api, type CoCandidate, type CoCatalog, type CoHeadhunterResult, type CoRegime, type CoRelocateQuote, type CoSchedule, type CoSiteMode, type CompanyDetail, type Good } from "../services/api";
+import { api, type CoCandidate, type CoChannel, type CoExpKind, type CoExpOptions, type CoExpResult, type CoTier, type CoSupplierOffer, type CoCatalog, type CoHeadhunterResult, type CoRegime, type CoRelocateQuote, type CoSchedule, type CoSiteMode, type CompanyDetail, type Good } from "../services/api";
 import { LEVEL_LABEL, fmtBRL, parseMoneyInput } from "../lib/format";
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : "Erro inesperado");
@@ -331,5 +331,215 @@ export function RelocateModal({ d, onClose, onDone }: { d: CompanyDetail; onClos
       {msg && <div className="alert">{msg}</div>}
       <button className="btn primary" disabled={busy || !quote}>{busy ? "Mudando…" : "Confirmar mudança"}</button>
     </Modal>
+  );
+}
+
+
+/** Fornecedores de uma categoria: lista do mês (3 a 5), proposta de preço e resposta (aceitou / recusou / contraproposta). */
+export function SupplierModal({ d, category, onClose, onDone }: {
+  d: CompanyDetail; category: string; onClose: () => void; onDone: (d: CompanyDetail, msg: string) => void;
+}) {
+  const label = d.supply?.checklist.find((x) => x.category === category)?.label ?? category;
+  const [offers, setOffers] = useState<CoSupplierOffer[] | null>(null);
+  const [gone, setGone] = useState<string[]>([]);
+  const [pick, setPick] = useState<CoSupplierOffer | null>(null);
+  const [price, setPrice] = useState("");
+  const [volume, setVolume] = useState("");
+  const [counter, setCounter] = useState<{ value: string; text: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    api.coSupplierSearch(d.company.id, category).then((r) => { if (live) setOffers(r.offers); }).catch((e) => { if (live) { setOffers([]); setMsg(errMsg(e)); } });
+    return () => { live = false; };
+  }, [d.company.id, category]);
+  const open = (o: CoSupplierOffer) => { setPick(o); setPrice(o.unit_price); setVolume(String(o.max_units_month)); setCounter(null); setMsg(null); };
+  async function send(value: string) {
+    if (!pick) return;
+    setBusy(true); setMsg(null);
+    try {
+      const r = await api.coSupplierNegotiate(d.company.id, { supplier_id: pick.id, unit_price: parseMoneyInput(value), monthly_volume: parseMoneyInput(volume) || undefined });
+      if (r.status === "ACCEPTED" && r.company) onDone(r.company, r.message);
+      else if (r.status === "COUNTER") setCounter({ value: r.counter_offer ?? value, text: r.message });
+      else { setMsg(r.message); setGone((g) => [...g, pick.id]); setCounter(null); }
+    } catch (err) { setMsg(errMsg(err)); } finally { setBusy(false); }
+  }
+  const refused = pick != null && gone.includes(pick.id);
+  return (
+    <Panel title={`Fornecedores — ${label}`} onClose={onClose} wide>
+      {offers === null && <div className="muted">Procurando fornecedores…</div>}
+      {offers !== null && offers.length === 0 && <div className="empty">Nenhum fornecedor disponível agora. Volte no próximo mês.</div>}
+      {offers !== null && offers.length > 0 && (
+        <div className="table-wrap"><table>
+          <thead><tr><th>Fornecedor</th><th className="r">Preço / {offers[0].unit}</th><th className="r">vs. referência</th><th className="r">Pedido mínimo</th><th className="r">Volume máx./mês</th><th className="r">Confiabilidade</th><th className="r">Prazo</th><th /></tr></thead>
+          <tbody>{offers.map((o) => (
+            <tr key={o.id} className={gone.includes(o.id) ? "muted" : ""}>
+              <td><b>{o.name}</b></td><td className="r num">{fmtBRL(o.unit_price)}</td>
+              <td className={`r num ${o.price_vs_reference_pct <= 0 ? "tone-up" : "tone-down"}`}>{o.price_vs_reference_pct > 0 ? "+" : ""}{String(o.price_vs_reference_pct).replace(".", ",")}%</td>
+              <td className="r num">{o.min_monthly_order} {o.unit}</td><td className="r num">{o.max_units_month} {o.unit}</td>
+              <td className="r num">{Math.round(o.reliability * 100)}%</td><td className="r num">{o.lead_days} dias</td>
+              <td className="r"><button type="button" className="btn small ghost" disabled={gone.includes(o.id)} onClick={() => open(o)}>{gone.includes(o.id) ? "indisponível" : "Negociar"}</button></td>
+            </tr>))}</tbody>
+        </table></div>
+      )}
+      <p className="muted small" style={{ margin: 0 }}>Preço por unidade de compra; o contrato vale até você encerrar (encerrar antes de 3 meses tem multa de 2 pedidos mínimos). Fornecedor menos confiável pode falhar na entrega em alguns meses (entrega só parte do pedido). Quanto maior a relevância da empresa e o volume contratado, mais desconto ele aceita.</p>
+      {pick && (
+        <div className="card" style={{ margin: 0 }}>
+          <b>Proposta para {pick.name}</b>
+          <label>Preço proposto por {pick.unit} (R$)<input inputMode="decimal" value={price} disabled={refused} onChange={(e) => { setPrice(e.target.value); setCounter(null); }} /></label>
+          <label>Volume mensal contratado ({pick.unit}) — entre {pick.min_monthly_order} e {pick.max_units_month}<input inputMode="decimal" value={volume} disabled={refused} onChange={(e) => { setVolume(e.target.value); setCounter(null); }} /></label>
+          {counter && (
+            <div className="ok">{counter.text}
+              <div className="row-gap" style={{ marginTop: 8 }}>
+                <button type="button" className="btn primary small" disabled={busy} onClick={() => { setPrice(counter.value); void send(counter.value); }}>Aceitar contraproposta ({fmtBRL(counter.value)})</button>
+              </div>
+            </div>)}
+          {msg && <div className="alert">{msg}</div>}
+          {!refused && <button type="button" className="btn primary" disabled={busy || !(Number(parseMoneyInput(price)) > 0)} onClick={() => void send(price)}>{busy ? "Enviando…" : "Propor"}</button>}
+        </div>)}
+      {!pick && msg && <div className="alert">{msg}</div>}
+    </Panel>
+  );
+}
+
+
+/** Expansão em passos: tipo -> nível (com preços) -> 3 opções sorteadas -> confirmar -> resultado. O servidor recalcula as opções ao executar. */
+export const EXPANSION_KINDS: { key: CoExpKind; label: string; text: string }[] = [
+  { key: "CAPACITY", label: "Ampliar capacidade", text: "Chance de elevar a produção/atendimento. Produzir mais não garante vender mais." },
+  { key: "NEW_UNIT", label: "Abrir nova unidade", text: "Filial com a ajuda parcial da relevância da marca: costuma vender menos que a matriz, mas pode surpreender ou falir." },
+  { key: "QUALITY", label: "Qualidade dos produtos", text: "Sobe a qualidade: mais relevância e tolerância a preço, mas insumos mais caros." },
+  { key: "MARKETING", label: "Campanha de publicidade", text: "Efeito incerto: pode não funcionar, funcionar ou viralizar." },
+  { key: "LARGER_PREMISES", label: "Instalações maiores", text: "Chance de passar ao próximo porte (mais tetos, mais aluguel e custos)." },
+];
+const OUTCOME_LABEL = { FULL: "Funcionou", PARTIAL: "Funcionou em parte", FAIL: "Não funcionou" } as const;
+
+export function ExpansionModal({ d, onClose, onDone }: { d: CompanyDetail; onClose: () => void; onDone: (d: CompanyDetail, msg: string) => void }) {
+  const c = d.company;
+  const [step, setStep] = useState<1 | 2 | 3 | 4 | 5>(1);
+  const [kind, setKind] = useState<CoExpKind | null>(null);
+  const [tier, setTier] = useState<CoTier | null>(null);
+  const [opts, setOpts] = useState<CoExpOptions | null>(null);
+  const [optKey, setOptKey] = useState<string | null>(null);
+  const [channel, setChannel] = useState<CoChannel>(c.channel);
+  const [mode, setMode] = useState<CoSiteMode>("RENT");
+  const [location, setLocation] = useState("");
+  const [result, setResult] = useState<CoExpResult | null>(null);
+  const [idem] = useState(() => crypto.randomUUID());
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const choice = opts?.options.find((o) => o.key === optKey) ?? null;
+  const sitesFor = (opts?.sites ?? []).filter((s) => s.channel === channel);
+  const site = sitesFor.find((s) => s.location === location) ?? null;
+
+  async function pickTier(t: CoTier) {
+    if (!kind) return;
+    setBusy(true); setMsg(null);
+    try {
+      const o = await api.coExpansionOptions(c.id, kind, t);
+      setTier(t); setOpts(o); setOptKey(null);
+      const first = o.sites.find((s) => s.channel === channel) ?? o.sites[0];
+      if (first) { setChannel(first.channel); setLocation(first.location); }
+      setStep(3);
+    } catch (e) { setMsg(errMsg(e)); } finally { setBusy(false); }
+  }
+  const landCost = kind === "NEW_UNIT" && mode === "BUY" && site ? Number(site.land_cost) : 0;
+  const total = choice ? Number(choice.cost) + landCost : 0;
+  async function confirm() {
+    if (!kind || !tier || !choice) return;
+    setBusy(true); setMsg(null);
+    try {
+      const body = { kind, tier, option_key: choice.key, idempotency_key: idem,
+        ...(kind === "NEW_UNIT" ? { channel, site_mode: channel === "PHYSICAL" ? mode : undefined, location: channel === "ONLINE" ? "online" : location } : {}) };
+      setResult(await api.coExpansionExecute(c.id, body));
+      setStep(5);
+    } catch (e) { setMsg(errMsg(e)); } finally { setBusy(false); }
+  }
+  const stepTitle = ["", "1. Tipo de aporte", "2. Nível de investimento", "3. Escolha uma opção", "4. Confirmar", "Resultado"][step];
+  return (
+    <Panel title={`Expansão — ${stepTitle}`} onClose={result ? () => onDone(result.company, result.message) : onClose} wide>
+      {step === 1 && (
+        <div className="goods-grid">{EXPANSION_KINDS.map((k) => (
+          <button key={k.key} type="button" className="card good-card" style={{ textAlign: "left" }} onClick={() => { setKind(k.key); setStep(2); }}>
+            <b>{k.label}</b><span className="muted small">{k.text}</span>
+            <span className="num small">a partir de {fmtBRL(d.expansion_costs[k.key]?.BARATO ?? "0")}</span>
+          </button>))}</div>
+      )}
+      {step === 2 && kind && (
+        <>
+          <p className="muted small" style={{ margin: 0 }}>Quanto maior o nível, maior a chance de dar certo e o efeito — mas nunca é garantido. O dinheiro é gasto de qualquer jeito.</p>
+          <div className="goods-grid">{(d.expansion_tiers?.[kind] ?? []).map((t) => (
+            <button key={t.tier} type="button" className="card good-card" style={{ textAlign: "left" }} disabled={busy} onClick={() => void pickTier(t.tier)}>
+              <b>{t.label}</b><span className="num good-value">{fmtBRL(t.cost)}</span><span className="muted small">{t.chance}</span>
+            </button>))}</div>
+          <button type="button" className="link-btn" onClick={() => setStep(1)}>← voltar</button>
+        </>
+      )}
+      {step === 3 && opts && (
+        <>
+          <p className="muted small" style={{ margin: 0 }}>Três opções sorteadas para este mês (mudam mês a mês e de empresa para empresa). Cada uma traz custo, efeitos colaterais e uma dica de risco.</p>
+          <div className="goods-grid">{opts.options.map((o) => (
+            <button key={o.key} type="button" className={`card good-card ${optKey === o.key ? "on" : ""}`} style={{ textAlign: "left", outline: optKey === o.key ? "2px solid var(--accent, #2b6cb0)" : undefined }} onClick={() => setOptKey(o.key)}>
+              <b>{o.title}</b><span className="muted small">{o.description}</span>
+              <span className="num good-value">{fmtBRL(o.cost)}</span>
+              <span className="small"><i>{o.risk_hint}</i></span>
+              <ul className="small" style={{ margin: 0, paddingLeft: 18 }}>{o.side_effects.map((s, i) => <li key={i}>{s}</li>)}</ul>
+            </button>))}</div>
+          {kind === "NEW_UNIT" && (
+            <div className="card" style={{ margin: 0 }}>
+              <b>Onde abrir</b>
+              {c.channel === "PHYSICAL" && opts.sites.some((s) => s.channel === "ONLINE") && (
+                <div className="seg" role="group" aria-label="Canal">
+                  <button type="button" className={channel === "PHYSICAL" ? "on" : ""} onClick={() => { setChannel("PHYSICAL"); setLocation(opts.sites.find((s) => s.channel === "PHYSICAL")?.location ?? ""); }}>Loja física</button>
+                  <button type="button" className={channel === "ONLINE" ? "on" : ""} onClick={() => { setChannel("ONLINE"); setLocation("online"); }}>Online</button>
+                </div>
+              )}
+              {channel === "PHYSICAL" && (
+                <>
+                  <label>Localização
+                    <select value={location} onChange={(e) => setLocation(e.target.value)}>
+                      {sitesFor.map((s) => <option key={s.location} value={s.location}>{s.label} — aluguel ref. {fmtBRL(s.monthly_rent)} · terreno {fmtBRL(s.land_cost)}</option>)}
+                    </select>
+                  </label>
+                  <div className="seg" role="group" aria-label="Terreno">
+                    <button type="button" className={mode === "RENT" ? "on" : ""} onClick={() => setMode("RENT")}>Alugar o ponto</button>
+                    <button type="button" className={mode === "BUY" ? "on" : ""} onClick={() => setMode("BUY")}>Comprar o terreno</button>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+          {msg && <div className="alert">{msg}</div>}
+          <div className="row"><button type="button" className="link-btn" onClick={() => setStep(2)}>← voltar</button>
+            <button type="button" className="btn primary" disabled={!choice || (kind === "NEW_UNIT" && channel === "PHYSICAL" && !location)} onClick={() => setStep(4)}>Continuar</button></div>
+        </>
+      )}
+      {step === 4 && choice && opts && (
+        <>
+          <dl className="facts">
+            <div><dt>Aporte</dt><dd>{EXPANSION_KINDS.find((k) => k.key === kind)?.label} — nível {opts.tier_label.toLowerCase()}</dd></div>
+            <div><dt>Opção</dt><dd><b>{choice.title}</b></dd></div>
+            <div><dt>Custo da opção</dt><dd className="num">{fmtBRL(choice.cost)}</dd></div>
+            {landCost > 0 && <div><dt>Compra do terreno</dt><dd className="num">{fmtBRL(String(landCost))}</dd></div>}
+            <div><dt><b>Total a pagar pelo caixa da empresa</b></dt><dd className="num"><b>{fmtBRL(String(total))}</b></dd></div>
+            <div><dt>Caixa atual</dt><dd className="num">{fmtBRL(c.cash)}</dd></div>
+          </dl>
+          <p className="small"><i>{choice.risk_hint}</i></p>
+          <ul className="small" style={{ margin: 0, paddingLeft: 18 }}>{choice.side_effects.map((s, i) => <li key={i}>{s}</li>)}</ul>
+          {msg && <div className="alert">{msg}</div>}
+          <div className="row"><button type="button" className="link-btn" onClick={() => setStep(3)}>← voltar</button>
+            <button type="button" className="btn primary" disabled={busy} onClick={() => void confirm()}>{busy ? "Executando…" : `Confirmar e pagar ${fmtBRL(String(total))}`}</button></div>
+        </>
+      )}
+      {step === 5 && result && (
+        <>
+          <div className={result.outcome === "FAIL" ? "alert" : "card"} style={{ margin: 0 }}>
+            <b>{OUTCOME_LABEL[result.outcome]}</b> — {result.message}
+          </div>
+          <dl className="facts"><div><dt>Custo</dt><dd className="num">{fmtBRL(result.cost)}</dd></div></dl>
+          <ul className="small" style={{ margin: 0, paddingLeft: 18 }}>{result.effects.map((s, i) => <li key={i}>{s}</li>)}</ul>
+          <button type="button" className="btn primary" onClick={() => onDone(result.company, result.message)}>Fechar</button>
+        </>
+      )}
+    </Panel>
   );
 }

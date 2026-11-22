@@ -8,16 +8,18 @@ from sqlalchemy.orm import Session
 from backend.core.money import quantize_money
 from backend.dependencies import CurrentUser, DbSession
 from backend.models import (
-    Company, CompanyCost, CompanyEvent, CompanyLoan, CompanyLoanInstallment, CompanyMonth, CompanyStatus, Employee,
+    Company, CompanyCost, CompanyEvent, CompanyLoan, CompanySupplier, CompanyUnit, CompanyLoanInstallment, CompanyMonth, CompanyStatus, Employee,
     EmployeeStatus, Good, GoodStatus, InventoryItem, LedgerEntry, LoanStatus, SimMonth,
 )
 from backend.routers.budget import _run
 from backend.schemas import companies as s
 from backend.services import budget_service as bs
 from backend.services import partners
+from backend.services import company_expansion as xp
 from backend.services import company_rules as rules
 from backend.services import company_service as cs
 from backend.services import company_taxes as ctax
+from backend.services import company_supply as supply
 from backend.services import company_team as team
 from backend.services import economy_service, goods_service, wealth_service
 
@@ -39,10 +41,13 @@ def _company_out(db: Session, c: Company, last=_UNSET) -> s.CompanyOut:
         id=c.id, name=c.name, segment=c.segment, segment_label=seg.label, unit_label=seg.unit_label,
         metrics_kind=seg.metrics_kind.value, channel=c.channel, site_mode=c.site_mode, site_value=c.site_value, location=c.location,
         location_label=rules.resolve_location(seg, c.location).label, size=c.size, units=c.units, capacity_level=c.capacity_level,
+        quality=float(c.quality), capacity_boost=float(c.capacity_boost), storage_boost=float(c.storage_boost),
+        marketing_boost=float(c.marketing_boost), suspended_until=c.suspended_until,
         price=c.price, reputation=c.reputation, relevance=float(c.relevance), owner_share_pct=c.owner_share_pct, owner_salary=c.owner_salary,
         auto_restock=c.auto_restock, status=c.status, founded_on=c.founded_on, marketing_until=c.marketing_until,
         cash=balance, debts=quantize_money(loans + max(-balance, ZERO)), equity=wealth_service.company_equity(db, c),
-        last_revenue=last.revenue if last else None, last_net_result=last.net_result if last else None)
+        last_revenue=last.revenue if last else None, last_net_result=last.net_result if last else None,
+        supplier_budget=cs.supplier_budget(db, c)["total_planned"], supply_ready=all(x["present"] for x in cs.supply_checklist(db, c)))
 
 
 _GENERIC_KEYS = {r.key for r in rules.GENERIC_ROLES}
@@ -76,23 +81,71 @@ def _candidate_out(x: team.Candidate, seg: rules.Segment) -> s.CandidateOut:
         schedule=x.schedule, monthly_cost_at_asking=rules.payroll_cost(x.asking_salary, x.regime))
 
 
+def _contract_out(c: Company, seg: rules.Segment, x: CompanySupplier, ref) -> s.SupplierContractOut:
+    cat = seg.supply(x.category)
+    fine = ZERO if (x.is_default or x.status != "ACTIVE" or cs.months_between(x.started_month, ref) >= supply.MIN_TENURE_MONTHS) \
+        else quantize_money(x.min_monthly_order * x.unit_price * supply.EARLY_END_FINE_ORDERS)
+    return s.SupplierContractOut(
+        id=x.id, category=x.category, category_label=cat.label, unit=cat.unit, name=x.name, unit_price=x.unit_price,
+        reference_price=x.reference_price, price_vs_reference_pct=round(float(x.unit_price / x.reference_price - 1) * 100, 1),
+        min_monthly_order=x.min_monthly_order, max_units_month=x.max_units_month, reliability=float(x.reliability),
+        failure_probability_pct=round((1 - float(x.reliability)) * 100, 1), lead_days=x.lead_days, status=x.status,
+        started_month=x.started_month, ended_month=x.ended_month, term_months=x.term_months, is_default=x.is_default,
+        volume_used=(x.volume_used if x.volume_month == ref else ZERO), early_end_fine=fine)
+
+
+def _supply_out(db: Session, c: Company, seg: rules.Segment, open_ref) -> s.SupplyOut:
+    if not seg.needs_suppliers:
+        return s.SupplyOut(required=False, ready=True, checklist=[], contracts=[], budget=s.SupplierBudgetOut(
+            rows=[], total_planned=ZERO, total_last_actual=ZERO))
+    checklist = cs.supply_checklist(db, c)
+    ready = all(x["present"] for x in checklist)
+    rows = list(db.scalars(select(CompanySupplier).where(CompanySupplier.company_id == c.id).order_by(CompanySupplier.id)))
+    state = cs.supply_state(db, c, open_ref)
+    missing = [x["label"] for x in checklist if not x["present"]]
+    warning = None
+    if missing:
+        warning = ("Contrate fornecedores antes de operar: faltam " + ", ".join(missing) + ". "
+                   + ("Sem eles a operação fica bloqueada (vendas zeradas)." if seg.metrics_kind == rules.MetricsKind.SERVICE
+                      else "Sem eles o estoque dessas categorias não é reposto e as vendas travam na ruptura."))
+    return s.SupplyOut(
+        required=True, ready=ready, checklist=[s.SupplyChecklistOut(**x) for x in checklist],
+        contracts=[_contract_out(c, seg, x, open_ref) for x in rows if x.status == "ACTIVE"],
+        ended=[_contract_out(c, seg, x, open_ref) for x in rows if x.status != "ACTIVE"][-10:],
+        effective_capacity=None if state["cap"] == float("inf") else round(state["cap"], 1),
+        budget=s.SupplierBudgetOut(**cs.supplier_budget(db, c)), warning=warning)
+
+
+def _units_list(db: Session, c: Company, seg: rules.Segment) -> list[s.UnitOut]:
+    """Matriz (a própria empresa) + todas as filiais (abertas e fechadas)."""
+    def label(loc: str) -> str:
+        return rules.resolve_location(seg, loc).label
+    out = [s.UnitOut(id=None, kind="HQ", name="Matriz", location=c.location, location_label=label(c.location), channel=c.channel,
+                     site_mode=c.site_mode, site_value=c.site_value, monthly_rent=(cs._lease(db, c).monthly_rent if cs._lease(db, c) else ZERO),
+                     relevance=float(c.relevance), status="OPEN", opened_month=c.founded_on)]
+    for u in db.scalars(select(CompanyUnit).where(CompanyUnit.company_id == c.id).order_by(CompanyUnit.id)):
+        out.append(s.UnitOut(id=u.id, kind=u.kind, name=u.name, location=u.location, location_label=label(u.location), channel=u.channel,
+                             site_mode=u.site_mode, site_value=u.site_value, monthly_rent=u.monthly_rent, relevance=float(u.relevance),
+                             viability=float(u.viability), status=u.status, opened_month=u.opened_month, closed_month=u.closed_month,
+                             closed_reason=u.closed_reason, cumulative_result=u.cumulative_result, investment=u.investment))
+    return out
+
+
 def _detail(db: Session, c: Company) -> s.CompanyDetailOut:
     seg = rules.SEGMENTS[c.segment]
     staff = cs._employees(db, c)
     open_ref = _open_ref(db, c)
-    exp_dem = rules.demand_units(seg, location=c.location, size=c.size, units=c.units, reputation=c.reputation, price=c.price,
-                                 company_id=c.id, ref=c.founded_on, marketing=False, season=False, relevance=float(c.relevance))
+    q = float(c.quality)
+    exp_dem, exp_cap = cs.expected_totals(db, c, seg, staff)
     mature = rules.demand_units(seg, location=c.location, size=c.size, units=c.units, reputation=c.reputation, price=c.price,
-                                company_id=c.id, ref=c.founded_on, marketing=False, season=False)
-    exp_cap = rules.capacity_units(seg, size=c.size, units=c.units, capacity_level=c.capacity_level,
-                                   staff=cs.staff_capacity(staff), equipment_factor=cs._equipment_factor(db, c))
-    ratio = float(c.price) / float(seg.price)
+                                company_id=c.id, ref=c.founded_on, marketing=False, season=False, quality=q)
+    ratio = rules.price_ratio(seg, c.price, q)
     market = s.MarketOut(
         relevance=float(c.relevance), demand_factor=round(rules.relevance_factor(float(c.relevance)), 3),
         zero_month_prob=round(rules.zero_month_prob(float(c.relevance), ratio), 3), price_ratio=round(ratio, 3),
-        price_factor=round(rules.price_factor(seg, c.price), 3), mature_demand=round(mature, 1),
-        production_cap=round(rules.production_ceiling(seg, c.size, c.units, c.capacity_level), 1),
-        storage_cap_units=round(rules.storage_cap_units(seg, c.size, c.units), 1) if seg.has_stock else 0,
+        price_factor=round(rules.price_factor(seg, c.price, q), 3), mature_demand=round(mature, 1),
+        production_cap=round(rules.production_ceiling(seg, c.size, c.units, float(c.capacity_boost)), 1),
+        storage_cap_units=round(rules.storage_cap_units(seg, c.size, c.units, float(c.storage_boost)), 1) if seg.has_stock else 0,
         max_staff=rules.max_staff(c.size, c.units), staff_count=len(staff), relocated_this_month=c.relocated_on == open_ref,
         crisis=economy_service.company_crisis_info(db, c, open_ref))
     items = list(db.scalars(select(InventoryItem).where(InventoryItem.company_id == c.id).order_by(InventoryItem.id)))
@@ -104,6 +157,7 @@ def _detail(db: Session, c: Company) -> s.CompanyDetailOut:
                             .order_by(CompanyLoanInstallment.number)):
             inst_by_loan[i.loan_id].append(i)
     role_labels = {r.key: r.label for r in seg.roles}
+    role_labels[xp.MANAGER_ROLE] = xp.MANAGER_LABEL
     employees = list(db.scalars(select(Employee).where(Employee.company_id == c.id).order_by(Employee.id)))
     goods = list(db.scalars(select(Good).where(Good.owner_account_id == c.account_id).order_by(Good.id)))
     from backend.models import CompanyPartner, Person
@@ -116,14 +170,17 @@ def _detail(db: Session, c: Company) -> s.CompanyDetailOut:
         company=_company_out(db, c), distributable_profit=cs.distributable_profit(db, c), runway_months=cs.runway(db, c),
         monthly_obligations=cs.monthly_obligations(db, c), loan_limit=cs.loan_limit(db, c),
         expected_demand=round(exp_dem, 1), expected_capacity=round(exp_cap, 1), market=market,
-        expansion_costs={k: rules.expansion_cost(seg, k, c.size, c.units) for k in ("CAPACITY", "NEW_UNIT", "LARGER_PREMISES", "MARKETING")},
+        expansion_costs={k: {t: xp.base_cost(c, k, t) for t in rules.TIERS} for k in rules.EXPANSION_KINDS},
+        expansion_tiers=xp.tier_table(c), units_list=_units_list(db, c, seg),
         roles=[_role_out(seg.role_for(r.key, c.size), c.channel) for r in seg.roles],
         compliance=s.ComplianceOut(**cs.compliance(db, c)),
+        supply=_supply_out(db, c, seg, open_ref),
         employees=[_employee_out(e, role_labels, open_ref) for e in employees],
         inventory=[s.InventoryOut(id=i.id, name=i.name, unit=i.unit, quantity=i.quantity, unit_cost=i.unit_cost,
                                   value=quantize_money(i.quantity * i.unit_cost), supplier=i.supplier, min_quantity=i.min_quantity,
                                   monthly_consumption_est=Decimal(str(round(exp_dem * float(i.units_per_sale * (1 + i.waste_pct / 100)), 1))),
-                                  low=i.quantity < i.min_quantity, max_quantity=rules.storage_cap_qty(seg, c.size, c.units, i)) for i in items] if seg.has_stock else [],
+                                  low=i.quantity < i.min_quantity, max_quantity=rules.storage_cap_qty(seg, c.size, c.units, i, float(c.storage_boost)),
+                                  category=i.category, contracted=(i.category or "") in cs._contracts(db, c)) for i in items] if seg.has_stock else [],
         costs=[s.CostOut(id=x.id, kind=x.kind, name=x.name, amount=x.amount, active=x.active)
                for x in db.scalars(select(CompanyCost).where(CompanyCost.company_id == c.id).order_by(CompanyCost.id))],
         lease=s.LeaseOut(kind=lease.kind, good_id=lease.good_id, name=lease.name, monthly_rent=lease.monthly_rent,
@@ -150,6 +207,10 @@ def _tax_info(segment: str) -> s.SegmentTaxInfoOut:
     return s.SegmentTaxInfoOut(**ctax.segment_tax_info(segment), simplifications=ctax.SIMPLIFICACOES)
 
 
+def _cat_out(x: rules.SupplyCategory) -> s.SupplyCategoryOut:
+    return s.SupplyCategoryOut(key=x.key, label=x.label, unit=x.unit, weight=x.weight, per_sale=x.per_sale, reference_price=x.ref_price)
+
+
 def _segment_out(g: rules.Segment) -> s.SegmentOut:
     channel = rules.PHYSICAL if rules.PHYSICAL in g.channels else g.channels[0]
     loc = g.default_location
@@ -159,6 +220,7 @@ def _segment_out(g: rules.Segment) -> s.SegmentOut:
         minimum_capital=rules.minimum_capital(g, loc, rules.CompanySize.SMALL, channel,
                                               rules.SiteMode.RENT if channel == rules.PHYSICAL else None),
         channels=list(g.channels), metrics_kind=g.metrics_kind.value, default_location=loc,
+        supply_categories=[_cat_out(x) for x in g.supply_categories],
         locations=[s.LocationOut(key=x.key, label=x.label, demand=x.demand, rent_factor=x.rent, land_price=x.land_price)
                    for x in g.locations])
 
@@ -178,7 +240,7 @@ def quote(body: s.QuoteIn, user: CurrentUser):
         location, site_mode = rules.validate_site(seg, channel, body.location, body.site_mode)
     except ValueError as e:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e)) from None
-    stock = sum((q * x.unit_cost for x, q in rules.initial_stock_quantities(seg, location, body.size)), ZERO)
+    stock = rules.first_purchase_reserve(seg, location, body.size)
     mandatory = rules.mandatory_roles(channel)
     payroll = rules.mandatory_monthly_payroll(seg, channel, body.size)
     minimum = rules.minimum_capital(seg, location, body.size, channel, site_mode)
@@ -188,6 +250,7 @@ def quote(body: s.QuoteIn, user: CurrentUser):
         channel=channel, site_mode=site_mode, location=location, owner_share_pct=body.owner_share_pct,
         minimum_capital=minimum, owner_cost=owner_cost, extra_capital=extra, total_owner_cost=quantize_money(owner_cost + extra),
         setup_cost=rules.setup_cost(seg, body.size, channel), initial_stock=quantize_money(stock),
+        first_purchase_reserve=quantize_money(stock), supply_categories=[_cat_out(x) for x in seg.supply_categories],
         land_cost=rules.land_value(seg, channel, site_mode, location, body.size),
         monthly_fixed=rules.monthly_fixed(seg, location, body.size, channel=channel, site_mode=site_mode),
         monthly_rent=rules.monthly_rent(seg, location, body.size, channel=channel, site_mode=site_mode),
@@ -318,6 +381,42 @@ def buy_stock(company_id: int, body: s.StockIn, user: CurrentUser, db: DbSession
     return _run(db, lambda: _act(db, user.id, company_id, lambda m: cs.buy_stock(db, user.id, m, company_id, body.item_id, body.quantity, body.idempotency_key)))
 
 
+def _offer_out(o: supply.SupplierOffer, seg: rules.Segment) -> s.SupplierOfferOut:
+    cat = seg.supply(o.category)
+    return s.SupplierOfferOut(
+        id=o.id, category=o.category, category_label=cat.label, unit=cat.unit, name=o.name, unit_price=o.unit_price,
+        reference_price=o.reference_price, price_vs_reference_pct=round(float(o.unit_price / o.reference_price - 1) * 100, 1),
+        min_monthly_order=o.min_monthly_order, max_units_month=o.max_units_month, reliability=o.reliability, lead_days=o.lead_days)
+
+
+@router.post("/{company_id}/suppliers/search", response_model=s.SupplierSearchOut)
+def suppliers_search(company_id: int, body: s.SupplierSearchIn, user: CurrentUser, db: DbSession):
+    """Fornecedores do mês para a categoria (3 a 5, determinísticos: mesma consulta, mesma lista). O id é um token recalculado no servidor."""
+    def go():
+        month = bs.ensure_setup(db, user.id)
+        offers = cs.search_suppliers(db, user.id, month, company_id, body.category)
+        seg = rules.SEGMENTS[cs.get_company(db, user.id, company_id).segment]
+        return s.SupplierSearchOut(category=body.category, month=month.ref_month, offers=[_offer_out(o, seg) for o in offers])
+    return _run(db, go)
+
+
+@router.post("/{company_id}/suppliers/negotiate", response_model=s.SupplierNegotiateOut)
+def suppliers_negotiate(company_id: int, body: s.SupplierNegotiateIn, user: CurrentUser, db: DbSession):
+    """Propõe um preço: o fornecedor aceita (cria o contrato), recusa (indisponível no mês) ou contrapõe."""
+    def go():
+        month = bs.ensure_setup(db, user.id)
+        res = cs.negotiate_supplier(db, user.id, month, company_id, supplier_id=body.supplier_id, unit_price=body.unit_price,
+                                    monthly_volume=body.monthly_volume, idempotency_key=body.idempotency_key)
+        return s.SupplierNegotiateOut(accepted=res.accepted, status=res.status, message=res.message, counter_offer=res.counter_offer,
+                                      company=_detail(db, cs.get_company(db, user.id, company_id)))
+    return _run(db, go)
+
+
+@router.delete("/{company_id}/suppliers/{supplier_id}", response_model=s.CompanyDetailOut)
+def suppliers_end(company_id: int, supplier_id: int, user: CurrentUser, db: DbSession):
+    return _run(db, lambda: _act(db, user.id, company_id, lambda m: cs.end_supplier(db, user.id, m, company_id, supplier_id)))
+
+
 @router.post("/{company_id}/relocate/quote", response_model=s.RelocateQuoteOut)
 def relocate_quote(company_id: int, body: s.RelocateQuoteIn, user: CurrentUser, db: DbSession):
     """Quanto custaria mudar de endereço (não altera nada)."""
@@ -337,9 +436,32 @@ def relocate(company_id: int, body: s.RelocateIn, user: CurrentUser, db: DbSessi
         db, user.id, m, company_id, location=body.location, site_mode=body.site_mode, size=body.size, idempotency_key=body.idempotency_key)))
 
 
-@router.post("/{company_id}/expand", response_model=s.CompanyDetailOut)
-def expand(company_id: int, body: s.ExpandIn, user: CurrentUser, db: DbSession):
-    return _run(db, lambda: _act(db, user.id, company_id, lambda m: cs.expand(db, user.id, m, company_id, body.kind)))
+@router.post("/{company_id}/expansion/options", response_model=s.ExpansionOptionsOut)
+def expansion_options(company_id: int, body: s.ExpansionOptionsIn, user: CurrentUser, db: DbSession):
+    """3 opções SORTEADAS (determinísticas por empresa, semente, mês, tipo e nível) para o aporte escolhido. Não altera nada."""
+    def go():
+        month = bs.ensure_setup(db, user.id)
+        c = cs.get_company(db, user.id, company_id)
+        cs._active(c)
+        views = xp.option_views(cs._seed(db, user.id), c, month.ref_month, body.kind, body.tier)
+        return s.ExpansionOptionsOut(
+            kind=body.kind, tier=body.tier, tier_label=rules.TIER_LABEL[body.tier], tier_cost=xp.base_cost(c, body.kind, body.tier),
+            ref_month=month.ref_month, options=[s.ExpansionOptionOut(**v.__dict__) for v in views],
+            sites=[s.ExpansionSiteOut(**x) for x in xp.sites(c)] if body.kind == "NEW_UNIT" else [])
+    return _run(db, go)
+
+
+@router.post("/{company_id}/expansion/execute", response_model=s.ExpansionResultOut)
+def expansion_execute(company_id: int, body: s.ExpansionExecuteIn, user: CurrentUser, db: DbSession):
+    """Cobra e resolve o aporte (resultado probabilístico determinístico). O servidor recalcula as 3 opções do mês: `option_key`
+    fora delas é recusada. Nova unidade exige canal/terreno/local. Idempotente por `idempotency_key`."""
+    def go():
+        month = bs.ensure_setup(db, user.id)
+        r = xp.execute(db, user.id, month, company_id, kind=body.kind, tier=body.tier, option_key=body.option_key,
+                       idempotency_key=body.idempotency_key, channel=body.channel, site_mode=body.site_mode, location=body.location)
+        return s.ExpansionResultOut(success=r.success, outcome=r.outcome, message=r.message, effects=r.effects, cost=r.cost,
+                                    replayed=r.replayed, company=_detail(db, cs.get_company(db, user.id, company_id)))
+    return _run(db, go)
 
 
 @router.post("/{company_id}/lease", response_model=s.CompanyDetailOut)

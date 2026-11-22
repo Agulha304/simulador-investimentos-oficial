@@ -81,7 +81,7 @@ function CompanyTable({ companies, onOpen }: { companies: Company[]; onOpen: (id
             <tr key={c.id}>
               <td><b>{c.name}</b> <span className="muted small">{c.location_label}</span></td>
               <td>{c.segment_label}</td>
-              <td><span className="tag">{c.status === "ACTIVE" ? "Ativa" : "Encerrada"}</span> <span className="muted small">reputação {c.reputation}</span></td>
+              <td><span className="tag">{c.status === "ACTIVE" ? "Ativa" : "Encerrada"}</span> <span className="muted small">reputação {c.reputation}</span>{c.supply_ready === false && <> <span className="tag tone-warn">sem fornecedores</span></>}{c.supplier_budget && Number(c.supplier_budget) > 0 ? <><br /><span className="muted small">insumos previstos: {fmtBRL(c.supplier_budget)}/mês</span></> : null}</td>
               <td className="r num">{c.last_revenue ? fmtBRL(c.last_revenue) : "—"}</td>
               <td className={`r num tone-${trend(c.last_net_result)}`}>{c.last_net_result ? `${Number(c.last_net_result) >= 0 ? "▲ " : "▼ "}${fmtBRL(c.last_net_result)}` : "—"}</td>
               <td className={`r num ${Number(c.cash) < 0 ? "tone-down" : ""}`}>{fmtBRL(c.cash)}</td>
@@ -158,19 +158,35 @@ function CreateModal({ segment, catalog, onClose, onCreated }: { segment: CoSegm
           </>
         )}
         <div className="alert" style={{ margin: 0 }}>A empresa nasce <b>sem funcionários</b>. <b>Contador e Advogado são obrigatórios{physical ? " (e Auxiliar de limpeza, por ser física)" : ""}</b>: sem eles a empresa fica irregular, não vende e paga multa no mês. O capital mínimo já inclui um mês de folha deles; contrate depois de abrir. Quem produz (cozinheiros, vendedores…) você contrata conforme a demanda — sem equipe produtiva só o dono produz.</div>
+        {(segment.supply_categories?.length ?? 0) > 0 && (
+          <div className="alert" style={{ margin: 0 }}><b>Contrate fornecedores antes de operar.</b> {segment.label} precisa de um fornecedor ativo para cada categoria ({segment.supply_categories!.map((x) => x.label).join(", ")}). A empresa nasce sem fornecedores{segment.metrics_kind === "SERVICE" ? ": sem eles a operação fica bloqueada e não há vendas" : " e sem estoque: sem eles o estoque não é reposto e as vendas travam"}. Depois de abrir, procure e negocie cada um na página da empresa.</div>
+        )}
         {!physical && <p className="muted small" style={{ margin: 0 }}>Online: sem aluguel nem terreno, custos fixos menores e alcance digital no lugar da demanda local.</p>}
         <label>Porte inicial<select value={size} onChange={(e) => setSize(e.target.value)}>{catalog.sizes.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}</select></label>
         {quote && (
           <dl className="facts">
             <div><dt>Estruturação (abertura, licenças, reforma)</dt><dd className="num">{fmtBRL(quote.setup_cost)}</dd></div>
-            {segment.metrics_kind !== "SERVICE" && <div><dt>Estoque inicial</dt><dd className="num">{fmtBRL(quote.initial_stock)}</dd></div>}
+            {segment.metrics_kind !== "SERVICE" && <div><dt>Reserva em caixa para a 1ª compra de fornecedores (a empresa nasce sem estoque)</dt><dd className="num">{fmtBRL(quote.first_purchase_reserve ?? quote.initial_stock)}</dd></div>}
             {physical && siteMode === "BUY" && <div><dt>Terreno (vira patrimônio da empresa)</dt><dd className="num">{fmtBRL(quote.land_cost)}</dd></div>}
             <div><dt>Folha mensal dos cargos obrigatórios ({quote.mandatory_roles.join(", ")}) — CLT custa 2× o salário</dt><dd className="num">{fmtBRL(quote.monthly_payroll)}</dd></div>
             <div><dt>Equipe obrigatória no capital mínimo (1 mês de folha + custo de contratação)</dt><dd className="num">{fmtBRL(quote.mandatory_cost)}</dd></div>
             <div><dt>Custos fixos mensais{physical && siteMode === "RENT" ? " (aluguel e outros)" : ""}</dt><dd className="num">{fmtBRL(quote.monthly_fixed)}</dd></div>
+            {quote.operating_reserve != null && <div><dt>Reserva de operação já inclusa no capital mínimo ({quote.reserve_months ?? 6} meses de custos fixos e folha, para aguentar as vendas fracas do começo)</dt><dd className="num">{fmtBRL(quote.operating_reserve)}</dd></div>}
+            {quote.first_month_units != null && <div><dt>Vendas esperadas no 1º mês (relevância zero: o mercado ainda não conhece você; demanda madura ≈ {quote.expected_units})</dt><dd className="num">≈ {quote.first_month_units} {segment.unit_label}(s)</dd></div>}
+            {quote.max_staff != null && <div><dt>Teto de funcionários neste porte (por unidade)</dt><dd className="num">{quote.max_staff} pessoas</dd></div>}
             <div><dt>Capital mínimo para abrir</dt><dd className="num"><b>{fmtBRL(quote.minimum_capital)}</b></dd></div>
             {quote.tax && <div><dt>Regime tributário provável</dt><dd>{quote.tax.regime_label}, alíquota efetiva de {quote.tax.effective_min_pct}% a {quote.tax.effective_max_pct}% conforme o faturamento dos últimos 12 meses (o regime muda sozinho: MEI até R$ 81 mil/ano, Simples até R$ 4,8 mi, depois Lucro Presumido). Simplificações: ICMS 18%, IPI 10% e ISS típico; encargos da folha já estão no custo CLT de 2×.</dd></div>}
           </dl>
+        )}
+        {quote && (
+          <div className="card" style={{ margin: 0 }} aria-label="Checklist de abertura">
+            <b>Checklist para operar (depois de abrir)</b>
+            <ul className="small" style={{ margin: "6px 0 0", paddingLeft: 18 }}>
+              {quote.mandatory_roles.map((r) => <li key={r}>☐ Contratar <b>{r}</b> — cargo obrigatório (sem ele a empresa fica irregular e não vende)</li>)}
+              {(quote.supply_categories ?? []).map((x) => <li key={x.key}>☐ Contratar fornecedor de <b>{x.label}</b> ({x.unit}) — obrigatório para repor estoque/produzir</li>)}
+              <li>☐ Contratar a equipe produtiva (até {quote.max_staff ?? "?"} pessoas neste porte) conforme a demanda</li>
+            </ul>
+          </div>
         )}
         {accepted.length === 0 && <label>Sua participação societária (%)<input inputMode="decimal" value={share} onChange={(e) => setShare(e.target.value)} /></label>}
         <label>Capital adicional a aportar (R$) — dinheiro a mais além do mínimo para abrir que você investirá na empresa<input inputMode="decimal" value={extra} onChange={(e) => setExtra(e.target.value)} /></label>

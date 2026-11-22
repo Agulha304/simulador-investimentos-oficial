@@ -21,9 +21,10 @@ from backend.models import (
     AccountKind, AmortizationSystem, Company, CompanyChannel, SiteMode, CompanyCost, CompanyEvent, CompanyEventType, CompanyLease, CompanyLoan,
     CandidateBlock, CompanyLoanInstallment, CompanyMonth, CompanyPartner, CompanySegment, CompanySize, CompanyStatus, Employee, EmployeeLevel, EmployeeStatus,
     EmployeeRegime, EntryOrigin, FinanceAccount, FlowKind, Frequency, Good, GoodCategory, GoodCost, GoodEvent, GoodEventType, GoodStatus,
-    InstallmentStatus, InventoryItem, LeaseKind, LedgerEntry, LoanStatus, Occupancy, Person, RealEstateDetails, SimMonth, WorkSchedule,
+    InstallmentStatus, InventoryItem, CompanySupplier, CompanyUnit, LeaseKind, LedgerEntry, LoanStatus, Occupancy, Person, RealEstateDetails, SimMonth, WorkSchedule,
 )
 from backend.services import company_rules as rules
+from backend.services import company_supply as supply
 from backend.services import company_taxes
 from backend.services import company_team as team
 from backend.services import economy_service, partners
@@ -64,13 +65,14 @@ def cash(db: Session, c: Company) -> Decimal:
 
 
 def _post(db: Session, c: Company, ref: date, *, kind: FlowKind, amount: Decimal, desc: str, line: str, key: str,
-          overdraft: bool = False) -> LedgerEntry | None:
-    """Movimentação NA conta da empresa. `line` define a natureza; linhas de capital não são resultado."""
+          overdraft: bool = False, origin_ref: str | None = None) -> LedgerEntry | None:
+    """Movimentação NA conta da empresa. `line` define a natureza; linhas de capital não são resultado.
+    `origin_ref` padrão: company:{id}:{linha}; compras de fornecedor usam company:{id}:supplier:{contrato}."""
     if amount <= 0:
         return None
     return finance_ledger.post_entry(
         db, c.user_id, kind=kind, amount=amount, description=desc, ref_month=ref, entry_date=ref, origin=EntryOrigin.COMPANY,
-        origin_ref=f"company:{c.id}:{line.lower()}", idempotency_key=key, capital=line in CAPITAL_LINES, company_id=c.id,
+        origin_ref=origin_ref or f"company:{c.id}:{line.lower()}", idempotency_key=key, capital=line in CAPITAL_LINES, company_id=c.id,
         line=line, allow_overdraft=overdraft)
 
 
@@ -113,10 +115,21 @@ def _lease(db: Session, c: Company) -> CompanyLease | None:
     return db.scalar(select(CompanyLease).where(CompanyLease.company_id == c.id, CompanyLease.active.is_(True)))
 
 
+def open_branches(db: Session, c: Company) -> list[CompanyUnit]:
+    """Filiais ABERTAS (fase 5). A matriz é a própria empresa; `Company.units` = 1 + len(filiais abertas)."""
+    return list(db.scalars(select(CompanyUnit).where(CompanyUnit.company_id == c.id, CompanyUnit.status == "OPEN").order_by(CompanyUnit.id)))
+
+
 def _rent(db: Session, c: Company, seg: rules.Segment) -> Decimal:
+    """Aluguel mensal: o contrato da matriz + o aluguel de cada filial aberta (filial em terreno próprio ou online: zero)."""
     lease = _lease(db, c)
-    extra = rules.default_rent(seg, c.location, c.size) * max(c.units - 1, 0) if c.channel == CompanyChannel.PHYSICAL else ZERO
+    extra = sum((u.monthly_rent for u in open_branches(db, c)), ZERO)
     return quantize_money((lease.monthly_rent if lease else ZERO) + extra)
+
+
+def eff_capacity_level(c: Company) -> float:
+    """Níveis EFETIVOS de capacidade (1 nível = +25%): fracionário, pois os aportes podem funcionar só em parte."""
+    return float(c.capacity_boost)
 
 
 # ------------------------------------------------------------------ criação e capital
@@ -185,14 +198,12 @@ def create_company(db: Session, user_id: int, month: SimMonth, *, name: str, seg
     if channel == CompanyChannel.PHYSICAL and site_mode == SiteMode.RENT:
         db.add(CompanyLease(company_id=c.id, kind=LeaseKind.EXTERNAL, name=f"Ponto comercial — {where}",
                             monthly_rent=rules.default_rent(seg, location, size), start_month=ref))
+    # fase 4: a empresa NASCE SEM ESTOQUE e SEM fornecedores (o capital mínimo reserva em caixa a 1ª compra). Cria 1 item vazio por
+    # categoria de fornecimento; o jogador procura/contrata fornecedores e compra (ou a reposição automática compra) com o contrato.
     for stock, qty in rules.initial_stock_quantities(seg, location, size):
-        item = InventoryItem(company_id=c.id, name=stock.name, unit=stock.unit, quantity=qty, unit_cost=stock.unit_cost,
-                             supplier=stock.supplier, min_quantity=(qty * D("0.5")).quantize(D("0.001")),
-                             units_per_sale=stock.units_per_sale, waste_pct=stock.waste_pct)
-        db.add(item)
-        db.flush()
-        _post(db, c, ref, kind=FlowKind.EXPENSE, amount=quantize_money(qty * stock.unit_cost), desc=f"Estoque inicial: {stock.name}",
-              line="STOCK_PURCHASE", key=f"co:{c.id}:stock:init:{item.id}")
+        db.add(InventoryItem(company_id=c.id, name=stock.name, unit=stock.unit, quantity=ZERO, unit_cost=stock.unit_cost, supplier="",
+                             min_quantity=(qty * D("0.5")).quantize(D("0.001")), units_per_sale=stock.units_per_sale,
+                             waste_pct=stock.waste_pct, category=stock.category))
     db.flush()
     log.info("empresa criada id=%s user=%s segmento=%s canal=%s", c.id, user_id, segment, channel)
     return c
@@ -447,34 +458,173 @@ def compliance(db: Session, c: Company) -> dict:
     return {"regular": not missing,
             "required": [{"role": r, "label": seg.role(r).label, "present": r in active} for r in required],
             "missing": missing, "missing_labels": [seg.role(r).label for r in missing],
-            "estimated_fine": rules.compliance_fine(seg, missing, c.size)}
+            "estimated_fine": rules.compliance_fine(seg, missing, c.size),
+            "grace_months": c.compliance_grace_months if missing else 0}
 
 
-# ------------------------------------------------------------------ estoque
+# ------------------------------------------------------------------ fornecedores (fase 4) e estoque
 
-def supplier_cost(item: InventoryItem, ref: date, mult: Decimal = D(1)) -> Decimal:
-    """Preço do fornecedor no mês: custo de referência ± 3% (determinístico)."""
-    seg_cost = None
-    for seg in rules.SEGMENTS.values():
-        for s in seg.stock:
-            if s.name == item.name:
-                seg_cost = s.unit_cost
-                break
-    base = seg_cost or item.unit_cost
-    return (base * mult * (1 + D(str((hash01("supplier", item.id, ref.isoformat()) - 0.5) * 0.06)))).quantize(D("0.0001"))
+def _contracts(db: Session, c: Company) -> dict[str, CompanySupplier]:
+    """Contratos ATIVOS por categoria (no máximo 1 por categoria: índice parcial único)."""
+    return {x.category: x for x in db.scalars(select(CompanySupplier).where(
+        CompanySupplier.company_id == c.id, CompanySupplier.status == "ACTIVE").order_by(CompanySupplier.id))}
 
 
-def _buy_stock(db: Session, c: Company, item: InventoryItem, qty: Decimal, ref: date, key: str, seg: rules.Segment) -> Decimal:
+def missing_supply(seg: rules.Segment, contracts: dict[str, CompanySupplier]) -> list[rules.SupplyCategory]:
+    return [x for x in seg.supply_categories if x.key not in contracts]
+
+
+def volume_left(sup: CompanySupplier, ref: date) -> Decimal:
+    """Volume que o fornecedor ainda entrega no mês (o contador zera a cada mês)."""
+    used = sup.volume_used if sup.volume_month == ref else ZERO
+    return max(sup.max_units_month - used, ZERO)
+
+
+def _price_mult(db: Session, c: Company, ref: date) -> Decimal:
+    return economy_service.supplier_mult(db, c, ref)
+
+
+def _supplier_ref(c: Company, sup: CompanySupplier) -> str:
+    return f"company:{c.id}:supplier:{sup.id}"
+
+
+def _validate_category(seg: rules.Segment, category: str) -> rules.SupplyCategory:
+    if not seg.needs_suppliers:
+        raise FinanceError(f"{seg.label} não usa fornecedores")
+    try:
+        return seg.supply(category)
+    except KeyError:
+        raise FinanceError("categoria de fornecimento inexistente neste segmento") from None
+
+
+def search_suppliers(db: Session, user_id: int, month: SimMonth, company_id: int, category: str) -> list[supply.SupplierOffer]:
+    """Fornecedores do mês para a categoria (determinísticos). Quem recusou a proposta ou já foi contratado some da lista."""
+    require_open(month)
+    c = get_company(db, user_id, company_id)
+    _active(c)
+    seg = rules.SEGMENTS[c.segment]
+    _validate_category(seg, category)
+    blocked = _blocked(db, c)
+    offers = supply.search(_seed(db, user_id), c.id, month.ref_month, seg, category, size=c.size, units=c.units,
+                           capacity_level=eff_capacity_level(c), price_mult=_price_mult(db, c, month.ref_month))
+    return [o for o in offers if o.id not in blocked]
+
+
+@dataclass
+class SupplierResult:
+    status: str                         # ACCEPTED | COUNTER | REFUSED
+    message: str
+    counter_offer: Decimal | None = None
+    contract: CompanySupplier | None = None
+
+    @property
+    def accepted(self) -> bool:
+        return self.status == "ACCEPTED"
+
+
+def negotiate_supplier(db: Session, user_id: int, month: SimMonth, company_id: int, *, supplier_id: str, unit_price: Decimal,
+                       monthly_volume: Decimal | None, idempotency_key: str) -> SupplierResult:
+    """Proposta de preço a um fornecedor. A oferta é RECALCULADA no servidor a partir do token (preço de lista, volume, piso e
+    confiabilidade nunca vêm do cliente). Aceite cria o contrato ativo; recusa bloqueia o fornecedor no mês; contraproposta não."""
+    require_open(month)
+    c = get_company(db, user_id, company_id, lock=True)
+    _active(c)
+    seg = rules.SEGMENTS[c.segment]
+    ref = month.ref_month
+    try:
+        offer = supply.resolve_token(_seed(db, user_id), c.id, ref, supplier_id, seg, size=c.size, units=c.units,
+                                     capacity_level=eff_capacity_level(c), price_mult=_price_mult(db, c, ref))
+    except ValueError as e:
+        raise FinanceError(str(e)) from None
+    cat = seg.supply(offer.category)
+    price = D(unit_price).quantize(D("0.01"))
+    if price <= 0:
+        raise FinanceError("informe um preço unitário positivo")
+    done = db.scalar(select(CompanySupplier).where(CompanySupplier.company_id == c.id, CompanySupplier.idempotency_key == idempotency_key))
+    if done is not None:                                               # repetição da mesma solicitação: nada muda
+        return SupplierResult("ACCEPTED", f"{done.name}: contrato já registrado.", contract=done)
+    if offer.id in _blocked(db, c):
+        return SupplierResult("REFUSED", f"{offer.name} não está mais disponível neste mês.")
+    if _contracts(db, c).get(offer.category) is not None:
+        raise ConflictError(f"já existe um contrato ativo de {cat.label}: encerre-o antes de contratar outro fornecedor")
+    volume = D(monthly_volume) if monthly_volume is not None else offer.max_units_month
+    if volume > offer.max_units_month or volume < offer.min_monthly_order:
+        raise FinanceError(f"o volume mensal deve ficar entre o pedido mínimo ({offer.min_monthly_order}) e o que o fornecedor aguenta "
+                           f"({offer.max_units_month}) {cat.unit}")
+    deal = supply.evaluate(offer, price, float(c.relevance), volume)
+    if deal.status == "REFUSED":
+        _block(db, c, _TokenBlock(offer.id), ref, "REFUSED")
+        return SupplierResult("REFUSED", deal.message)
+    if deal.status == "COUNTER":
+        return SupplierResult("COUNTER", deal.message, deal.counter_offer)
+    sup = CompanySupplier(company_id=c.id, category=offer.category, name=offer.name, unit_price=deal.price, reference_price=cat.ref_price,
+                          min_monthly_order=offer.min_monthly_order, max_units_month=volume, reliability=D(str(offer.reliability)),
+                          lead_days=offer.lead_days, status="ACTIVE", started_month=ref, term_months=supply.CONTRACT_TERM_MONTHS,
+                          idempotency_key=idempotency_key)
+    db.add(sup)
+    _block(db, c, _TokenBlock(offer.id), ref, "SIGNED")
+    db.flush()
+    _event(db, c, ref, CompanyEventType.STOCK,
+           f"Fornecedor contratado ({cat.label}): {offer.name}, {deal.price} por {cat.unit}, até {volume} {cat.unit}/mês, "
+           f"confiabilidade {round(offer.reliability * 100)}%", deal.price)
+    return SupplierResult("ACCEPTED", deal.message, contract=sup)
+
+
+@dataclass(frozen=True)
+class _TokenBlock:
+    """Adaptador: `_block` usa só o `id` do candidato (aqui, o token do fornecedor)."""
+    id: str
+
+
+def end_supplier(db: Session, user_id: int, month: SimMonth, company_id: int, supplier_id: int) -> CompanySupplier:
+    """Encerra o contrato. Antes de `MIN_TENURE_MONTHS` meses de contrato há multa de 2 pedidos mínimos (o Fornecedor padrão das
+    empresas antigas nunca tem multa). O estoque já comprado fica; a categoria volta a exigir um novo contrato para repor."""
+    require_open(month)
+    c = get_company(db, user_id, company_id, lock=True)
+    _active(c)
+    sup = db.get(CompanySupplier, supplier_id)
+    if sup is None or sup.company_id != c.id:
+        raise NotFoundError("contrato de fornecedor não encontrado")
+    if sup.status != "ACTIVE":
+        raise ConflictError("este contrato já foi encerrado")
+    ref = month.ref_month
+    tenure = months_between(sup.started_month, ref)
+    fine = ZERO if (sup.is_default or tenure >= supply.MIN_TENURE_MONTHS) else quantize_money(
+        sup.min_monthly_order * sup.unit_price * supply.EARLY_END_FINE_ORDERS)
+    if fine > 0:
+        _post(db, c, ref, kind=FlowKind.EXPENSE, amount=fine, desc=f"Multa por encerrar contrato antes de {supply.MIN_TENURE_MONTHS} meses: {sup.name}",
+              line="FEES", key=f"co:{c.id}:supend:{sup.id}", overdraft=True, origin_ref=_supplier_ref(c, sup))
+    sup.status = "ENDED"
+    sup.ended_month = ref
+    db.flush()
+    _event(db, c, ref, CompanyEventType.STOCK, f"Contrato encerrado: {sup.name} ({sup.category})"
+           + (f", multa {fine}" if fine > 0 else ", sem multa"), fine if fine > 0 else None)
+    return sup
+
+
+def _buy_stock(db: Session, c: Company, item: InventoryItem, qty: Decimal, ref: date, key: str, seg: rules.Segment,
+               sup: CompanySupplier) -> Decimal:
+    """Compra do contrato da categoria: preço contratado; se o fornecedor falhar no mês entrega só parte (e só a parte é paga)."""
     qty = qty.quantize(D("0.001")) if seg.fractional else D(math.ceil(qty))
     if qty <= 0:
         return ZERO
-    price = supplier_cost(item, ref, economy_service.supplier_mult(db, c, ref))
-    total = quantize_money(qty * price)
-    _post(db, c, ref, kind=FlowKind.EXPENSE, amount=total, desc=f"Compra de estoque: {item.name} ({qty} {item.unit})",
-          line="STOCK_PURCHASE", key=key)
-    new_qty = item.quantity + qty
-    item.unit_cost = ((item.quantity * item.unit_cost + qty * price) / new_qty).quantize(D("0.0001"))
+    f = D(str(supply.delivery_factor(_seed(db, c.user_id), c.id, sup.id, ref, float(sup.reliability))))
+    delivered = qty if f >= 1 else ((qty * f).quantize(D("0.001")) if seg.fractional else D(math.floor(qty * f)))
+    if f < 1:
+        _event(db, c, ref, CompanyEventType.STOCK,
+               f"Falha de entrega: {sup.name} entregou só {delivered} de {qty} {item.unit} de {item.name} ({round(float(f) * 100)}%)")
+    if delivered <= 0:
+        return ZERO
+    price = quantize_money(sup.unit_price * rules.quality_cost_mult(float(c.quality)))          # fase 5: qualidade maior = insumo mais caro
+    total = quantize_money(delivered * price)
+    _post(db, c, ref, kind=FlowKind.EXPENSE, amount=total, desc=f"Compra de estoque: {item.name} ({delivered} {item.unit}) — {sup.name}",
+          line="STOCK_PURCHASE", key=key, origin_ref=_supplier_ref(c, sup))
+    new_qty = item.quantity + delivered
+    item.unit_cost = ((item.quantity * item.unit_cost + delivered * price) / new_qty).quantize(D("0.0001"))
     item.quantity = new_qty
+    item.supplier = sup.name
+    sup.volume_used = (sup.volume_used if sup.volume_month == ref else ZERO) + delivered
+    sup.volume_month = ref
     return total
 
 
@@ -490,16 +640,150 @@ def buy_stock(db: Session, user_id: int, month: SimMonth, company_id: int, item_
     if _replayed(db, f"company:{c.id}:stock:{key}"):
         return item
     seg = rules.SEGMENTS[c.segment]
-    cap = rules.storage_cap_qty(seg, c.size, c.units, item)
+    ref = month.ref_month
+    cap = rules.storage_cap_qty(seg, c.size, c.units, item, float(c.storage_boost))
     if item.quantity + D(quantity) > cap:
         room = max(cap - item.quantity, ZERO)
         raise ConflictError(
             f"Teto de estoque atingido: o espaço de armazenagem do porte {rules.SIZES[c.size].label} comporta {cap} {item.unit} de "
             f"{item.name} (você tem {item.quantity}; cabem mais {room}). Amplie as instalações ('Instalações maiores', nova unidade) "
             f"ou mude de endereço para um espaço maior.")
-    total = _buy_stock(db, c, item, D(quantity), month.ref_month, f"company:{c.id}:stock:{key}", seg)
-    _event(db, c, month.ref_month, CompanyEventType.STOCK, f"Compra de {item.name}: {quantity} {item.unit}", total)
+    sup = _contracts(db, c).get(item.category or "")
+    if sup is None:
+        raise ConflictError(f"Sem fornecedor contratado para {item.name}: procure e contrate um fornecedor desta categoria antes de comprar.")
+    q = D(quantity)
+    if q < sup.min_monthly_order:
+        raise FinanceError(f"{sup.name} exige pedido mínimo de {sup.min_monthly_order} {item.unit}")
+    left = volume_left(sup, ref)
+    if q > left:
+        raise ConflictError(f"{sup.name} não aguenta esse volume: restam {left} {item.unit} no mês (contrato de {sup.max_units_month} por mês)")
+    total = _buy_stock(db, c, item, q, ref, f"company:{c.id}:stock:{key}", seg, sup)
+    _event(db, c, ref, CompanyEventType.STOCK, f"Compra de {item.name}: {quantity} {item.unit} ({sup.name})", total)
     return item
+
+
+def delivery_status(db: Session, c: Company, sup: CompanySupplier, ref: date) -> float:
+    return supply.delivery_factor(_seed(db, c.user_id), c.id, sup.id, ref, float(sup.reliability))
+
+
+def supply_state(db: Session, c: Company, ref: date, contracts: dict[str, CompanySupplier] | None = None) -> dict:
+    """Capacidade efetiva dos fornecedores no mês: menor `max_units_month / (consumo x (1 + perda))` entre as categorias
+    (nos serviços já descontando a falha de entrega do mês; nos segmentos com estoque a falha só reduz a compra)."""
+    seg = rules.SEGMENTS[c.segment]
+    contracts = contracts if contracts is not None else _contracts(db, c)
+    service = seg.metrics_kind == rules.MetricsKind.SERVICE
+    volumes = {k: float(s.max_units_month) * (delivery_status(db, c, s, ref) if service else 1.0) for k, s in contracts.items()}
+    cap = rules.supply_capacity(seg, volumes, missing_is_zero=service)
+    return {"missing": missing_supply(seg, contracts), "cap": cap, "failed": [s for s in contracts.values() if delivery_status(db, c, s, ref) < 1]}
+
+
+@dataclass
+class UnitPlan:
+    """Uma unidade no cálculo do mês: a MATRIZ (`unit=None`) ou uma filial aberta. `share` = fatia da capacidade dos cargos produtivos
+    globais que cabe à unidade (proporcional à demanda dela: a equipe é distribuída onde há clientes)."""
+    unit: CompanyUnit | None
+    name: str
+    location: str
+    relevance: float
+    viability: float
+    demand: float = 0.0
+    share: float = 1.0
+    key: object = None                    # `company_id` usado nos sorteios da unidade (matriz: o id; filial: "<id>u<unidade>")
+
+
+def plan_units(db: Session, c: Company, seg: rules.Segment, ref: date, *, season: bool = True, marketing: bool = False,
+               econ_mult: float = 1.0, relocation_mult: float = 1.0, branches: list[CompanyUnit] | None = None) -> list[UnitPlan]:
+    """Demanda por unidade e a repartição da equipe produtiva global entre elas (documentado em `docs/EMPRESAS_V2.md`)."""
+    branches = open_branches(db, c) if branches is None else branches
+    plans = [UnitPlan(None, "Matriz", c.location, float(c.relevance), 1.0, key=c.id)] + [
+        UnitPlan(u, u.name or f"Filial {u.id}", u.location, float(u.relevance), float(u.viability), key=f"{c.id}u{u.id}") for u in branches]
+    for i, p in enumerate(plans):
+        p.demand = rules.demand_units(seg, location=p.location, size=c.size, units=1, reputation=c.reputation, price=c.price,
+                                      company_id=p.key, ref=ref, marketing=marketing, season=season, relevance=p.relevance,
+                                      quality=float(c.quality), marketing_boost=float(c.marketing_boost)) \
+            * econ_mult * (relocation_mult if i == 0 else 1.0) * p.viability
+    total = sum(p.demand for p in plans)
+    for p in plans:
+        p.share = (p.demand / total) if total > 0 else 1 / len(plans)
+    return plans
+
+
+def unit_capacity(db: Session, c: Company, seg: rules.Segment, plan: UnitPlan, staff_cap: list, equipment: float) -> float:
+    return rules.capacity_units(seg, size=c.size, units=1, capacity_level=eff_capacity_level(c), staff=staff_cap,
+                                equipment_factor=equipment, people_share=plan.share)
+
+
+def expected_totals(db: Session, c: Company, seg: rules.Segment, staff: list[Employee]) -> tuple[float, float]:
+    """(demanda esperada, capacidade esperada) da empresa inteira (matriz + filiais), sem sazonalidade nem sorteios."""
+    plans = plan_units(db, c, seg, c.founded_on, season=False)
+    sc, eq = staff_capacity(staff), _equipment_factor(db, c)
+    return sum(p.demand for p in plans), sum(unit_capacity(db, c, seg, p, sc, eq) for p in plans)
+
+
+def _planned_sales(db: Session, c: Company, seg: rules.Segment, cap: float) -> float:
+    """Vendas esperadas no mês (demanda com a relevância atual, limitada pela equipe e pelos fornecedores), sem sorteios."""
+    plans = plan_units(db, c, seg, c.founded_on, season=False)
+    sc, eq = staff_capacity(_employees(db, c)), _equipment_factor(db, c)
+    return max(min(sum(min(p.demand, unit_capacity(db, c, seg, p, sc, eq)) for p in plans), cap), 0.0)
+
+
+def supplier_budget(db: Session, c: Company, ref: date | None = None) -> dict:
+    """Orçamento de fornecedores: por categoria, o preço contratado, o volume previsto do mês, o gasto previsto (demanda esperada x
+    consumo x preço) e o gasto REALIZADO do último mês fechado (lançamentos com origin_ref do fornecedor)."""
+    seg = rules.SEGMENTS[c.segment]
+    if not seg.needs_suppliers:
+        return {"rows": [], "total_planned": ZERO, "total_last_actual": ZERO, "last_month": None}
+    ref = ref or c.last_processed_month or c.founded_on
+    contracts = _contracts(db, c)
+    state = supply_state(db, c, ref, contracts)
+    planned = _planned_sales(db, c, seg, state["cap"])
+    last = db.scalar(select(CompanyMonth.ref_month).where(CompanyMonth.company_id == c.id).order_by(CompanyMonth.ref_month.desc()).limit(1))
+    by_cat: dict[str, list[str]] = {}
+    for s in db.scalars(select(CompanySupplier).where(CompanySupplier.company_id == c.id)):
+        by_cat.setdefault(s.category, []).append(_supplier_ref(c, s))
+    rows, total, total_last = [], ZERO, ZERO
+    for cat in seg.supply_categories:
+        sup = contracts.get(cat.key)
+        price = sup.unit_price if sup else cat.ref_price
+        volume = quantize_money(D(str(planned)) * cat.per_sale * (1 + cat.waste_pct / 100))
+        spend = quantize_money(volume * price)
+        actual = ZERO
+        if last is not None and by_cat.get(cat.key):
+            actual = quantize_money(db.scalar(select(func.coalesce(func.sum(LedgerEntry.amount), 0)).where(
+                LedgerEntry.company_id == c.id, LedgerEntry.ref_month == last, LedgerEntry.kind == FlowKind.EXPENSE,
+                LedgerEntry.line.in_(["STOCK_PURCHASE", "SUPPLIES"]), LedgerEntry.origin_ref.in_(by_cat[cat.key]))))
+        rows.append({"category": cat.key, "label": cat.label, "unit": cat.unit, "weight": cat.weight, "supplier_id": sup.id if sup else None,
+                     "supplier": sup.name if sup else None, "unit_price": price, "estimated": sup is None, "planned_volume": volume,
+                     "planned_spend": spend, "last_actual": actual, "max_units_month": sup.max_units_month if sup else None})
+        total += spend if sup else ZERO
+        total_last += actual
+    return {"rows": rows, "total_planned": quantize_money(total), "total_last_actual": quantize_money(total_last), "last_month": last}
+
+
+def grant_default_suppliers(db: Session, c: Company, ref: date | None = None) -> list[CompanySupplier]:
+    """Compatibilidade (empresas anteriores à fase 4; a migration faz o mesmo em SQL): contrato ATIVO com o "Fornecedor padrão"
+    ao preço de referência, sem pedido mínimo prático, volume ilimitado e confiabilidade 100%, em cada categoria sem contrato."""
+    seg = rules.SEGMENTS[c.segment]
+    have = _contracts(db, c)
+    out = []
+    for cat in seg.supply_categories:
+        if cat.key in have:
+            continue
+        sup = CompanySupplier(company_id=c.id, category=cat.key, name=supply.DEFAULT_SUPPLIER_NAME, unit_price=cat.ref_price,
+                              reference_price=cat.ref_price, min_monthly_order=supply.LEGACY_MIN_ORDER, max_units_month=supply.DEFAULT_MAX_UNITS,
+                              reliability=D(1), lead_days=2, status="ACTIVE", started_month=ref or c.founded_on,
+                              term_months=supply.CONTRACT_TERM_MONTHS, is_default=True)
+        db.add(sup)
+        out.append(sup)
+    db.flush()
+    return out
+
+
+def supply_checklist(db: Session, c: Company) -> list[dict]:
+    seg = rules.SEGMENTS[c.segment]
+    contracts = _contracts(db, c)
+    return [{"category": x.key, "label": x.label, "present": x.key in contracts,
+             "supplier": contracts[x.key].name if x.key in contracts else None} for x in seg.supply_categories]
 
 
 # ------------------------------------------------------------------ preço, configurações, expansão, locação, empréstimo
@@ -519,50 +803,6 @@ def update_settings(db: Session, user_id: int, month: SimMonth, company_id: int,
     if auto_restock is not None:
         c.auto_restock = auto_restock
     _event(db, c, month.ref_month, CompanyEventType.SETTINGS, f"Preço {c.price}, pró-labore {c.owner_salary}, reposição automática {c.auto_restock}")
-    return c
-
-
-def expand(db: Session, user_id: int, month: SimMonth, company_id: int, kind: str) -> Company:
-    require_open(month)
-    c = get_company(db, user_id, company_id, lock=True)
-    _active(c)
-    seg = rules.SEGMENTS[c.segment]
-    ref = month.ref_month
-    if kind == "CAPACITY" and c.capacity_level >= rules.MAX_CAPACITY_LEVEL:
-        raise ConflictError("a capacidade já está no nível máximo")
-    if kind == "NEW_UNIT" and c.units >= rules.MAX_UNITS:
-        raise ConflictError("número máximo de unidades atingido")
-    if kind == "LARGER_PREMISES" and c.size == CompanySize.LARGE:
-        raise ConflictError("a empresa já está no maior porte")
-    if kind not in ("CAPACITY", "NEW_UNIT", "LARGER_PREMISES", "MARKETING"):
-        raise FinanceError("tipo de expansão inválido")
-    cost = rules.expansion_cost(seg, kind, c.size, c.units)
-    if cash(db, c) < cost:
-        raise FinanceError(f"a empresa não tem caixa para esta expansão ({cost}); caixa atual: {cash(db, c)}")
-    n = _next_key(db, c)
-    if kind == "MARKETING":
-        _post(db, c, ref, kind=FlowKind.EXPENSE, amount=cost, desc="Campanha de marketing", line="MARKETING", key=f"co:{c.id}:exp:{n}")
-        c.marketing_until = shift_month(ref, rules.MARKETING_MONTHS - 1)
-        text = f"Campanha de publicidade até {c.marketing_until:%m/%Y}"
-    else:
-        _post(db, c, ref, kind=FlowKind.EXPENSE, amount=cost, desc=f"Expansão: {kind}", line="EXPANSION", key=f"co:{c.id}:exp:{n}")
-        if kind == "CAPACITY":
-            c.capacity_level += 1
-            text = f"Capacidade ampliada (nível {c.capacity_level})"
-        elif kind == "NEW_UNIT":
-            c.units += 1
-            text = f"Nova unidade aberta (total: {c.units})"
-        else:
-            old, new = c.size, rules.SIZE_ORDER[rules.SIZE_ORDER.index(c.size) + 1]
-            ratio = rules.SIZES[new].fixed / rules.SIZES[old].fixed
-            for cost_row in db.scalars(select(CompanyCost).where(CompanyCost.company_id == c.id)):
-                cost_row.amount = quantize_money(cost_row.amount * ratio)
-            lease = _lease(db, c)
-            if lease and lease.kind == LeaseKind.EXTERNAL:
-                lease.monthly_rent = rules.default_rent(seg, c.location, new)
-            c.size = new
-            text = f"Mudança para instalações maiores: porte {rules.SIZES[new].label}"
-    _event(db, c, ref, CompanyEventType.EXPANSION, text, cost)
     return c
 
 
@@ -642,7 +882,7 @@ def relocation_quote(db: Session, c: Company, *, location: str, site_mode: SiteM
         loc, mode = rules.validate_site(seg, c.channel, location, site_mode)
     except ValueError as e:
         raise FinanceError(str(e)) from None
-    if loc == c.location and mode == c.site_mode and new_size == c.size:
+    if loc == c.location and mode == c.site_mode and new_size == c.size and c.suspended_until is None:
         raise FinanceError("a empresa já funciona neste endereço: escolha outro local, outro modo (comprar/alugar) ou outro porte")
     if rules.SIZE_ORDER.index(new_size) < rules.SIZE_ORDER.index(c.size) and len(_employees(db, c)) > rules.max_staff(new_size, c.units):
         raise ConflictError(f"o porte {rules.SIZES[new_size].label} comporta {rules.max_staff(new_size, c.units)} pessoas: desligue funcionários antes de reduzir")
@@ -675,16 +915,21 @@ def relocate(db: Session, user_id: int, month: SimMonth, company_id: int, *, loc
     balance = cash(db, c)
     if balance < q["total"]:
         raise FinanceError(f"a empresa não tem caixa para a mudança ({q['total']}); caixa atual: {balance}")
+    return _do_relocate(db, c, seg, ref, q, key)
+
+
+def _do_relocate(db: Session, c: Company, seg: rules.Segment, ref: date, q: dict, key: str, *, overdraft: bool = False) -> Company:
+    """Executa a mudança já cotada (também usada pela decisão de despejo, com `overdraft`)."""
     old_label = rules.resolve_location(seg, c.location).label
     new_label = rules.resolve_location(seg, q["location"]).label
     _post(db, c, ref, kind=FlowKind.EXPENSE, amount=q["move"], desc=f"Mudança de endereço: {new_label} (3 meses de aluguel)",
-          line="RELOCATION", key=f"{key}:move")
-    _post(db, c, ref, kind=FlowKind.EXPENSE, amount=q["reinstall"], desc="Reinstalação no novo endereço", line="RELOCATION", key=f"{key}:reinstall")
-    _post(db, c, ref, kind=FlowKind.EXPENSE, amount=q["fine"], desc="Multa pela rescisão do contrato de aluguel", line="RELOCATION", key=f"{key}:fine")
+          line="RELOCATION", key=f"{key}:move", overdraft=overdraft)
+    _post(db, c, ref, kind=FlowKind.EXPENSE, amount=q["reinstall"], desc="Reinstalação no novo endereço", line="RELOCATION", key=f"{key}:reinstall", overdraft=overdraft)
+    _post(db, c, ref, kind=FlowKind.EXPENSE, amount=q["fine"], desc="Multa pela rescisão do contrato de aluguel", line="RELOCATION", key=f"{key}:fine", overdraft=overdraft)
     if q["land_resale"] > 0:                                         # terreno antigo vendido: volta ao caixa (capital, não é receita)
         _post(db, c, ref, kind=FlowKind.INCOME, amount=q["land_resale"], desc=f"Venda do terreno anterior — {old_label}", line="LAND", key=f"{key}:landsale")
     if q["land_cost"] > 0:
-        _post(db, c, ref, kind=FlowKind.EXPENSE, amount=q["land_cost"], desc=f"Compra do terreno — {new_label}", line="LAND", key=f"{key}:land")
+        _post(db, c, ref, kind=FlowKind.EXPENSE, amount=q["land_cost"], desc=f"Compra do terreno — {new_label}", line="LAND", key=f"{key}:land", overdraft=overdraft)
     lease = _lease(db, c)
     if lease:                                                          # encerra o contrato antigo (libera o imóvel próprio, se for o caso)
         lease.active = False
@@ -708,11 +953,59 @@ def relocate(db: Session, user_id: int, month: SimMonth, company_id: int, *, loc
     c.location, c.site_mode, c.size = q["location"], q["site_mode"], q["size"]
     c.site_value = q["land_cost"] if q["site_mode"] == SiteMode.BUY else ZERO
     c.relocated_on = ref
+    c.suspended_until = None                                           # mudar de endereço encerra o período sem operar (despejo)
     db.flush()
     _event(db, c, ref, CompanyEventType.EXPANSION,
            f"Mudança de endereço: {old_label} -> {new_label} ({q['site_mode'].value if q['site_mode'] else '—'}). Custo {q['total']}; "
            f"vendas do mês reduzidas e relevância {q['relevance_after']}", q["total"])
     return c
+
+
+def end_suspension(db: Session, c: Company, ref: date) -> None:
+    """Fim do período sem operar do despejo (sem relocar): a empresa consegue um novo ponto no mesmo bairro, a aluguel de referência."""
+    seg = rules.SEGMENTS[c.segment]
+    c.suspended_until = None
+    if c.channel == CompanyChannel.PHYSICAL and c.site_mode == SiteMode.RENT and _lease(db, c) is None:
+        label = rules.resolve_location(seg, c.location).label
+        db.add(CompanyLease(company_id=c.id, kind=LeaseKind.EXTERNAL, name=f"Ponto comercial — {label} (novo contrato)",
+                            monthly_rent=rules.default_rent(seg, c.location, c.size), start_month=ref))
+    db.flush()
+    _event(db, c, ref, CompanyEventType.LEASE, "Novo ponto alugado após o despejo: a empresa volta a operar")
+
+
+def apply_incident_action(db: Session, c: Company, ev_id: int, ref: date, action: dict) -> str:
+    """Ações de resultado dos imprevistos (despejo, quebra), chamadas por `economy_service._activate`."""
+    seg = rules.SEGMENTS[c.segment]
+    kind = action.get("type")
+    if kind == "renew_lease":
+        lease = _lease(db, c)
+        if lease:
+            lease.start_month = ref                                   # contrato novo: a idade do contrato zera
+        _event(db, c, ref, CompanyEventType.LEASE, "Contrato de aluguel renovado: o proprietário aceitou a permanência")
+        return "renew"
+    if kind == "evict":
+        lease = _lease(db, c)
+        months = int(action.get("months", 2))
+        if lease:
+            lease.active = False
+            lease.end_month = ref
+        c.suspended_until = shift_month(ref, months - 1)
+        db.flush()
+        _event(db, c, ref, CompanyEventType.LEASE,
+               f"DESPEJO: a empresa perdeu o ponto e fica sem operar por {months} mês(es) ou até mudar de endereço (vendas zeradas)")
+        return "evict"
+    if kind == "relocate_equiv":
+        cands = [x for x in seg.locations if x.key != c.location]
+        cur = rules.resolve_location(seg, c.location).demand
+        loc = min(cands, key=lambda x: (abs(x.demand - cur), x.key)).key
+        q = relocation_quote(db, c, location=loc, site_mode=SiteMode.RENT, size=None)
+        _do_relocate(db, c, seg, ref, q, f"co:{c.id}:evictmove:{ev_id}", overdraft=True)
+        return "relocate"
+    if kind == "shield":
+        c.incident_shield_until = shift_month(ref, int(action.get("months", 12)))
+        _event(db, c, ref, CompanyEventType.EQUIPMENT, "Conserto premium: sem quebras de equipamento pelos próximos meses")
+        return "shield"
+    return ""
 
 
 def loan_limit(db: Session, c: Company) -> Decimal:
@@ -783,6 +1076,74 @@ def _compute_month_taxes(db: Session, c: Company, seg: rules.Segment, ref: date,
     return company_taxes.compute_taxes(c.segment.value, hint, rbt12, revenue, payroll12, clt, purchases=purchases)
 
 
+def _units_detail(db: Session, c: Company, seg: rules.Segment, plans: list[UnitPlan], results: list, unit_sold: list, *, revenue: Decimal,
+                  variable_total: Decimal, payroll_staff: Decimal, operating: Decimal) -> list[dict]:
+    """Resultado do mês por unidade (fase 5). Receita = vendas da unidade x preço; custo variável rateado pelas vendas; folha dos
+    funcionários rateada pela fatia de equipe da unidade; custos fixos da filial = aluguel dela + custos fixos por unidade. A
+    matriz fica com o que sobra (inclui impostos não rateados, pró-labore e extras da empresa), de modo que a soma bate com o total."""
+    total_sold = sum(unit_sold)
+    scalable = sum((x.amount for x in db.scalars(select(CompanyCost).where(
+        CompanyCost.company_id == c.id, CompanyCost.active.is_(True), CompanyCost.scales_with_units.is_(True)))), ZERO)
+    rows, used = [], {"revenue": ZERO, "variable": ZERO, "fixed": ZERO, "payroll": ZERO}
+    for p, r, sold_u in list(zip(plans, results, unit_sold))[1:]:
+        rev = quantize_money(D(str(sold_u)) * c.price)
+        var = quantize_money(variable_total * D(str(sold_u)) / D(str(total_sold))) if total_sold > 0 else ZERO
+        fix = quantize_money(p.unit.monthly_rent + scalable)
+        pay = quantize_money(payroll_staff * D(str(round(p.share, 6))))
+        res = quantize_money(rev - var - fix - pay)
+        p.unit.cumulative_result = quantize_money(p.unit.cumulative_result + res)
+        for k_, v_ in (("revenue", rev), ("variable", var), ("fixed", fix), ("payroll", pay)):
+            used[k_] += v_
+        rows.append({"unit_id": p.unit.id, "name": p.name, "kind": "BRANCH", "location": p.location,
+                     "demand": round(r.demand, 2), "capacity": round(r.capacity, 2), "sold": float(sold_u), "relevance": round(p.relevance, 2),
+                     "revenue": str(rev), "variable_costs": str(var), "fixed_costs": str(fix), "payroll": str(pay), "result": str(res),
+                     "cumulative_result": str(p.unit.cumulative_result)})
+    hq = plans[0]
+    hq_rev = quantize_money(revenue - used["revenue"])
+    hq_var = quantize_money(variable_total - used["variable"])
+    hq_pay = quantize_money(payroll_staff - used["payroll"])
+    hq_res = quantize_money(operating - sum((D(x["result"]) for x in rows), ZERO))
+    hq_row = {"unit_id": None, "name": "Matriz", "kind": "HQ", "location": hq.location, "demand": round(results[0].demand, 2),
+              "capacity": round(results[0].capacity, 2), "sold": float(unit_sold[0]), "relevance": round(hq.relevance, 2),
+              "revenue": str(hq_rev), "variable_costs": str(hq_var), "fixed_costs": str(quantize_money(hq_rev - hq_var - hq_pay - hq_res)),
+              "payroll": str(hq_pay), "result": str(hq_res), "cumulative_result": None}
+    return [hq_row] + rows
+
+
+def _review_branches(db: Session, c: Company, seg: rules.Segment, ref: date, plans: list[UnitPlan], detail: list[dict]) -> None:
+    """Falência de filial: fecha se o resultado acumulado cair abaixo de -60% do custo de abertura (com >= 3 meses de vida) ou se o
+    caixa da empresa não cobre o prejuízo do mês (caixa negativo e filial no vermelho). Fecha com evento, encerra o aluguel, vende
+    o terreno a 92% e o investimento é perdido."""
+    db.flush()
+    balance = cash(db, c)
+    by_id = {d["unit_id"]: d for d in detail if d["unit_id"] is not None}
+    for p in plans[1:]:
+        u = p.unit
+        age = months_between(u.opened_month, ref)
+        res = D(by_id[u.id]["result"])
+        limit = -quantize_money(max(u.investment, D(1)) * rules.BRANCH_CLOSE_LOSS)
+        reason = None
+        if age >= rules.BRANCH_MIN_AGE and u.cumulative_result < limit:
+            reason = f"prejuízo acumulado de {-u.cumulative_result} passou do limite de {-limit}"
+        elif balance < 0 and res < 0 and age >= 1:
+            reason = "o caixa da empresa não cobre o prejuízo da filial"
+        if reason:
+            close_branch(db, c, seg, u, ref, reason)
+
+
+def close_branch(db: Session, c: Company, seg: rules.Segment, u: CompanyUnit, ref: date, reason: str) -> None:
+    u.status, u.closed_month, u.closed_reason = "CLOSED", ref, reason[:160]
+    back = ZERO
+    if u.site_value > 0:
+        back = quantize_money(u.site_value * rules.BRANCH_LAND_RESALE)
+        _post(db, c, ref, kind=FlowKind.INCOME, amount=back, desc=f"Venda do terreno da {u.name} (92%)", line="LAND", key=f"co:{c.id}:unit:{u.id}:landsale")
+    c.units = max(1, c.units - 1)
+    db.flush()
+    _event(db, c, ref, CompanyEventType.EXPANSION,
+           f"{u.name} FALIU e foi fechada: {reason}. Aluguel encerrado" + (f", terreno vendido por {back}" if back > 0 else "")
+           + f"; o investimento de {u.investment} foi perdido", back if back > 0 else None)
+
+
 def _process_company(db: Session, c: Company, month: SimMonth) -> CompanyMonth:
     ref = month.ref_month
     seg = rules.SEGMENTS[c.segment]
@@ -791,21 +1152,70 @@ def _process_company(db: Session, c: Company, month: SimMonth) -> CompanyMonth:
     items = list(db.scalars(select(InventoryItem).where(InventoryItem.company_id == c.id).order_by(InventoryItem.id))) \
         if seg.has_stock else []                                        # segmentos de serviço não têm estoque
     opening_cash = cash(db, c)
+    if c.suspended_until is not None and ref > c.suspended_until:
+        end_suspension(db, c, ref)                                      # fase 5: acabou o período sem operar do despejo
+    suspended = c.suspended_until is not None and ref <= c.suspended_until
+    branches = open_branches(db, c)
 
     # 1) condições do mês (relevância, demanda, sazonalidade, campanha, economia, mudança de endereço)
     marketing = c.marketing_until is not None and ref <= c.marketing_until
     relevance = float(c.relevance)
     missing = rules.missing_mandatory(c.channel, [e.role for e in staff if rules.counts_as_filled(e.hours_week)])   # fase 2/3a: cargos obrigatórios
-    irregular = bool(missing)
+    grace = c.compliance_grace_months if missing else 0          # período de adaptação (empresas legadas): sem bloqueio nem multa
+    if not missing and c.compliance_grace_months:
+        c.compliance_grace_months = 0                              # regular: a tolerância não é mais necessária
+    in_grace = grace > 0
+    irregular = bool(missing) and not in_grace
     stock_cap = min((float(i.quantity / (i.units_per_sale * (1 + i.waste_pct / 100))) for i in items), default=math.inf)
-    sales = rules.sales_month(
-        seg, location=c.location, size=c.size, units=c.units, capacity_level=c.capacity_level, relevance=relevance,
-        reputation=c.reputation, price=c.price, company_id=c.id, ref=ref, seed=_seed(db, c.user_id), marketing=marketing,
-        staff=staff_capacity(staff), equipment_factor=_equipment_factor(db, c),
-        econ_mult=economy_service.company_demand_mult(db, c, ref),            # economia, crises e eventos (etapa 5 / fase 3a)
-        relocation_mult=rules.RELOCATION_SALES_MULT if c.relocated_on == ref else 1.0,
-        stock_cap=stock_cap, irregular=irregular)
-    demand, capacity, potential, sold, stockout = sales.demand, sales.capacity, sales.potential, sales.sold, sales.stockout
+    # fase 4: fornecedores. Serviços sem contrato numa categoria NÃO operam (vendas 0); nos segmentos com estoque a falta de contrato
+    # só impede a reposição (o estoque que sobrou ainda vende). A capacidade efetiva é limitada pelo menor volume contratado.
+    contracts = _contracts(db, c)
+    sup_state = supply_state(db, c, ref, contracts)
+    service_supply = seg.metrics_kind == rules.MetricsKind.SERVICE and seg.needs_suppliers
+    supply_blocked = service_supply and bool(sup_state["missing"])
+    if supply_blocked:
+        _event(db, c, ref, CompanyEventType.STOCK, "Operação bloqueada: sem fornecedor contratado de "
+               + ", ".join(x.label for x in sup_state["missing"]) + ". Vendas zeradas no mês")
+    elif sup_state["missing"]:
+        _event(db, c, ref, CompanyEventType.STOCK, "Sem fornecedor contratado de " + ", ".join(x.label for x in sup_state["missing"])
+               + ": esses itens não serão repostos e o estoque vai zerar")
+    if service_supply:
+        for sp in sup_state["failed"]:
+            _event(db, c, ref, CompanyEventType.STOCK, f"Falha de entrega de {sp.name} ({sp.category}): capacidade do mês reduzida")
+    blocked = irregular or supply_blocked or suspended
+    if suspended:
+        _event(db, c, ref, CompanyEventType.LEASE, "Empresa sem ponto (despejo): vendas zeradas até mudar de endereço ou o prazo acabar")
+    seed = _seed(db, c.user_id)
+    econ = economy_service.company_demand_mult(db, c, ref)               # economia, crises e eventos (etapa 5 / fase 3a)
+    reloc = rules.RELOCATION_SALES_MULT if c.relocated_on == ref else 1.0
+    qual = float(c.quality)
+    plans = plan_units(db, c, seg, ref, marketing=marketing, econ_mult=econ, relocation_mult=reloc, branches=branches)
+    staff_cap, equip = staff_capacity(staff), _equipment_factor(db, c)
+    multi = len(plans) > 1
+    results = []
+    for p in plans:
+        results.append(rules.sales_month(
+            seg, location=p.location, size=c.size, units=1, capacity_level=eff_capacity_level(c), relevance=p.relevance,
+            reputation=c.reputation, price=c.price, company_id=p.key, ref=ref, seed=seed, marketing=marketing, staff=staff_cap,
+            econ_mult=econ * p.viability, relocation_mult=reloc if p is plans[0] else 1.0, equipment_factor=equip,
+            stock_cap=math.inf if multi else stock_cap, irregular=blocked, supply_cap=math.inf if multi else sup_state["cap"],
+            quality=qual, marketing_boost=float(c.marketing_boost), people_share=p.share))
+    if not multi:
+        sales = results[0]
+        demand, capacity, potential, sold, stockout = sales.demand, sales.capacity, sales.potential, sales.sold, sales.stockout
+        unit_sold = [sold]
+    else:                                  # fase 5: matriz + filiais; fornecedores e estoque limitam o TOTAL (rateio proporcional)
+        sales = results[0]
+        limit = min(sup_state["cap"], stock_cap)
+        pot = sum(r.potential for r in results)
+        scale = 1.0 if pot <= limit else limit / pot
+        unit_sold = [r.sold if scale >= 1.0 else (round(max(r.potential * scale, 0), 2) if seg.fractional else math.floor(max(r.potential * scale + 1e-9, 0)))
+                     for r in results]
+        demand = sum(r.demand for r in results)
+        capacity = min(sum(r.capacity for r in results), sup_state["cap"])
+        potential = pot * min(scale, 1.0)
+        sold = round(sum(unit_sold), 2) if seg.fractional else sum(unit_sold)
+        stockout = bool(stock_cap != math.inf and stock_cap < pot)
     cogs = ZERO
     for i in items:
         used = (D(str(sold)) * i.units_per_sale * (1 + i.waste_pct / 100)).quantize(D("0.001"))
@@ -814,14 +1224,34 @@ def _process_company(db: Session, c: Company, month: SimMonth) -> CompanyMonth:
         cogs += used * i.unit_cost
     cogs = quantize_money(cogs)
     # 3) receitas
+    qmult = rules.quality_cost_mult(qual)                  # fase 5: qualidade maior encarece os insumos/custos variáveis
     revenue = quantize_money(D(str(sold)) * c.price)
     _post(db, c, ref, kind=FlowKind.INCOME, amount=revenue, desc=f"Vendas do mês ({sold} {seg.unit_label})", line="REVENUE", key=f"{k}:revenue", overdraft=True)
-    variable = quantize_money(revenue * seg.variable_pct / 100)
-    _post(db, c, ref, kind=FlowKind.EXPENSE, amount=variable, desc="Custos variáveis (frete, taxas, comissões)", line="VARIABLE", key=f"{k}:variable", overdraft=True)
+    if service_supply:                  # serviços com fornecedor: o custo variável é o consumo das categorias ao PREÇO CONTRATADO
+        variable = ZERO
+        for cat in seg.supply_categories:
+            sup = contracts.get(cat.key)
+            if sup is None:
+                continue
+            amount = quantize_money(D(str(sold)) * cat.per_sale * sup.unit_price * qmult)
+            variable += amount
+            _post(db, c, ref, kind=FlowKind.EXPENSE, amount=amount, desc=f"Insumos do serviço: {cat.label} — {sup.name}", line="SUPPLIES",
+                  key=f"{k}:supplies:{sup.id}", overdraft=True, origin_ref=_supplier_ref(c, sup))
+            sup.volume_used = D(str(sold)) * cat.per_sale
+            sup.volume_month = ref
+    else:
+        variable = quantize_money(revenue * seg.variable_pct / 100 * qmult)
+        _post(db, c, ref, kind=FlowKind.EXPENSE, amount=variable, desc="Custos variáveis (frete, taxas, comissões)", line="VARIABLE", key=f"{k}:variable", overdraft=True)
     # 4) folha de pagamento (+ pró-labore, que vira receita PESSOAL do usuário)
     payroll = quantize_money(sum((employee_cost(e) for e in staff), ZERO))
     _post(db, c, ref, kind=FlowKind.EXPENSE, amount=payroll, desc=f"Folha de pagamento ({len(staff)} funcionários; CLT 2x, PJ 1x)", line="PAYROLL", key=f"{k}:payroll", overdraft=True)
+    payroll_staff = payroll
     fine = rules.compliance_fine(seg, missing, c.size) if irregular else ZERO
+    if in_grace:
+        labels = ", ".join(seg.role(r).label for r in missing)
+        _event(db, c, ref, CompanyEventType.COMPLIANCE,
+               f"Período de adaptação: faltam {grace} {'mês' if grace == 1 else 'meses'} para contratar {labels}")
+        c.compliance_grace_months = grace - 1
     if irregular:
         labels = ", ".join(seg.role(r).label for r in missing)
         _post(db, c, ref, kind=FlowKind.EXPENSE, amount=fine, desc=f"Multa por irregularidade (sem {labels})", line="FEES", key=f"{k}:fine", overdraft=True)
@@ -874,19 +1304,24 @@ def _process_company(db: Session, c: Company, month: SimMonth) -> CompanyMonth:
         od = quantize_money(-opening_cash * rules.OVERDRAFT_RATE_MONTHLY)
         _post(db, c, ref, kind=FlowKind.EXPENSE, amount=od, desc="Juros do saldo negativo (cheque especial)", line="INTEREST", key=f"{k}:overdraft", overdraft=True)
         interest += od
-    # reposição de estoque (pagamento a fornecedores): só com caixa disponível
+    # reposição de estoque (pagamento a fornecedores): só com caixa disponível e com CONTRATO ativo da categoria do item
     if c.auto_restock:
         for i in items:
+            sup = contracts.get(i.category or "")
+            if sup is None:
+                continue                                                 # sem fornecedor: não repõe (ruptura; evento acima)
             want = 0 if irregular else min(demand, capacity)             # o que o mercado pediria (mês zerado por sorte não esvazia a reposição)
             need = D(str(max(sold, want) * 1.1)) * i.units_per_sale * (1 + i.waste_pct / 100)
             if i.quantity < max(need * D("0.6"), i.min_quantity):
-                price = supplier_cost(i, ref, economy_service.supplier_mult(db, c, ref))
-                room = max(rules.storage_cap_qty(seg, c.size, c.units, i) - i.quantity, ZERO)      # teto de estoque do porte
-                buy = min(need - i.quantity, room)
+                price = sup.unit_price * rules.quality_cost_mult(float(c.quality))
+                room = max(rules.storage_cap_qty(seg, c.size, c.units, i, float(c.storage_boost)) - i.quantity, ZERO)      # teto de estoque do porte
+                buy = min(need - i.quantity, room, volume_left(sup, ref))                           # e o volume que o fornecedor aguenta
+                if buy < sup.min_monthly_order:                           # pedido mínimo: sobe até ele se couber no depósito e no volume
+                    buy = sup.min_monthly_order if min(room, volume_left(sup, ref)) >= sup.min_monthly_order else ZERO
                 affordable = (max(cash(db, c), ZERO) * D("0.9") / price) if price > 0 else D(0)
                 qty = min(buy, affordable)
-                if qty >= 1 or (seg.fractional and qty > 0):
-                    _buy_stock(db, c, i, qty, ref, f"{k}:restock:{i.id}", seg)
+                if qty >= sup.min_monthly_order and (qty >= 1 or (seg.fractional and qty > 0)):
+                    _buy_stock(db, c, i, qty, ref, f"{k}:restock:{i.id}", seg, sup)
     # 9/10) resultados e patrimônio
     db.flush()                                          # a sessão não faz autoflush: estoque e saldo precisam estar no banco
     oneoff = quantize_money(db.scalar(select(func.coalesce(func.sum(LedgerEntry.amount), 0)).where(
@@ -896,21 +1331,29 @@ def _process_company(db: Session, c: Company, month: SimMonth) -> CompanyMonth:
     fixed_total = quantize_money(rent + fixed_costs + asset_costs + oneoff)
     operating = quantize_money(revenue - variable_total - fixed_total - payroll)
     net = quantize_money(operating - taxes - interest)
+    served = sold >= math.floor(min(demand, capacity)) and not stockout
+    ratio = rules.price_ratio(seg, c.price, qual)
+    units_detail = _units_detail(db, c, seg, plans, results, unit_sold, revenue=revenue, variable_total=variable_total, payroll_staff=payroll_staff,
+                                 operating=operating)
+    new_relevance = rules.next_relevance(relevance, sold=unit_sold[0], demand=results[0].demand, reputation=c.reputation, marketing=marketing,
+                                         stockout=stockout, price_ratio=ratio, irregular=blocked, quality=qual)
+    for p, r, sold_u in list(zip(plans, results, unit_sold))[1:]:        # cada filial evolui com os SEUS números
+        p.unit.relevance = D(str(round(rules.next_relevance(
+            p.relevance, sold=sold_u, demand=r.demand, reputation=c.reputation, marketing=marketing, stockout=stockout, price_ratio=ratio,
+            irregular=blocked, quality=qual), 2)))
+    _review_branches(db, c, seg, ref, plans, units_detail)
     balance = cash(db, c)
     loans = db.scalar(select(func.coalesce(func.sum(CompanyLoan.balance), 0)).where(
         CompanyLoan.company_id == c.id, CompanyLoan.status == LoanStatus.ACTIVE))
-    served = sold >= math.floor(min(demand, capacity)) and not stockout
-    new_relevance = rules.next_relevance(relevance, sold=sold, demand=demand, reputation=c.reputation, marketing=marketing,
-                                         stockout=stockout, price_ratio=float(c.price) / float(seg.price), irregular=irregular)
     c.relevance = D(str(round(new_relevance, 2)))
-    c.reputation = rules.next_reputation(c.reputation, served=served, stockout=stockout, irregular=irregular)
+    c.reputation = rules.next_reputation(c.reputation, served=served, stockout=stockout, irregular=blocked)
     equity = wealth_service.company_equity(db, c)
     row = CompanyMonth(company_id=c.id, ref_month=ref, demand_units=D(str(round(demand, 2))), capacity_units=D(str(round(capacity, 2))),
                        units_sold=D(str(sold)), stockout=stockout, revenue=revenue, variable_costs=variable_total,
                        fixed_costs=fixed_total, payroll=payroll, taxes=taxes, tax_regime=tax.regime, tax_breakdown=tax.breakdown(), interest=quantize_money(interest),
                        operating_result=operating, net_result=net, cash_end=balance,
                        debts_end=quantize_money(loans + max(-balance, ZERO)), equity_end=equity, reputation_end=c.reputation,
-                       irregular=irregular, fines=fine, relevance_end=c.relevance, zero_sales=sales.zero_month)
+                       irregular=irregular, fines=fine, relevance_end=c.relevance, zero_sales=sales.zero_month, units_detail=units_detail)
     db.add(row)
     c.last_processed_month = ref
     _event(db, c, ref, CompanyEventType.MONTH, f"Mês fechado: receita {revenue}, resultado líquido {net}"

@@ -11,6 +11,7 @@ from decimal import Decimal
 
 from backend.core.money import quantize_money
 from backend.models import CompanyChannel, CompanySize, EmployeeRegime
+from backend.services import company_incidents as incidents
 from backend.services import company_rules as rules
 from backend.services import company_taxes as ctax
 
@@ -37,6 +38,7 @@ class SimMonth:
     zero_prob: float
     taxes: float = 0.0
     tax_regime: str = ""
+    incidents: float = 0.0     # custo ESPERADO dos imprevistos do mês (fase 5; já dentro de `fixed`)
 
 
 @dataclass
@@ -69,11 +71,15 @@ def _add_month(d: date, n: int) -> date:
 def simulate(segment, *, months: int = 36, size: CompanySize = CompanySize.SMALL, location: str | None = None,
              regime: EmployeeRegime = EmployeeRegime.CLT, price: Decimal | None = None, marketing: bool = False,
              expected: bool = True, seed: int = SIM_SEED, company_id: int = 1, season: bool = False,
-             econ_mult: float = 1.0) -> SimResult:
+             econ_mult: float = 1.0, supplier_mult: float = 1.0, incidents_on: bool = True) -> SimResult:
     """Simula `months` meses de uma empresa nova (porte e local padrão, equipe sugerida + obrigatórios).
 
     `expected=True`: usa o VALOR ESPERADO dos meses zerados (vendas x (1 - p)), sem sorteio: curva suave para calibrar.
-    `expected=False`: sorteia os meses zerados com `hash01` (semente `seed`), como no jogo."""
+    `expected=False`: sorteia os meses zerados com `hash01` (semente `seed`), como no jogo.
+    `incidents_on` (fase 5): soma ao custo fixo o valor ESPERADO dos imprevistos (despejo, quebra de equipamento e processo trabalhista:
+    probabilidade mensal x custo da decisão típica, ver `company_incidents`).
+    `supplier_mult` (fase 4): preço CONTRATADO dos fornecedores / preço de referência (1.0 = contratos a ~preço de lista; o jogador
+    que negocia bem fica abaixo de 1.0). Estoque: entra no custo das mercadorias; serviços com fornecedor: no custo variável."""
     seg = rules.SEGMENTS[segment]
     channel = rules.PHYSICAL if rules.PHYSICAL in seg.channels else rules.ONLINE
     loc = location or (seg.default_location if channel == rules.PHYSICAL else rules.ONLINE_LOCATION_KEY)
@@ -87,9 +93,11 @@ def simulate(segment, *, months: int = 36, size: CompanySize = CompanySize.SMALL
         role = seg.role_for(r, size)
         payroll += rules.payroll_cost(role.salary * rules.wage_hours_factor(role.hours or rules.FULL_TIME_HOURS) * mult, regime)
     fixed = float(rules.monthly_fixed(seg, loc, size, channel=channel, site_mode=site_mode))
-    unit_cogs = sum((float(s.unit_cost * s.units_per_sale * (1 + s.waste_pct / 100)) for s in seg.stock), 0.0) if seg.has_stock else 0.0
+    unit_supply = float(rules.supply_cost_per_sale(seg, D(str(supplier_mult)))) if seg.needs_suppliers else 0.0
+    service_supply = seg.needs_suppliers and not seg.has_stock                       # oficina e transporte: sem estoque
+    unit_cogs = unit_supply if seg.has_stock else 0.0
     minimum = rules.minimum_capital(seg, loc, size, channel, site_mode)
-    stock0 = sum((q * s.unit_cost for s, q in rules.initial_stock_quantities(seg, loc, size)), D(0))
+    stock0 = sum((q * s.unit_cost for s, q in rules.initial_stock_quantities(seg, loc, size)), D(0)) * D(str(supplier_mult))   # 1ª compra
     hiring = sum((seg.role(r).salary * mult * rules.HIRING_COST_MONTHS for r in team), D(0)) \
         + sum((seg.role_for(r, size).salary * rules.wage_hours_factor(seg.role_for(r, size).hours or 36) * mult * rules.HIRING_COST_MONTHS
                for r in rules.mandatory_roles(channel)), D(0))
@@ -117,17 +125,21 @@ def simulate(segment, *, months: int = 36, size: CompanySize = CompanySize.SMALL
             demand = base.demand
         else:
             sold, demand = s.sold, s.demand
+        inc_cost = 0.0
+        if incidents_on:
+            inc_cost = incidents.expected_monthly_cost(seg, size, channel, rent=rules.monthly_rent(seg, loc, size, channel=channel, site_mode=site_mode),
+                                                       relevance=rel, lease_age=n, payroll=payroll)
         revenue = sold * float(price)
         rev_d = D(str(round(revenue, 2)))
         tax = ctax.compute_taxes(seg.key.value, hint, ctax.annualize(history, rev_d), rev_d, ctax.annualize([payroll] * len(history), payroll),
                                  clt, purchases=D(str(round(sold * unit_cogs, 2))))
         history.append(rev_d)
         hint = tax.regime
-        variable = sold * unit_cogs + revenue * float(seg.variable_pct) / 100 + float(tax.total)
-        profit = revenue - variable - fixed - float(payroll)
+        variable = (sold * unit_supply if service_supply else sold * unit_cogs + revenue * float(seg.variable_pct) / 100) + float(tax.total)
+        profit = revenue - variable - fixed - float(payroll) - inc_cost
         cash += profit
-        out.rows.append(SimMonth(n, rel, rep, demand, sold, revenue, variable, fixed, float(payroll), profit, cash, p0,
-                                 taxes=float(tax.total), tax_regime=tax.regime))
+        out.rows.append(SimMonth(n, rel, rep, demand, sold, revenue, variable, fixed + inc_cost, float(payroll), profit, cash, p0,
+                                 taxes=float(tax.total), tax_regime=tax.regime, incidents=inc_cost))
         served_full = sold_ok >= math.floor(min(demand, s.capacity)) if expected else (s.sold >= math.floor(min(s.demand, s.capacity)))
         new_rel_ok = rules.next_relevance(rel, sold=max(sold_ok if expected else s.sold, 0), demand=demand, reputation=int(round(rep)),
                                           marketing=mk, stockout=False, price_ratio=ratio, irregular=False)

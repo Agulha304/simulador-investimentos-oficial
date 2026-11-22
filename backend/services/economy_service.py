@@ -433,13 +433,23 @@ def _activate(db: Session, ev: WorldEvent, ref: date) -> None:
         from backend.services import company_service
         if "payroll_mult" in co:                       # valores jurídicos proporcionais ao tamanho da folha da empresa
             payroll = sum((rules_payroll(e.salary, e.regime) for e in company_service._employees(db, c)), D("0.00"))
-            amt = max(D("3000"), quantize_money(payroll * D(str(co["payroll_mult"]))))
+            amt = max(D("3000"), quantize_money(payroll * D(str(co["payroll_mult"])) * D(str((ev.effects or {}).get("claim_mult", 1.0)))))
+        elif "setup_mult" in co:                       # quebra de equipamento: proporcional ao custo de estruturação do porte
+            from backend.services import company_rules
+            amt = max(D("500"), quantize_money(company_rules.setup_cost(company_rules.SEGMENTS[c.segment], c.size, c.channel) * D(str(co["setup_mult"]))))
+        elif "rent_mult" in co:                        # despejo: múltiplos do aluguel do ponto
+            lease = company_service._lease(db, c)
+            amt = max(D("1500"), quantize_money((lease.monthly_rent if lease else D("0")) * D(str(co["rent_mult"]))))
         else:
             amt = quantize_money(D(str(co["amount"])) * index_value(db, ev.user_id, ref, co.get("price_cat", "insumos")))
         company_service._post(db, c, ref, kind=FlowKind.EXPENSE, amount=amt, desc=f"{co['label']} (evento)", line="FIXED",
                               key=f"econ:ev:{ev.id}:company", overdraft=True)
         if ev.category == "BUSINESS" and ev.key == "processo_trabalhista":
             life_service.log(db, ev.user_id, ref, "LEGAL", f"Processo trabalhista na empresa {c.name}: {co['label'].lower()} ({amt})")
+    act = fx.pop("company_action", None)
+    if act and ev.company_id:
+        from backend.services import company_service
+        company_service.apply_incident_action(db, db.get(Company, ev.company_id), ev.id, ref, act)
     ci = fx.pop("company_income", None)
     if ci and ev.company_id:                           # ressarcimento de um calote (acordo ou justiça)
         c = db.get(Company, ev.company_id)
@@ -502,7 +512,39 @@ def _spawn(db: Session, user_id: int, ref: date, seed: int, macro: dict, freq: f
         if ev.status == "ACTIVE":
             _activate(db, ev, ref)
         new.append(ev)
+    new.extend(_spawn_incidents(db, user_id, ref, seed, freq))
     return new
+
+
+def _spawn_incidents(db: Session, user_id: int, ref: date, seed: int, freq: float = 1.0) -> list[WorldEvent]:
+    """Imprevistos POR EMPRESA (fase 5): despejo, processo trabalhista e quebra de equipamento. A probabilidade mensal depende do estado
+    de cada empresa (`company_incidents`) e o sorteio é `hash01(semente, ...)`. No máximo `INCIDENT_CAP` por mês na carteira; o
+    mesmo imprevisto não se repete na mesma empresa em 6 meses. A decisão aparece ANTES do fechamento do mês (PENDING)."""
+    from backend.services import company_incidents as inc
+    comps = list(db.scalars(select(Company).where(Company.user_id == user_id, Company.status == CompanyStatus.ACTIVE).order_by(Company.id)))
+    out: list[WorldEvent] = []
+    for d in E.CATALOG:
+        if d.co_prob is None:
+            continue
+        for c in comps:
+            if len(out) >= inc.INCIDENT_CAP:
+                return out
+            p = d.co_prob(db, c, ref) * freq
+            if p <= 0:
+                continue
+            if db.scalar(select(WorldEvent.id).where(WorldEvent.user_id == user_id, WorldEvent.key == d.key, WorldEvent.company_id == c.id,
+                                                     WorldEvent.end_month >= budget_service.shift_month(ref, -6)).limit(1)):
+                continue
+            if hash01(seed, "inc", d.key, ref.isoformat(), c.id) >= min(1.0, p):
+                continue
+            text, extra = inc.describe(db, c, d.key, ref)
+            ev = spawn_company_event(db, c, d.key, ref, text or None)
+            if ev is None:
+                continue
+            if extra:
+                ev.effects = {**ev.effects, **extra}
+            out.append(ev)
+    return out
 
 
 def _resolve(db: Session, ev: WorldEvent, option_key: str, month_ref: date, seed: int) -> WorldEvent:
@@ -525,7 +567,7 @@ def _resolve(db: Session, ev: WorldEvent, option_key: str, month_ref: date, seed
             oneoff.append({"kind": "EXPENSE", "amount": opt.cost, "price_cat": "lazer", "label": f"{opt.label} — {ev.name}"})
     if oneoff:
         fx["oneoff"] = oneoff
-    keep = {k: v for k, v in (ev.effects or {}).items() if k in ("loss", "partner_person_id")}
+    keep = {k: v for k, v in (ev.effects or {}).items() if k in ("loss", "partner_person_id", "claim_mult")}
     ev.effects, ev.choice, ev.outcome = {**fx, **keep}, opt.key, chosen.text
     ev.start_month = min(ev.start_month, month_ref)
     ev.end_month = budget_service.shift_month(month_ref, max(chosen.duration, 1) - 1)
@@ -533,6 +575,16 @@ def _resolve(db: Session, ev: WorldEvent, option_key: str, month_ref: date, seed
     _activate(db, ev, month_ref)
     db.flush()
     return ev
+
+
+def _guard_option(db: Session, ev: WorldEvent, option_key: str) -> None:
+    """Pré-condições de opções de imprevistos: brigar na justiça contra o despejo exige advogado ATIVO na empresa."""
+    if ev.key == "despejo" and option_key == "justica" and ev.company_id:
+        from backend.services import company_service
+        from backend.services import company_rules
+        c = db.get(Company, ev.company_id)
+        if not any(e.role == "lawyer" and company_rules.counts_as_filled(e.hours_week) for e in company_service._employees(db, c)):
+            raise FinanceError("Para brigar na justiça é preciso ter um advogado ativo na empresa: contrate um antes ou escolha outra opção.")
 
 
 def decide(db: Session, user_id: int, month: SimMonth, event_id: int, option_key: str) -> WorldEvent:
@@ -544,6 +596,7 @@ def decide(db: Session, user_id: int, month: SimMonth, event_id: int, option_key
         raise ConflictError("este evento não aguarda decisão")
     if ev.start_month > month.ref_month:
         raise ConflictError("este evento só acontece num mês futuro")
+    _guard_option(db, ev, option_key)
     _resolve(db, ev, option_key, month.ref_month, get_game(db, user_id).seed)
     sync_month(db, user_id, month)
     return ev
