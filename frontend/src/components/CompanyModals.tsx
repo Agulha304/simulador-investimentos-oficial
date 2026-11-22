@@ -1,5 +1,5 @@
-import { useState, type FormEvent, type ReactNode } from "react";
-import { api, type CoCandidate, type CoHeadhunterResult, type CoRegime, type CoSchedule, type CompanyDetail, type Good } from "../services/api";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { api, type CoCandidate, type CoCatalog, type CoHeadhunterResult, type CoRegime, type CoRelocateQuote, type CoSchedule, type CoSiteMode, type CompanyDetail, type Good } from "../services/api";
 import { LEVEL_LABEL, fmtBRL, parseMoneyInput } from "../lib/format";
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : "Erro inesperado");
@@ -274,6 +274,62 @@ export function LeaseModal({ d, goods, onClose, onDone }: { d: CompanyDetail; go
       <label>Aluguel mensal (R$) {mode === "EXTERNAL" ? "— vazio = valor de mercado da região" : ""}<input inputMode="decimal" value={rent} onChange={(e) => setRent(e.target.value)} /></label>
       {msg && <div className="alert">{msg}</div>}
       <button className="btn primary" disabled={busy}>{busy ? "Salvando…" : "Confirmar"}</button>
+    </Modal>
+  );
+}
+
+/** Mudança de endereço: escolha do local/modo/porte, orçamento da mudança (consulta ao servidor) e confirmação. */
+export function RelocateModal({ d, onClose, onDone }: { d: CompanyDetail; onClose: () => void; onDone: (d: CompanyDetail) => void }) {
+  const c = d.company;
+  const [catalog, setCatalog] = useState<CoCatalog | null>(null);
+  const [location, setLocation] = useState(c.location);
+  const [mode, setMode] = useState<CoSiteMode>(c.site_mode ?? "RENT");
+  const [size, setSize] = useState(c.size);
+  const [quote, setQuote] = useState<CoRelocateQuote | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  useEffect(() => { api.coCatalog().then(setCatalog).catch((e) => setMsg(errMsg(e))); }, []);
+  const seg = catalog?.segments.find((x) => x.key === c.segment);
+  useEffect(() => {
+    setQuote(null); setMsg(null);
+    if (!seg) return;
+    api.coRelocateQuote(c.id, { location, site_mode: mode, size }).then(setQuote).catch((e) => setMsg(errMsg(e)));
+  }, [c.id, seg, location, mode, size]);
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    setBusy(true); setMsg(null);
+    try { onDone(await api.coRelocate(c.id, { location, site_mode: mode, size })); } catch (err) { setMsg(errMsg(err)); setBusy(false); }
+  }
+  return (
+    <Modal title="Mudar de endereço" onClose={onClose} onSubmit={submit}>
+      <p className="muted small" style={{ margin: 0 }}>Use quando bater o teto de funcionários/estoque/produção do porte ou para ir a um ponto melhor. A mudança custa 3 meses do aluguel do novo ponto, a reinstalação (30% da estruturação) e, se você aluga, a multa de 2 aluguéis pelo contrato encerrado. A empresa fica parte do mês sem operar (vendas do fechamento caem para 35%) e perde parte da relevância — menos se o novo ponto tiver mais movimento. Funcionários e estoque ficam.</p>
+      <label>Novo local
+        <select value={location} onChange={(e) => setLocation(e.target.value)}>
+          {(seg?.locations ?? []).map((l) => <option key={l.key} value={l.key}>{l.label} — movimento {l.demand.toFixed(2).replace(".", ",")}×{l.key === c.location ? " (atual)" : ""}</option>)}
+        </select>
+      </label>
+      <div className="seg" role="group" aria-label="Terreno">
+        <button type="button" className={mode === "RENT" ? "on" : ""} onClick={() => setMode("RENT")}>Alugar o ponto</button>
+        <button type="button" className={mode === "BUY" ? "on" : ""} onClick={() => setMode("BUY")}>Comprar o terreno</button>
+      </div>
+      <label>Porte
+        <select value={size} onChange={(e) => setSize(e.target.value)}>
+          {(catalog?.sizes ?? []).map((z) => <option key={z.key} value={z.key}>{z.label}{z.key === c.size ? " (atual)" : ""}</option>)}
+        </select>
+      </label>
+      {quote && (
+        <dl className="facts">
+          <div><dt>Mudança (3 meses de aluguel do novo ponto)</dt><dd className="num">{fmtBRL(quote.move)}</dd></div>
+          <div><dt>Reinstalação</dt><dd className="num">{fmtBRL(quote.reinstall)}</dd></div>
+          {Number(quote.fine) > 0 && <div><dt>Multa do contrato de aluguel encerrado</dt><dd className="num">{fmtBRL(quote.fine)}</dd></div>}
+          {Number(quote.land_cost) > 0 && <div><dt>Compra do terreno</dt><dd className="num">{fmtBRL(quote.land_cost)}</dd></div>}
+          {Number(quote.land_resale) > 0 && <div><dt>(−) Venda do terreno anterior</dt><dd className="num">{fmtBRL(quote.land_resale)}</dd></div>}
+          <div><dt><b>Total a pagar pelo caixa da empresa</b></dt><dd className="num"><b>{fmtBRL(quote.total)}</b></dd></div>
+          <div><dt>Relevância depois da mudança</dt><dd className="num">{c.relevance.toFixed(1).replace(".", ",")} → {quote.relevance_after.toFixed(1).replace(".", ",")}</dd></div>
+        </dl>
+      )}
+      {msg && <div className="alert">{msg}</div>}
+      <button className="btn primary" disabled={busy || !quote}>{busy ? "Mudando…" : "Confirmar mudança"}</button>
     </Modal>
   );
 }

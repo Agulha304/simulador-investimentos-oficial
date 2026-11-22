@@ -119,15 +119,17 @@ def build_candidate(seed: int, company_id: int, ref: date, role: rules.Role, reg
     score = exp + 2 * edu_idx
     level = EmployeeLevel.JUNIOR if score < 6 else EmployeeLevel.MID if score < 12 else EmployeeLevel.SENIOR
     asking = role.salary * rules.LEVELS[level][0] * D(str(round(0.92 + 0.20 * h("var"), 4)))
+    prefs = [WorkSchedule.ESC_5X2] * 9 + [WorkSchedule.ESC_6X1] * 5 + [WorkSchedule.ESC_12X36] * 3 + [WorkSchedule.ESC_4X3] * 3
+    schedule = prefs[int(h("sch") * len(prefs))]
+    hours = role.hours or SCHEDULE_HOURS[schedule]                          # cargos gerais do porte pequeno/médio: meio período
+    asking *= rules.wage_hours_factor(hours)                               # salário proporcional à jornada
     if regime == EmployeeRegime.PJ:
         asking *= PJ_ASKING_FACTOR
     asking = D(int(round(float(asking) / 10.0)) * 10).quantize(D("0.01"))
-    prefs = [WorkSchedule.ESC_5X2] * 9 + [WorkSchedule.ESC_6X1] * 5 + [WorkSchedule.ESC_12X36] * 3 + [WorkSchedule.ESC_4X3] * 3
-    schedule = prefs[int(h("sch") * len(prefs))]
     cid = make_token(ref, role.key, regime, idx, headhunter)
     return Candidate(
         id=cid, role=role.key, regime=regime, name=name, education=EDUCATION_ORDER[edu_idx], experience_years=exp, level=level,
-        asking_salary=asking, hours_week=SCHEDULE_HOURS[schedule], schedule=schedule, flex=0.03 + 0.07 * h("flex"),
+        asking_salary=asking, hours_week=hours, schedule=schedule, flex=0.03 + 0.07 * h("flex"),
         competing=hash01(seed, "compete", company_id, f"{ref:%Y-%m}", cid) < COMPETING_PROB)
 
 
@@ -147,13 +149,14 @@ def headhunter_search(seed: int, company_id: int, ref: date, role: rules.Role, r
     return ok[:HEADHUNTER_MAX]
 
 
-def resolve_token(seed: int, company_id: int, ref: date, token: str, seg: rules.Segment) -> Candidate:
+def resolve_token(seed: int, company_id: int, ref: date, token: str, seg: rules.Segment,
+                  size: rules.CompanySize = rules.CompanySize.SMALL) -> Candidate:
     """Recalcula o candidato a partir do token. ValueError se o token não for da empresa/mês atual ou não existir."""
     ym, role_key, regime, hh, idx = parse_token(token)
     if ym != f"{ref:%Y%m}":
         raise ValueError("a lista de candidatos é de outro mês: consulte novamente")
     try:
-        role = seg.role(role_key)
+        role = seg.role_for(role_key, size)
     except KeyError:
         raise ValueError("cargo inexistente neste segmento") from None
     limit = HEADHUNTER_POOL if hh else visible_count(seed, company_id, ref, role_key, regime)
@@ -176,13 +179,16 @@ class Offer:
         return self.status == "ACCEPTED"
 
 
-def hours_factor(hours_week: int) -> Decimal:
+def hours_factor(hours_week: int, base_hours: int = rules.FULL_TIME_HOURS) -> Decimal:
+    """Fator da pretensão pela jornada, em relação à jornada em que a pretensão foi calculada (`base_hours`): meio período tem
+    salário PROPORCIONAL (20 h = 55,6% do integral); de 36 a 44 h não muda; acima de 44 h há prêmio de hora extra."""
+    ratio = rules.wage_hours_factor(hours_week) / rules.wage_hours_factor(base_hours)
     if hours_week <= STANDARD_WEEK:
-        return D(1)
+        return ratio
     premium = D(hours_week - STANDARD_WEEK) / STANDARD_WEEK * OVERTIME_PREMIUM
     if hours_week > HARD_WEEK:
         premium = max(premium, HARD_WEEK_MIN_PREMIUM)
-    return 1 + premium
+    return ratio * (1 + premium)
 
 
 def schedule_factor(c: Candidate, schedule: WorkSchedule) -> Decimal:
@@ -192,7 +198,7 @@ def schedule_factor(c: Candidate, schedule: WorkSchedule) -> Decimal:
 def adjusted_asking(c: Candidate, hours_week: int, schedule: WorkSchedule) -> Decimal:
     """Pretensão ajustada às condições (jornada, escala e concorrência), ANTES da folga de negociação do candidato."""
     comp = COMPETING_PREMIUM if c.competing else D(1)
-    return c.asking_salary * hours_factor(hours_week) * schedule_factor(c, schedule) * comp
+    return c.asking_salary * hours_factor(hours_week, c.hours_week) * schedule_factor(c, schedule) * comp
 
 
 def evaluate_offer(c: Candidate, salary: Decimal, hours_week: int, schedule: WorkSchedule) -> Offer:
@@ -202,7 +208,7 @@ def evaluate_offer(c: Candidate, salary: Decimal, hours_week: int, schedule: Wor
         required = max(required, D(math.ceil(c.asking_salary * (1 + HARD_WEEK_MIN_PREMIUM))))
     if salary >= required:
         return Offer("ACCEPTED", f"{c.name} aceitou a proposta.", required)
-    if c.regime == EmployeeRegime.PJ and salary >= c.asking_salary * hours_factor(hours_week):
+    if c.regime == EmployeeRegime.PJ and salary >= c.asking_salary * hours_factor(hours_week, c.hours_week):
         return Offer("ACCEPTED", f"{c.name} aceitou: como PJ, o valor cobriu a pretensão.", required)
     if hours_week > HARD_WEEK and salary < c.asking_salary * (1 + HARD_WEEK_MIN_PREMIUM) * D("0.99"):
         why = f"jornada de {hours_week} h/semana só com pelo menos 40% a mais de salário"

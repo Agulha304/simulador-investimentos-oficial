@@ -116,13 +116,11 @@ def _flat_season(monkeypatch):
     monkeypatch.setattr(company_rules, "season_factor", lambda *a, **k: 1.0)
 
 
-@pytest.fixture
-def boom(monkeypatch):
-    """Mercado aquecido (demanda e capacidade x5). Com CLT a 2x e os cargos obrigatórios, uma cafeteria pequena não dá lucro no
-    modelo atual (isso é esperado e será tratado na fase 3); os testes de distribuição de lucros só precisam de lucro acumulado."""
-    d0, c0 = company_rules.demand_units, company_rules.capacity_units
-    monkeypatch.setattr(company_rules, "demand_units", lambda *a, **k: 5 * d0(*a, **k))
-    monkeypatch.setattr(company_rules, "capacity_units", lambda *a, **k: 5 * c0(*a, **k))
+def mature(db, cid, relevance=60):
+    """Empresa "maturada": relevância alta direto no banco (no jogo isso leva anos). Sem monkeypatch de demanda: vale o modelo calibrado."""
+    c = db.get(Company, cid)
+    c.relevance = D(str(relevance))
+    db.commit()
 
 
 @pytest.fixture
@@ -302,7 +300,7 @@ def test_buy_site_pays_land_in_opening_and_raises_equity(client, rich, db):
     buy = quote(client, rich, "CAFE", "bairro", "SMALL", site_mode="BUY")
     land = D(buy["land_cost"])
     assert land > 0 and D(buy["monthly_rent"]) == 0 and D(rent["monthly_rent"]) > 0
-    assert D(buy["minimum_capital"]) > D(rent["minimum_capital"]) + land - D(rent["monthly_rent"]) - D("0.02")   # terreno entra no mínimo
+    assert D(buy["minimum_capital"]) > D(rent["minimum_capital"]) + land - D(rent["monthly_rent"]) * company_rules.RESERVE_MONTHS - D("0.02")   # terreno entra no mínimo (sem a reserva de aluguel)
     before = cash(client, rich)
     d = create_ok(client, rich, staff=False, name="Café com terreno", site_mode="BUY", extra="20000")
     co = d["company"]
@@ -458,7 +456,7 @@ def test_buy_stock_updates_quantity_and_weighted_cost(client, rich):
     again = client.post(f"{C}/{cid}/stock", headers=rich, json={"item_id": item["id"], "quantity": "500", "idempotency_key": k})
     same = client.post(f"{C}/{cid}/stock", headers=rich, json={"item_id": item["id"], "quantity": "500", "idempotency_key": k})
     assert same.status_code == 201 and D(same.json()["inventory"][0]["quantity"]) == D(again.json()["inventory"][0]["quantity"])   # repetição não soma de novo
-    assert client.post(f"{C}/{cid}/stock", headers=rich, json={"item_id": item["id"], "quantity": "99999999", "idempotency_key": key()}).status_code == 422
+    assert client.post(f"{C}/{cid}/stock", headers=rich, json={"item_id": item["id"], "quantity": "99999999", "idempotency_key": key()}).status_code == 409   # acima do teto de estoque do porte
     assert client.post(f"{C}/{cid}/stock", headers=rich, json={"item_id": 999999, "quantity": "1", "idempotency_key": key()}).status_code == 404
 
 
@@ -661,9 +659,9 @@ def test_company_loan_creates_debt_and_installments_are_processed(client, rich, 
 
 # ------------------------------------------------------------------ 14/15. lucros
 
-@pytest.mark.usefixtures("boom")
 def test_profit_distribution_flows_to_personal_account(client, rich, db):
     cid = create_ok(client, rich, extra="80000")["company"]["id"]
+    mature(db, cid)
     assert client.post(f"{C}/{cid}/distribute", headers=rich, json={"amount": "100", "idempotency_key": key()}).status_code == 400   # ainda sem lucro
     earn_profit(client, rich, cid)
     d = detail(client, rich, cid)
@@ -683,9 +681,9 @@ def test_profit_distribution_flows_to_personal_account(client, rich, db):
     assert own.kind == "INCOME" and own.capital is False
 
 
-@pytest.mark.usefixtures("boom")
 def test_distribution_cannot_exceed_profit_or_cash(client, rich, db):
     cid = create_ok(client, rich, extra="80000")["company"]["id"]
+    mature(db, cid)
     earn_profit(client, rich, cid)
     d = detail(client, rich, cid)
     over = D(d["distributable_profit"]) + 1
@@ -698,9 +696,9 @@ def test_distribution_cannot_exceed_profit_or_cash(client, rich, db):
     assert r.status_code == 400 and "caixa" in r.json()["detail"]
 
 
-@pytest.mark.usefixtures("boom")
-def test_partial_ownership_splits_distribution_and_equity(client, rich):
+def test_partial_ownership_splits_distribution_and_equity(client, rich, db):
     cid = create_ok(client, rich, extra="80000", owner_share_pct="60")["company"]["id"]
+    mature(db, cid)
     earn_profit(client, rich, cid)
     d = detail(client, rich, cid)
     amount = D(d["distributable_profit"]).quantize(D("0.01"))
@@ -893,10 +891,12 @@ def synth(**kw):
 def test_new_company_has_no_staff_and_minimum_capital_covers_mandatory_team(client, rich):
     q = quote(client, rich)
     assert q["mandatory_roles"] == ["Contador", "Advogado", "Auxiliar de limpeza"]
-    assert D(q["monthly_payroll"]) == (D("4500") + D("7000") + D("1650")) * 2                    # 1 mês, CLT 2x, salário-base
-    assert D(q["mandatory_cost"]) == D(q["monthly_payroll"]) + (D("4500") + D("7000") + D("1650")) / 2          # + custo de contratação (0,5x)
+    part = D(20) / 36                                                                              # porte pequeno: meio período (20 h), salário proporcional
+    base = (D("1800") + D("2400") + D("1520")) * part
+    assert abs(D(q["monthly_payroll"]) - base * 2) < D("0.05")                                    # 1 mês, CLT 2x, salário-base do porte
+    assert abs(D(q["mandatory_cost"]) - (D(q["monthly_payroll"]) + base / 2)) < D("0.05")          # + custo de contratação (0,5x)
     online = quote(client, rich, channel="ONLINE", location=None)
-    assert online["mandatory_roles"] == ["Contador", "Advogado"] and D(online["monthly_payroll"]) == (D("4500") + D("7000")) * 2
+    assert online["mandatory_roles"] == ["Contador", "Advogado"] and abs(D(online["monthly_payroll"]) - (D("1800") + D("2400")) * part * 2) < D("0.05")
     d = create_ok(client, rich, staff=False)
     assert d["employees"] == [] and d["compliance"]["regular"] is False
     assert [r["role"] for r in d["compliance"]["required"]] == ["accountant", "lawyer", "cleaner"]
@@ -1102,25 +1102,25 @@ def test_irregular_company_has_no_sales_pays_fine_and_exposes_compliance(client,
     cid = create_ok(client, rich, staff=False)["company"]["id"]
     d0 = detail(client, rich, cid)
     assert d0["compliance"]["regular"] is False and set(d0["compliance"]["missing"]) == {"accountant", "lawyer", "cleaner"}
-    assert D(d0["compliance"]["estimated_fine"]) == D("13150.00") and d0["compliance"]["missing_labels"] == ["Contador", "Advogado", "Auxiliar de limpeza"]
+    assert D(d0["compliance"]["estimated_fine"]) == D("5720.00") and d0["compliance"]["missing_labels"] == ["Contador", "Advogado", "Auxiliar de limpeza"]
     assert close(client, rich).status_code == 200
     d = detail(client, rich, cid)
     m = d["months"][0]
-    assert m["irregular"] is True and D(m["units_sold"]) == 0 and D(m["revenue"]) == 0 and D(m["fines"]) == D("13150.00")
-    assert D(m["fixed_costs"]) >= D("13150.00") and D(m["net_result"]) < 0
+    assert m["irregular"] is True and D(m["units_sold"]) == 0 and D(m["revenue"]) == 0 and D(m["fines"]) == D("5720.00")
+    assert D(m["fixed_costs"]) >= D("5720.00") and D(m["net_result"]) < 0
     fine = db.scalar(select(LedgerEntry).where(LedgerEntry.company_id == cid, LedgerEntry.line == "FEES"))
-    assert fine.amount == D("13150.00") and fine.kind == "EXPENSE" and fine.capital is False and "Multa" in fine.description
+    assert fine.amount == D("5720.00") and fine.kind == "EXPENSE" and fine.capital is False and "Multa" in fine.description
     ev = [e for e in d["events"] if e["type"] == "COMPLIANCE"]
-    assert len(ev) == 1 and "irregular" in ev[0]["description"] and D(ev[0]["amount"]) == D("13150.00")
+    assert len(ev) == 1 and "irregular" in ev[0]["description"] and D(ev[0]["amount"]) == D("5720.00")
     assert D(d["company"]["reputation"]) < 50
     # falta só o advogado: multa = 1 salário-base dele
     for role in ("accountant", "cleaner"):
         hire_candidate(client, rich, cid, role)
     d = detail(client, rich, cid)
-    assert d["compliance"]["missing"] == ["lawyer"] and D(d["compliance"]["estimated_fine"]) == D("7000.00")
+    assert d["compliance"]["missing"] == ["lawyer"] and D(d["compliance"]["estimated_fine"]) == D("2400.00")
     assert close(client, rich).status_code == 200
     m = detail(client, rich, cid)["months"][0]
-    assert m["irregular"] is True and D(m["revenue"]) == 0 and D(m["fines"]) == D("7000.00")
+    assert m["irregular"] is True and D(m["revenue"]) == 0 and D(m["fines"]) == D("2400.00")
     # tudo certo: opera e não paga multa
     hire_candidate(client, rich, cid, "lawyer")
     assert detail(client, rich, cid)["compliance"]["regular"] is True
@@ -1243,3 +1243,195 @@ def test_firing_can_spawn_labor_lawsuit_event_for_next_month(client, rich, monke
     assert r.status_code == 200 and r.json()["event"]["outcome"]
     # repetir a demissão sorteada no mesmo mês não duplica evento (funcionário já desligado)
     assert client.delete(f"{C}/{cid}/employees/{pj['id']}", headers=rich).status_code == 409
+
+
+# ------------------------------------------------------------------ fase 3a: relevância, mercado, tetos, mudança de endereço, balanceamento
+
+def test_relevance_factor_and_slow_growth():
+    R = company_rules
+    assert R.relevance_factor(0) == pytest.approx(R.DEMAND_FLOOR) and R.relevance_factor(100) == pytest.approx(1.0)
+    assert R.relevance_factor(10) < R.relevance_factor(40) < R.relevance_factor(80)
+    rel = 0.0
+    for month in range(1, 61):                         # jogador exemplar: atendendo tudo, reputação máxima, marketing sempre ligado
+        new = R.next_relevance(rel, sold=100, demand=100, reputation=100, marketing=True, stockout=False, price_ratio=1.0, irregular=False)
+        assert 0 < new - rel <= 1.5
+        rel = new
+        if month == 12:
+            assert rel < 22
+        if month == 24:
+            assert rel < 50                            # chegar a 50 leva mais de 2 anos
+    assert rel < 80                                    # 80 leva vários anos
+    # parada ou irregular: cai (levemente), nunca abaixo de zero
+    assert R.next_relevance(30, sold=0, demand=50, reputation=50, marketing=False, stockout=False, price_ratio=1, irregular=False) < 30
+    assert R.next_relevance(30, sold=0, demand=0, reputation=50, marketing=False, stockout=False, price_ratio=1, irregular=True) < 29
+    assert R.next_relevance(0.1, sold=0, demand=0, reputation=50, marketing=False, stockout=False, price_ratio=1, irregular=True) == 0
+
+
+def test_new_company_starts_with_zero_relevance_and_moves_slowly_in_the_database(client, rich, db):
+    cid = create_ok(client, rich, extra="80000")["company"]["id"]
+    d = detail(client, rich, cid)
+    assert d["company"]["relevance"] == 0 and d["market"]["demand_factor"] == pytest.approx(company_rules.DEMAND_FLOOR, abs=0.001)
+    for _ in range(3):
+        assert close(client, rich).status_code == 200
+    d = detail(client, rich, cid)
+    assert 0 <= d["company"]["relevance"] <= 4.5 and d["months"][0]["relevance_end"] == d["company"]["relevance"]
+    # empresa irregular (sem cargos obrigatórios) perde relevância
+    c2 = create_ok(client, rich, staff=False, name="Parada")["company"]["id"]
+    mature(db, c2, 40)
+    assert close(client, rich).status_code == 200
+    assert detail(client, rich, c2)["company"]["relevance"] < 40
+
+
+def test_zero_sales_month_is_deterministic_and_driven_by_relevance_and_price():
+    R = company_rules
+    import datetime as dt
+    ref = dt.date(2027, 3, 1)
+    assert R.is_zero_month(7, 1, ref, 0, 1.0) == R.is_zero_month(7, 1, ref, 0, 1.0)             # mesmo mês, mesmo resultado
+    low = sum(R.is_zero_month(7, cid, ref, 0, 1.0) for cid in range(400)) / 400
+    high = sum(R.is_zero_month(7, cid, ref, 70, 1.0) for cid in range(400)) / 400
+    dear = sum(R.is_zero_month(7, cid, ref, 70, 1.8) for cid in range(400)) / 400
+    assert 0.15 < low < 0.5 and high == 0 and dear > 0.5
+    assert R.zero_month_prob(0, 1.0) > R.zero_month_prob(20, 1.0) > R.zero_month_prob(60, 1.0) == 0
+
+
+def test_high_price_sells_almost_nothing_and_cheap_price_saturates():
+    R = company_rules
+    seg = R.SEGMENTS[R.CompanySegment.CAFE]
+    kw = dict(location="bairro", size=R.CompanySize.SMALL, units=1, reputation=50, company_id=1, ref=__import__("datetime").date(2027, 1, 1),
+              marketing=False, season=False, relevance=50)
+    fair = R.demand_units(seg, price=seg.price, **kw)
+    assert R.demand_units(seg, price=seg.price * D("1.5"), **kw) < 0.25 * fair
+    assert R.demand_units(seg, price=seg.price * D("1.9"), **kw) == 0
+    assert fair < R.demand_units(seg, price=seg.price * D("0.7"), **kw) <= fair * 1.31          # mais barato vende mais, mas satura
+    assert R.demand_units(seg, price=seg.price * D("0.3"), **kw) == pytest.approx(R.demand_units(seg, price=seg.price * D("0.6"), **kw))
+
+
+def test_hiring_above_staff_ceiling_returns_409_suggesting_premises(client, rich, monkeypatch):
+    import dataclasses
+    cid = create_ok(client, rich, staff=False)["company"]["id"]
+    monkeypatch.setitem(company_rules.SIZES, company_rules.CompanySize.SMALL,
+                        dataclasses.replace(company_rules.SIZES[company_rules.CompanySize.SMALL], max_staff=3))
+    for role in ("accountant", "lawyer", "cleaner"):
+        hire_candidate(client, rich, cid, role)
+    cand = client.post(f"{C}/{cid}/candidates", headers=rich, json={"role": "barista", "regime": "CLT"}).json()["candidates"][0]
+    r = client.post(f"{C}/{cid}/hire", headers=rich, json={"candidate_id": cand["id"], "salary": "9000", "hours_week": 40, "schedule": "5x2",
+                                                         "regime": "CLT", "confirm_risk": True, "idempotency_key": key()})
+    assert r.status_code == 409 and "Teto de funcionários" in r.json()["detail"] and "mude de endereço" in r.json()["detail"]
+
+
+def test_buying_stock_above_storage_ceiling_returns_409(client, rich):
+    d = create_ok(client, rich, extra="80000")
+    item = d["inventory"][0]
+    cap = D(item["max_quantity"])
+    assert cap > D(item["quantity"])
+    r = client.post(f"{C}/{d['company']['id']}/stock", headers=rich, json={"item_id": item["id"], "quantity": str(cap), "idempotency_key": key()})
+    assert r.status_code == 409 and "Teto de estoque" in r.json()["detail"] and "Instalações" in r.json()["detail"]
+
+
+def test_service_company_has_no_stock_and_production_ceiling_limits_capacity():
+    R = company_rules
+    wk = R.SEGMENTS[R.CompanySegment.WORKSHOP]
+    assert not wk.has_stock and wk.metrics_kind == R.MetricsKind.SERVICE
+    many = [("mechanic", D(1))] * 500
+    cap = R.capacity_units(wk, size=R.CompanySize.SMALL, units=1, capacity_level=0, staff=many)
+    assert cap == pytest.approx(R.production_ceiling(wk, R.CompanySize.SMALL, 1, 0))
+    assert R.production_ceiling(wk, R.CompanySize.MEDIUM, 1) > cap and R.production_ceiling(wk, R.CompanySize.SMALL, 1, 2) > cap
+
+
+def test_relocate_charges_validates_is_idempotent_and_cuts_next_month_sales(client, rich, db):
+    d = create_ok(client, rich, extra="300000")
+    cid = d["company"]["id"]
+    mature(db, cid, 40)
+    body = {"location": "centro", "site_mode": "RENT"}
+    q = client.post(f"{C}/{cid}/relocate/quote", headers=rich, json=body).json()
+    assert D(q["move"]) > 0 and D(q["reinstall"]) > 0 and D(q["fine"]) > 0 and q["relevance_after"] < 40
+    assert D(q["move"]) >= 2 * D(company_rules.default_rent(company_rules.SEGMENTS[company_rules.CompanySegment.CAFE], "centro", company_rules.CompanySize.SMALL))
+    k = key()
+    r = client.post(f"{C}/{cid}/relocate", headers=rich, json={**body, "idempotency_key": k})
+    assert r.status_code == 200, r.text
+    after = r.json()
+    assert after["company"]["location"] == "centro" and len(after["employees"]) == len(d["employees"])
+    assert D(d["company"]["cash"]) - D(after["company"]["cash"]) == D(q["total"])
+    assert after["company"]["relevance"] == pytest.approx(q["relevance_after"], abs=0.01) and after["lease"]["monthly_rent"] != d["lease"]["monthly_rent"]
+    again = client.post(f"{C}/{cid}/relocate", headers=rich, json={**body, "idempotency_key": k})
+    assert again.status_code == 200 and again.json()["company"]["cash"] == after["company"]["cash"]          # idempotente: não cobra de novo
+    assert client.post(f"{C}/{cid}/relocate", headers=rich, json={"location": "bairro", "idempotency_key": key()}).status_code == 409   # 1 por mês
+    assert client.post(f"{C}/{cid}/relocate", headers=rich, json={"location": "nao_existe", "idempotency_key": key()}).status_code in (400, 409)
+    assert close(client, rich).status_code == 200
+    m = detail(client, rich, cid)["months"][0]
+    seg = company_rules.SEGMENTS[company_rules.CompanySegment.CAFE]
+    normal = company_rules.demand_units(seg, location="centro", size=company_rules.CompanySize.SMALL, units=1, reputation=50,
+                                        price=seg.price, company_id=cid, ref=__import__("datetime").date.fromisoformat(m["ref_month"]),
+                                        marketing=False, relevance=q["relevance_after"])
+    assert float(m["demand_units"]) == pytest.approx(normal * company_rules.RELOCATION_SALES_MULT, rel=0.02)
+    assert float(m["demand_units"]) < 0.4 * normal
+
+
+def test_online_company_cannot_relocate(client, rich):
+    cid = create_ok(client, rich, channel="ONLINE", name="Loja Web", segment="ECOMMERCE")["company"]["id"]
+    r = client.post(f"{C}/{cid}/relocate", headers=rich, json={"location": "online", "idempotency_key": key()})
+    assert r.status_code == 409
+
+
+@pytest.mark.parametrize("segment", [s.value for s in company_rules.SEGMENTS])
+def test_balance_every_segment_reaches_profit_with_suggested_team(segment):
+    """Mesma simulação de `tools/balance_companies.py`: porte pequeno, local padrão, preço de mercado, equipe sugerida + obrigatórios
+    em meio período. Começa no prejuízo (vender é difícil), mas vira lucro até o mês 20 sem esgotar a reserva do capital mínimo."""
+    from backend.services import company_balance as bal
+    r = bal.simulate(company_rules.CompanySegment(segment), months=36)
+    assert r.rows[0].profit < 0 and r.rows[2].relevance < 5                       # início fraco
+    assert r.turn_month is not None and r.turn_month <= 20, (segment, r.turn_month)
+    assert r.rows[-1].profit > 0 and r.min_cash > 0, (segment, r.min_cash)
+    assert 10 < r.rows[-1].relevance < 50                                           # relevância cresce devagar
+
+
+def test_balance_with_drawn_zero_months_still_turns_profit_for_most_seeds():
+    from backend.services import company_balance as bal
+    seg = company_rules.CompanySegment.CAFE
+    turns = [bal.simulate(seg, months=36, expected=False, seed=s, company_id=s).turn_month for s in range(1, 21)]
+    assert sum(1 for t in turns if t is not None and t <= 24) >= 17
+
+
+# ------------------------------------------------------------------ fase 3b: impostos reais (regime + detalhamento por tributo)
+
+def test_process_company_records_tax_regime_and_breakdown_summing_to_taxes(client, rich, db):
+    cid = create_ok(client, rich, extra="40000")["company"]["id"]
+    for _ in range(3):
+        assert close(client, rich).status_code == 200
+    months = detail(client, rich, cid)["months"]
+    assert len(months) == 3
+    rows = list(db.scalars(select(CompanyMonth).where(CompanyMonth.company_id == cid).order_by(CompanyMonth.ref_month)))
+    by_ref = {m["ref_month"][:7]: m for m in months}
+    for row in rows:
+        api = by_ref[row.ref_month.strftime("%Y-%m")]
+        assert row.tax_regime in ("MEI", "SIMPLES", "LUCRO_PRESUMIDO")
+        assert api["tax_regime"] == row.tax_regime and api["tax_breakdown"] == row.tax_breakdown
+        assert sum((D(x["amount"]) for x in row.tax_breakdown), D(0)) == row.taxes
+        assert all({"name", "base", "rate_pct", "amount"} <= set(x) for x in row.tax_breakdown)
+        assert row.net_result == row.operating_result - row.taxes - row.interest
+        tax_entry = db.scalar(select(func.coalesce(func.sum(LedgerEntry.amount), 0)).where(
+            LedgerEntry.company_id == cid, LedgerEntry.ref_month == row.ref_month, LedgerEntry.line == "TAX"))
+        assert tax_entry == row.taxes                                              # a linha TAX do ledger = total dos tributos
+    # empresa com equipe CLT (> 1 empregado) e café (Anexo I): Simples, DAS = receita x alíquota efetiva
+    last = rows[-1]
+    assert last.tax_regime == "SIMPLES" and [x["name"] for x in last.tax_breakdown] == ["DAS"]
+    if last.revenue > 0:
+        assert last.taxes == (last.revenue * D(last.tax_breakdown[0]["rate_pct"]) / 100).quantize(D("0.01"), rounding="ROUND_HALF_UP") \
+            or abs(last.taxes - last.revenue * D(last.tax_breakdown[0]["rate_pct"]) / 100) <= D("0.01")
+
+
+def test_company_is_deterministic_in_taxes_across_identical_inputs():
+    from backend.services import company_taxes as t
+    args = ("INDUSTRY", t.SIMPLES, D(3_000_000), D(250_000), D(900_000), 20)
+    assert t.compute_taxes(*args) == t.compute_taxes(*args)
+
+
+def test_catalog_and_quote_report_regime_and_annex(client, auth_headers):
+    cat = client.get(f"{C}/catalog", headers=auth_headers)
+    assert cat.status_code == 200, cat.text
+    seg = {x["key"]: x for x in cat.json()["segments"]}
+    assert seg["CAFE"]["tax"]["annex"] == "I" and "Simples Nacional" in seg["CAFE"]["tax"]["regime_label"]
+    assert seg["TECH"]["tax"]["annex"] == "III/V" and seg["INDUSTRY"]["tax"]["mei_allowed"] is False
+    q = client.post(f"{C}/quote", headers=auth_headers, json={"segment": "WORKSHOP", "extra_capital": "0"})
+    assert q.status_code == 200, q.text
+    assert q.json()["tax"]["annex"] == "III" and q.json()["tax"]["simplifications"]

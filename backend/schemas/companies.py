@@ -83,6 +83,19 @@ class StockIn(BaseModel):
     idempotency_key: str = Field(min_length=8, max_length=100)
 
 
+class RelocateIn(BaseModel):
+    location: str = Field(min_length=1, max_length=32)
+    site_mode: SiteMode | None = None
+    size: CompanySize | None = None
+    idempotency_key: str = Field(min_length=8, max_length=100)
+
+
+class RelocateQuoteIn(BaseModel):
+    location: str = Field(min_length=1, max_length=32)
+    site_mode: SiteMode | None = None
+    size: CompanySize | None = None
+
+
 class ExpandIn(BaseModel):
     kind: str = Field(pattern="^(CAPACITY|NEW_UNIT|LARGER_PREMISES|MARKETING)$")
 
@@ -112,6 +125,7 @@ class RoleOut(BaseModel):
     salary: Decimal
     units: float
     generic: bool = False              # cargo geral (Contador, Advogado, Auxiliar de limpeza): não produz unidades
+    hours: int = 0                     # jornada sugerida (cargos gerais por porte: meio período no porte pequeno); 0 = a do candidato
     mandatory: bool = False            # obrigatório para esta empresa (limpeza só no canal físico)
 
 
@@ -123,13 +137,26 @@ class LocationOut(BaseModel):
     land_price: Decimal                # terreno/ponto de porte pequeno
 
 
+class SegmentTaxInfoOut(BaseModel):
+    """Regime/anexo provável do segmento (impostos reais; ver backend/services/company_taxes.py)."""
+    regime: str                        # SIMPLES (regime provável de uma empresa pequena)
+    annex: str                         # I, II, III, IV, V ou "III/V" (Fator R)
+    regime_label: str
+    effective_min_pct: Decimal         # alíquota efetiva do DAS com RBT12 de R$ 100 mil
+    effective_max_pct: Decimal         # alíquota efetiva do DAS no limite do Simples (R$ 4,8 mi)
+    mei_allowed: bool
+    mei_das: Decimal | None = None
+    lp_taxes: list[str] = []           # tributos no Lucro Presumido (acima de R$ 4,8 mi/ano)
+    simplifications: list[str] = []
+
+
 class SegmentOut(BaseModel):
     key: CompanySegment
     label: str
     description: str
     unit_label: str
     price: Decimal
-    tax_pct: Decimal
+    tax: SegmentTaxInfoOut
     roles: list[RoleOut]
     stock: list[str]                   # vazio nos segmentos de serviço
     minimum_capital: Decimal           # para porte pequeno, canal padrão e ponto alugado
@@ -158,10 +185,15 @@ class QuoteOut(BaseModel):
     land_cost: Decimal
     monthly_fixed: Decimal             # custos fixos + aluguel, por mês
     monthly_rent: Decimal
+    tax: SegmentTaxInfoOut | None = None   # regime/anexo provável (informativo)
     monthly_payroll: Decimal           # 1 mês de folha dos cargos obrigatórios (CLT, salário-base)
     mandatory_cost: Decimal            # folha de 1 mês + custo de contratação dos obrigatórios (já dentro do capital mínimo)
     mandatory_roles: list[str]         # nomes dos cargos obrigatórios
-    expected_units: float
+    expected_units: float              # demanda do mercado MADURO (relevância 100); no início a empresa vende uma fração
+    first_month_units: float = 0       # demanda esperada no 1º mês (relevância 0, antes do sorteio de mês sem vendas)
+    operating_reserve: Decimal = Decimal("0")   # parte do capital mínimo que é reserva de operação (meses de custos fixos + folha)
+    reserve_months: int = 0
+    max_staff: int = 0                 # teto de funcionários do porte
 
 
 class CompanyOut(BaseModel):
@@ -181,6 +213,7 @@ class CompanyOut(BaseModel):
     capacity_level: int
     price: Decimal
     reputation: int
+    relevance: float = 0               # 0-100: sobe devagar; multiplica a demanda (ver `MarketOut`)
     owner_share_pct: Decimal
     owner_salary: Decimal
     auto_restock: bool
@@ -227,6 +260,7 @@ class InventoryOut(BaseModel):
     min_quantity: Decimal
     monthly_consumption_est: Decimal
     low: bool
+    max_quantity: Decimal = Decimal("0")      # teto de estoque do porte (espaço de armazenagem)
 
 
 class CostOut(BaseModel):
@@ -285,6 +319,8 @@ class MonthOut(BaseModel):
     fixed_costs: Decimal
     payroll: Decimal
     taxes: Decimal
+    tax_regime: str | None = None      # MEI | SIMPLES | LUCRO_PRESUMIDO (null em meses antigos)
+    tax_breakdown: list[dict] | None = None   # [{name, base, rate_pct, amount}]
     interest: Decimal
     operating_result: Decimal
     net_result: Decimal
@@ -292,6 +328,8 @@ class MonthOut(BaseModel):
     debts_end: Decimal
     equity_end: Decimal
     reputation_end: int
+    relevance_end: float = 0
+    zero_sales: bool = False           # mês sorteado sem nenhuma venda (relevância baixa ou preço fora do mercado)
     irregular: bool = False            # fechou sem cargos obrigatórios: vendas zeradas
     fines: Decimal = Decimal("0")      # multas do mês (dentro dos custos fixos)
 
@@ -353,6 +391,37 @@ class CandidatesOut(BaseModel):
     candidates: list[CandidateOut]
 
 
+class MarketOut(BaseModel):
+    """Mercado da empresa: relevância, demanda esperada (com relevância e preço), tetos por porte e aviso de crise."""
+    relevance: float
+    demand_factor: float               # fator de demanda da relevância (0,25 a 1)
+    zero_month_prob: float             # chance de o próximo mês fechar sem nenhuma venda
+    price_ratio: float                 # preço / preço de mercado
+    price_factor: float
+    mature_demand: float               # demanda com relevância 100 (potencial do ponto)
+    production_cap: float              # teto de produção (PRODUCTION/RETAIL) ou de atendimento (SERVICE) por mês
+    storage_cap_units: float           # teto de estoque em unidades vendáveis (0 nos segmentos de serviço)
+    max_staff: int
+    staff_count: int
+    relocated_this_month: bool = False
+    crisis: dict
+
+
+class RelocateQuoteOut(BaseModel):
+    location: str
+    location_label: str
+    site_mode: SiteMode | None
+    size: CompanySize
+    move: Decimal
+    reinstall: Decimal
+    fine: Decimal
+    land_cost: Decimal
+    land_resale: Decimal
+    total: Decimal
+    relevance_after: float
+    sales_mult: float
+
+
 class CompanyDetailOut(BaseModel):
     company: CompanyOut
     distributable_profit: Decimal
@@ -361,6 +430,7 @@ class CompanyDetailOut(BaseModel):
     loan_limit: Decimal
     expected_demand: float
     expected_capacity: float
+    market: MarketOut | None = None
     expansion_costs: dict[str, Decimal]
     roles: list[RoleOut]
     employees: list[EmployeeOut]

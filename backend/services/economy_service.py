@@ -144,13 +144,38 @@ def _company_events(db: Session, c: Company, ref: date) -> list[WorldEvent]:
     return out
 
 
+CRISIS_SECTOR_AMPLIFIER = 3.0       # o efeito setorial do motor (-14% na recessão) vale x3 nas VENDAS: crise derruba dezenas de %
+
+
+def sector_crisis_pct(db: Session, c: Company, ref: date) -> float:
+    """Efeito das crises ativas sobre a demanda do setor da empresa (% , negativo), já ampliado para as vendas."""
+    st = get_state(db, c.user_id, ref)
+    if st is None:
+        return 0.0
+    return float(engine_of(st).get("info", {}).get("sector", {}).get(c.segment.value, 0.0)) * CRISIS_SECTOR_AMPLIFIER
+
+
+def company_crisis_info(db: Session, c: Company, ref: date) -> dict:
+    """Aviso para a tela da empresa: crises ativas que atingem o setor e quanto elas tiram das vendas."""
+    st = get_state(db, c.user_id, ref)
+    pct = sector_crisis_pct(db, c, ref)
+    crises = [{"type": x.type, "label": x.label, "phase": x.phase, "intensity": float(x.intensity),
+               "sector_pct_at_peak": float(x.sectors.get(c.segment.value, 0.0)) * CRISIS_SECTOR_AMPLIFIER}
+              for x in db.scalars(select(EconomicCrisis).where(EconomicCrisis.user_id == c.user_id, EconomicCrisis.status == "ACTIVE",
+                                                              EconomicCrisis.start_month <= ref))
+              if c.segment.value in (x.sectors or {})]
+    demand_index = float(st.demand) if st is not None else 100.0
+    active = bool(crises) and (pct < -0.5 or demand_index < 97)
+    return {"active": active, "sector_pct": round(pct, 1), "demand_index": round(demand_index, 1),
+            "sales_mult": round(company_demand_mult(db, c, ref), 3), "crises": crises if active else []}
+
+
 def company_demand_mult(db: Session, c: Company, ref: date) -> float:
     st = get_state(db, c.user_id, ref)
     if st is None:
         return 1.0
     mult = float(st.demand) / 100.0
-    sector = engine_of(st).get("info", {}).get("sector", {}).get(c.segment.value, 0.0)       # efeito das crises no setor
-    mult *= max(0.2, 1 + sector / 100.0)
+    mult *= max(0.2, 1 + sector_crisis_pct(db, c, ref) / 100.0)                 # efeito das crises no setor
     for ev in _company_events(db, c, ref):
         mult *= 1 + ev.effects.get("company_demand_pct", 0) / 100.0
     return mult

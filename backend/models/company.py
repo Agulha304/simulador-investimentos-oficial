@@ -8,7 +8,7 @@ from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import (
-    Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, UniqueConstraint, func, text,
+    Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, JSON, Numeric, String, UniqueConstraint, func, text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -43,6 +43,8 @@ class Company(Base):
     capacity_level: Mapped[int] = mapped_column(Integer, default=0, server_default="0")  # expansões de capacidade
     price: Mapped[Decimal] = mapped_column(Money())                         # preço por unidade vendida
     reputation: Mapped[int] = mapped_column(Integer, default=50, server_default="50")  # 0..100
+    relevance: Mapped[Decimal] = mapped_column(Numeric(5, 2), default=Decimal("0"), server_default="0")   # 0..100: sobe devagar (fase 3a)
+    relocated_on: Mapped[date | None] = mapped_column(Date)               # mês da última mudança de endereço (vendas reduzidas nele)
     marketing_until: Mapped[date | None] = mapped_column(Date)             # campanha ativa até este mês (inclusive)
     owner_share_pct: Mapped[Decimal] = mapped_column(Numeric(5, 2), default=Decimal("100"))
     owner_salary: Mapped[Decimal] = mapped_column(Money(), default=Decimal("0"), server_default="0")  # pró-labore mensal
@@ -192,7 +194,9 @@ class CompanyMonth(Base):
     variable_costs: Mapped[Decimal] = mapped_column(Money())           # custo das mercadorias/insumos + variáveis
     fixed_costs: Mapped[Decimal] = mapped_column(Money())              # aluguel, energia, ferramentas, custos de bens
     payroll: Mapped[Decimal] = mapped_column(Money())                  # salários, encargos e pró-labore
-    taxes: Mapped[Decimal] = mapped_column(Money())
+    taxes: Mapped[Decimal] = mapped_column(Money())                    # total de tributos do mês (soma do tax_breakdown)
+    tax_regime: Mapped[str | None] = mapped_column(String(20), nullable=True)      # MEI | SIMPLES | LUCRO_PRESUMIDO (null: mês antigo)
+    tax_breakdown: Mapped[list | None] = mapped_column(JSON, nullable=True)       # [{name, base, rate_pct, amount}]
     interest: Mapped[Decimal] = mapped_column(Money())
     operating_result: Mapped[Decimal] = mapped_column(Money())         # receita − custos variáveis − fixos − folha
     net_result: Mapped[Decimal] = mapped_column(Money())               # após impostos e juros
@@ -200,6 +204,8 @@ class CompanyMonth(Base):
     debts_end: Mapped[Decimal] = mapped_column(Money())
     equity_end: Mapped[Decimal] = mapped_column(Money())
     reputation_end: Mapped[int] = mapped_column(Integer)
+    relevance_end: Mapped[Decimal] = mapped_column(Numeric(5, 2), default=Decimal("0"), server_default="0")
+    zero_sales: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")     # mês sorteado sem nenhuma venda
     irregular: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")      # sem cargos obrigatórios no fechamento
     fines: Mapped[Decimal] = mapped_column(Money(), default=Decimal("0"), server_default="0")   # multas do mês (já dentro de fixed_costs)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

@@ -24,6 +24,7 @@ from backend.models import (
     InstallmentStatus, InventoryItem, LeaseKind, LedgerEntry, LoanStatus, Occupancy, Person, RealEstateDetails, SimMonth, WorkSchedule,
 )
 from backend.services import company_rules as rules
+from backend.services import company_taxes
 from backend.services import company_team as team
 from backend.services import economy_service, partners
 from backend.services import finance_ledger, loan_math, wealth_service
@@ -268,9 +269,9 @@ def _seed(db: Session, user_id: int) -> int:
     return g.seed if g is not None else user_id
 
 
-def _role(seg: rules.Segment, role_key: str) -> rules.Role:
+def _role(seg: rules.Segment, role_key: str, size: CompanySize = CompanySize.SMALL) -> rules.Role:
     try:
-        return seg.role(role_key)
+        return seg.role_for(role_key, size)
     except KeyError:
         raise FinanceError("cargo inexistente neste segmento") from None
 
@@ -285,9 +286,24 @@ def list_candidates(db: Session, user_id: int, month: SimMonth, company_id: int,
     require_open(month)
     c = get_company(db, user_id, company_id)
     _active(c)
-    role = _role(rules.SEGMENTS[c.segment], role_key)
+    role = _role(rules.SEGMENTS[c.segment], role_key, c.size)
     blocked = _blocked(db, c)
     return [x for x in team.candidates_for(_seed(db, user_id), c.id, month.ref_month, role, regime) if x.id not in blocked]
+
+
+def staff_capacity(staff: list[Employee]) -> list[tuple[str, Decimal]]:
+    """(cargo, produtividade efetiva) para a capacidade: meio período rende proporcionalmente à jornada (40 h = integral)."""
+    return [(e.role, e.productivity * min(D(1), D(e.hours_week) / 40)) for e in staff]
+
+
+def _check_staff_cap(db: Session, c: Company) -> None:
+    """Teto de funcionários do porte (por unidade): acima dele só ampliando as instalações ou mudando de endereço."""
+    cap = rules.max_staff(c.size, c.units)
+    n = len(_employees(db, c))
+    if n >= cap:
+        raise ConflictError(
+            f"Teto de funcionários atingido: o porte {rules.SIZES[c.size].label} comporta {cap} pessoa(s) ({n} contratadas). "
+            f"Amplie as instalações (expansão 'Instalações maiores' ou nova unidade) ou mude de endereço para um espaço maior.")
 
 
 def _block(db: Session, c: Company, cand: team.Candidate, ref: date, reason: str) -> None:
@@ -316,7 +332,7 @@ def hire(db: Session, user_id: int, month: SimMonth, company_id: int, *, candida
     seg = rules.SEGMENTS[c.segment]
     ref = month.ref_month
     try:
-        cand = team.resolve_token(_seed(db, user_id), c.id, ref, candidate_id, seg)
+        cand = team.resolve_token(_seed(db, user_id), c.id, ref, candidate_id, seg, c.size)
     except ValueError as e:
         raise FinanceError(str(e)) from None
     if cand.regime != regime:
@@ -329,13 +345,14 @@ def hire(db: Session, user_id: int, month: SimMonth, company_id: int, *, candida
         return HireResult("ACCEPTED", f"{cand.name}: contratação já registrada.")
     if cand.id in _blocked(db, c):
         return HireResult("REFUSED", f"{cand.name} não está mais disponível neste mês.")
+    _check_staff_cap(db, c)
     offer = team.evaluate_offer(cand, salary, hours_week, schedule)
     if offer.status == "REFUSED":
         _block(db, c, cand, ref, "REFUSED")
         return HireResult("REFUSED", offer.message)
     if offer.status == "COUNTER":
         return HireResult("COUNTER", offer.message, offer.counter_offer)
-    role = _role(seg, cand.role)
+    role = _role(seg, cand.role, c.size)
     cost = quantize_money(salary * rules.HIRING_COST_MONTHS)
     balance = cash(db, c)
     if balance < cost:
@@ -365,7 +382,7 @@ def headhunter(db: Session, user_id: int, month: SimMonth, company_id: int, *, r
     require_open(month)
     c = get_company(db, user_id, company_id, lock=True)
     _active(c)
-    role = _role(rules.SEGMENTS[c.segment], role_key)
+    role = _role(rules.SEGMENTS[c.segment], role_key, c.size)
     max_salary = quantize_money(max_salary)
     if max_salary <= 0:
         raise FinanceError("informe o salário máximo do briefing")
@@ -424,13 +441,13 @@ def fire(db: Session, user_id: int, month: SimMonth, company_id: int, employee_i
 def compliance(db: Session, c: Company) -> dict:
     """Situação dos cargos obrigatórios: quais existem, quais faltam e a multa que seria aplicada no fechamento."""
     seg = rules.SEGMENTS[c.segment]
-    active = {e.role for e in _employees(db, c)}
+    active = {e.role for e in _employees(db, c) if rules.counts_as_filled(e.hours_week)}
     required = rules.mandatory_roles(c.channel)
     missing = rules.missing_mandatory(c.channel, active)
     return {"regular": not missing,
             "required": [{"role": r, "label": seg.role(r).label, "present": r in active} for r in required],
             "missing": missing, "missing_labels": [seg.role(r).label for r in missing],
-            "estimated_fine": rules.compliance_fine(seg, missing)}
+            "estimated_fine": rules.compliance_fine(seg, missing, c.size)}
 
 
 # ------------------------------------------------------------------ estoque
@@ -473,6 +490,13 @@ def buy_stock(db: Session, user_id: int, month: SimMonth, company_id: int, item_
     if _replayed(db, f"company:{c.id}:stock:{key}"):
         return item
     seg = rules.SEGMENTS[c.segment]
+    cap = rules.storage_cap_qty(seg, c.size, c.units, item)
+    if item.quantity + D(quantity) > cap:
+        room = max(cap - item.quantity, ZERO)
+        raise ConflictError(
+            f"Teto de estoque atingido: o espaço de armazenagem do porte {rules.SIZES[c.size].label} comporta {cap} {item.unit} de "
+            f"{item.name} (você tem {item.quantity}; cabem mais {room}). Amplie as instalações ('Instalações maiores', nova unidade) "
+            f"ou mude de endereço para um espaço maior.")
     total = _buy_stock(db, c, item, D(quantity), month.ref_month, f"company:{c.id}:stock:{key}", seg)
     _event(db, c, month.ref_month, CompanyEventType.STOCK, f"Compra de {item.name}: {quantity} {item.unit}", total)
     return item
@@ -608,6 +632,89 @@ def set_lease(db: Session, user_id: int, month: SimMonth, company_id: int, kind:
     return lease
 
 
+def relocation_quote(db: Session, c: Company, *, location: str, site_mode: SiteMode | None, size: CompanySize | None = None) -> dict:
+    """Quanto custa mudar de endereço (sem alterar nada). Levanta FinanceError/ConflictError se a mudança não for válida."""
+    seg = rules.SEGMENTS[c.segment]
+    if c.channel != CompanyChannel.PHYSICAL:
+        raise ConflictError("empresa online não tem endereço físico: não há mudança de endereço")
+    new_size = size or c.size
+    try:
+        loc, mode = rules.validate_site(seg, c.channel, location, site_mode)
+    except ValueError as e:
+        raise FinanceError(str(e)) from None
+    if loc == c.location and mode == c.site_mode and new_size == c.size:
+        raise FinanceError("a empresa já funciona neste endereço: escolha outro local, outro modo (comprar/alugar) ou outro porte")
+    if rules.SIZE_ORDER.index(new_size) < rules.SIZE_ORDER.index(c.size) and len(_employees(db, c)) > rules.max_staff(new_size, c.units):
+        raise ConflictError(f"o porte {rules.SIZES[new_size].label} comporta {rules.max_staff(new_size, c.units)} pessoas: desligue funcionários antes de reduzir")
+    lease = _lease(db, c)
+    breaks = lease is not None and lease.kind == LeaseKind.EXTERNAL and lease.monthly_rent > 0
+    parts = rules.relocation_cost(seg, loc, new_size, current_rent=lease.monthly_rent if lease else ZERO, breaks_lease=breaks)
+    land_new = rules.land_value(seg, c.channel, mode, loc, new_size)
+    land_back = quantize_money(c.site_value * rules.LAND_RESALE) if c.site_mode == SiteMode.BUY else ZERO
+    return {"location": loc, "site_mode": mode, "size": new_size, **parts, "land_cost": land_new, "land_resale": land_back,
+            "total": quantize_money(parts["total"] + land_new - land_back),
+            "relevance_after": rules.relevance_after_move(seg, float(c.relevance), c.location, loc),
+            "sales_mult": rules.RELOCATION_SALES_MULT}
+
+
+def relocate(db: Session, user_id: int, month: SimMonth, company_id: int, *, location: str, site_mode: SiteMode | None,
+             size: CompanySize | None, idempotency_key: str) -> Company:
+    """Mudança de endereço: cobra (meses de aluguel + reinstalação + multa do aluguel encerrado), troca terreno/contrato, mantém
+    funcionários e parte da relevância, e a empresa vende pouco no fechamento do mês (ficou parte do mês sem operar)."""
+    require_open(month)
+    c = get_company(db, user_id, company_id, lock=True)
+    _active(c)
+    seg = rules.SEGMENTS[c.segment]
+    ref = month.ref_month
+    key = f"co:{c.id}:reloc:{idempotency_key}"
+    if _replayed(db, f"{key}:move"):
+        return c
+    if c.relocated_on == ref:
+        raise ConflictError("a empresa já mudou de endereço neste mês: aguarde o fechamento")
+    q = relocation_quote(db, c, location=location, site_mode=site_mode, size=size)
+    balance = cash(db, c)
+    if balance < q["total"]:
+        raise FinanceError(f"a empresa não tem caixa para a mudança ({q['total']}); caixa atual: {balance}")
+    old_label = rules.resolve_location(seg, c.location).label
+    new_label = rules.resolve_location(seg, q["location"]).label
+    _post(db, c, ref, kind=FlowKind.EXPENSE, amount=q["move"], desc=f"Mudança de endereço: {new_label} (3 meses de aluguel)",
+          line="RELOCATION", key=f"{key}:move")
+    _post(db, c, ref, kind=FlowKind.EXPENSE, amount=q["reinstall"], desc="Reinstalação no novo endereço", line="RELOCATION", key=f"{key}:reinstall")
+    _post(db, c, ref, kind=FlowKind.EXPENSE, amount=q["fine"], desc="Multa pela rescisão do contrato de aluguel", line="RELOCATION", key=f"{key}:fine")
+    if q["land_resale"] > 0:                                         # terreno antigo vendido: volta ao caixa (capital, não é receita)
+        _post(db, c, ref, kind=FlowKind.INCOME, amount=q["land_resale"], desc=f"Venda do terreno anterior — {old_label}", line="LAND", key=f"{key}:landsale")
+    if q["land_cost"] > 0:
+        _post(db, c, ref, kind=FlowKind.EXPENSE, amount=q["land_cost"], desc=f"Compra do terreno — {new_label}", line="LAND", key=f"{key}:land")
+    lease = _lease(db, c)
+    if lease:                                                          # encerra o contrato antigo (libera o imóvel próprio, se for o caso)
+        lease.active = False
+        lease.end_month = ref
+        if lease.good_id:
+            g = db.get(Good, lease.good_id)
+            det = db.get(RealEstateDetails, g.id) if g else None
+            if det and det.occupancy == Occupancy.COMPANY_USE:
+                det.occupancy = Occupancy.VACANT
+                det.monthly_rent = ZERO
+        db.flush()
+    old_size = c.size
+    if q["site_mode"] == SiteMode.RENT:
+        db.add(CompanyLease(company_id=c.id, kind=LeaseKind.EXTERNAL, name=f"Ponto comercial — {new_label}",
+                            monthly_rent=rules.default_rent(seg, q["location"], q["size"]), start_month=ref))
+    if q["size"] != old_size:
+        ratio = rules.SIZES[q["size"]].fixed / rules.SIZES[old_size].fixed
+        for cost_row in db.scalars(select(CompanyCost).where(CompanyCost.company_id == c.id)):
+            cost_row.amount = quantize_money(cost_row.amount * ratio)
+    c.relevance = D(str(q["relevance_after"]))
+    c.location, c.site_mode, c.size = q["location"], q["site_mode"], q["size"]
+    c.site_value = q["land_cost"] if q["site_mode"] == SiteMode.BUY else ZERO
+    c.relocated_on = ref
+    db.flush()
+    _event(db, c, ref, CompanyEventType.EXPANSION,
+           f"Mudança de endereço: {old_label} -> {new_label} ({q['site_mode'].value if q['site_mode'] else '—'}). Custo {q['total']}; "
+           f"vendas do mês reduzidas e relevância {q['relevance_after']}", q["total"])
+    return c
+
+
 def loan_limit(db: Session, c: Company) -> Decimal:
     owed = db.scalar(select(func.coalesce(func.sum(CompanyLoan.balance), 0)).where(
         CompanyLoan.company_id == c.id, CompanyLoan.status == LoanStatus.ACTIVE))
@@ -662,6 +769,20 @@ def process_month(db: Session, user_id: int, month: SimMonth) -> list[CompanyMon
     return out
 
 
+def _compute_month_taxes(db: Session, c: Company, seg: rules.Segment, ref: date, staff: list, *, revenue: Decimal, payroll: Decimal,
+                         purchases: Decimal) -> company_taxes.TaxResult:
+    """RBT12 e folha de 12 meses (proporcionalizados se a empresa tem menos de 12 meses) + regime do mês anterior."""
+    prior = list(db.execute(select(CompanyMonth.revenue, CompanyMonth.payroll, CompanyMonth.tax_regime).where(
+        CompanyMonth.company_id == c.id, CompanyMonth.ref_month < ref).order_by(CompanyMonth.ref_month.desc()).limit(12)))[::-1]
+    hint = None
+    if prior:                                      # meses antigos sem regime: empresa já existia, nunca volta ao MEI
+        hint = prior[-1].tax_regime or company_taxes.SIMPLES
+    rbt12 = company_taxes.annualize([p.revenue for p in prior], revenue)
+    payroll12 = company_taxes.annualize([p.payroll for p in prior], payroll)
+    clt = sum(1 for e in staff if e.regime == EmployeeRegime.CLT)
+    return company_taxes.compute_taxes(c.segment.value, hint, rbt12, revenue, payroll12, clt, purchases=purchases)
+
+
 def _process_company(db: Session, c: Company, month: SimMonth) -> CompanyMonth:
     ref = month.ref_month
     seg = rules.SEGMENTS[c.segment]
@@ -671,21 +792,20 @@ def _process_company(db: Session, c: Company, month: SimMonth) -> CompanyMonth:
         if seg.has_stock else []                                        # segmentos de serviço não têm estoque
     opening_cash = cash(db, c)
 
-    # 1) condições do mês (demanda, sazonalidade, campanha)
+    # 1) condições do mês (relevância, demanda, sazonalidade, campanha, economia, mudança de endereço)
     marketing = c.marketing_until is not None and ref <= c.marketing_until
-    demand = rules.demand_units(seg, location=c.location, size=c.size, units=c.units, reputation=c.reputation, price=c.price,
-                                company_id=c.id, ref=ref, marketing=marketing)
-    demand *= economy_service.company_demand_mult(db, c, ref)          # economia e eventos (etapa 5)
-    capacity = rules.capacity_units(seg, size=c.size, units=c.units, capacity_level=c.capacity_level,
-                                    staff=[(e.role, e.productivity) for e in staff], equipment_factor=_equipment_factor(db, c))
-    # 2) consumo de estoque limita as vendas
-    stock_cap = min((float(i.quantity / (i.units_per_sale * (1 + i.waste_pct / 100))) for i in items), default=math.inf)
-    missing = rules.missing_mandatory(c.channel, [e.role for e in staff])          # fase 2: cargos obrigatórios
+    relevance = float(c.relevance)
+    missing = rules.missing_mandatory(c.channel, [e.role for e in staff if rules.counts_as_filled(e.hours_week)])   # fase 2/3a: cargos obrigatórios
     irregular = bool(missing)
-    potential = 0.0 if irregular else min(demand, capacity)                        # empresa irregular não opera: vendas = 0
-    sold = min(potential, stock_cap)
-    sold = round(max(sold, 0), 2) if seg.fractional else math.floor(max(sold, 0))
-    stockout = bool(items) and stock_cap < potential
+    stock_cap = min((float(i.quantity / (i.units_per_sale * (1 + i.waste_pct / 100))) for i in items), default=math.inf)
+    sales = rules.sales_month(
+        seg, location=c.location, size=c.size, units=c.units, capacity_level=c.capacity_level, relevance=relevance,
+        reputation=c.reputation, price=c.price, company_id=c.id, ref=ref, seed=_seed(db, c.user_id), marketing=marketing,
+        staff=staff_capacity(staff), equipment_factor=_equipment_factor(db, c),
+        econ_mult=economy_service.company_demand_mult(db, c, ref),            # economia, crises e eventos (etapa 5 / fase 3a)
+        relocation_mult=rules.RELOCATION_SALES_MULT if c.relocated_on == ref else 1.0,
+        stock_cap=stock_cap, irregular=irregular)
+    demand, capacity, potential, sold, stockout = sales.demand, sales.capacity, sales.potential, sales.sold, sales.stockout
     cogs = ZERO
     for i in items:
         used = (D(str(sold)) * i.units_per_sale * (1 + i.waste_pct / 100)).quantize(D("0.001"))
@@ -701,7 +821,7 @@ def _process_company(db: Session, c: Company, month: SimMonth) -> CompanyMonth:
     # 4) folha de pagamento (+ pró-labore, que vira receita PESSOAL do usuário)
     payroll = quantize_money(sum((employee_cost(e) for e in staff), ZERO))
     _post(db, c, ref, kind=FlowKind.EXPENSE, amount=payroll, desc=f"Folha de pagamento ({len(staff)} funcionários; CLT 2x, PJ 1x)", line="PAYROLL", key=f"{k}:payroll", overdraft=True)
-    fine = rules.compliance_fine(seg, missing) if irregular else ZERO
+    fine = rules.compliance_fine(seg, missing, c.size) if irregular else ZERO
     if irregular:
         labels = ", ".join(seg.role(r).label for r in missing)
         _post(db, c, ref, kind=FlowKind.EXPENSE, amount=fine, desc=f"Multa por irregularidade (sem {labels})", line="FEES", key=f"{k}:fine", overdraft=True)
@@ -729,9 +849,14 @@ def _process_company(db: Session, c: Company, month: SimMonth) -> CompanyMonth:
                 asset_costs += gc.amount
                 _post(db, c, ref, kind=FlowKind.EXPENSE, amount=gc.amount, desc=f"{gc.name} — {g.name}", line="ASSET_COSTS",
                       key=f"{k}:goodcost:{gc.id}", overdraft=True)
-    # 7) impostos
-    taxes = quantize_money(revenue * seg.tax_pct / 100)
-    _post(db, c, ref, kind=FlowKind.EXPENSE, amount=taxes, desc="Impostos sobre a receita", line="TAX", key=f"{k}:tax", overdraft=True)
+    # 7) impostos reais (company_taxes): regime escolhido pelo RBT12; encargos da folha já estão no custo CLT de 2x
+    tax = _compute_month_taxes(db, c, seg, ref, staff, revenue=revenue, payroll=payroll, purchases=cogs)
+    taxes = tax.total
+    if tax.lines:
+        _post(db, c, ref, kind=FlowKind.EXPENSE, amount=taxes, desc=f"Impostos ({company_taxes.REGIME_LABELS[tax.regime]}): "
+              + ", ".join(ln.name for ln in tax.lines), line="TAX", key=f"{k}:tax", overdraft=True)
+    else:
+        _post(db, c, ref, kind=FlowKind.EXPENSE, amount=taxes, desc="Impostos", line="TAX", key=f"{k}:tax", overdraft=True)
     # 8) financiamentos (juros = despesa, amortização = redução da dívida) e juros do saldo negativo
     interest = ZERO
     for loan in db.scalars(select(CompanyLoan).where(CompanyLoan.company_id == c.id, CompanyLoan.status == LoanStatus.ACTIVE)):
@@ -752,10 +877,12 @@ def _process_company(db: Session, c: Company, month: SimMonth) -> CompanyMonth:
     # reposição de estoque (pagamento a fornecedores): só com caixa disponível
     if c.auto_restock:
         for i in items:
-            need = D(str(max(sold, potential if not math.isinf(potential) else 0) * 1.1)) * i.units_per_sale * (1 + i.waste_pct / 100)
+            want = 0 if irregular else min(demand, capacity)             # o que o mercado pediria (mês zerado por sorte não esvazia a reposição)
+            need = D(str(max(sold, want) * 1.1)) * i.units_per_sale * (1 + i.waste_pct / 100)
             if i.quantity < max(need * D("0.6"), i.min_quantity):
                 price = supplier_cost(i, ref, economy_service.supplier_mult(db, c, ref))
-                buy = need - i.quantity
+                room = max(rules.storage_cap_qty(seg, c.size, c.units, i) - i.quantity, ZERO)      # teto de estoque do porte
+                buy = min(need - i.quantity, room)
                 affordable = (max(cash(db, c), ZERO) * D("0.9") / price) if price > 0 else D(0)
                 qty = min(buy, affordable)
                 if qty >= 1 or (seg.fractional and qty > 0):
@@ -764,7 +891,7 @@ def _process_company(db: Session, c: Company, month: SimMonth) -> CompanyMonth:
     db.flush()                                          # a sessão não faz autoflush: estoque e saldo precisam estar no banco
     oneoff = quantize_money(db.scalar(select(func.coalesce(func.sum(LedgerEntry.amount), 0)).where(
         LedgerEntry.company_id == c.id, LedgerEntry.ref_month == ref, LedgerEntry.kind == FlowKind.EXPENSE,
-        LedgerEntry.line.in_(["SETUP", "HIRING", "SEVERANCE", "EXPANSION", "MARKETING", "FEES"]))))
+        LedgerEntry.line.in_(["SETUP", "HIRING", "SEVERANCE", "EXPANSION", "MARKETING", "FEES", "RELOCATION"]))))
     variable_total = cogs + variable
     fixed_total = quantize_money(rent + fixed_costs + asset_costs + oneoff)
     operating = quantize_money(revenue - variable_total - fixed_total - payroll)
@@ -773,17 +900,21 @@ def _process_company(db: Session, c: Company, month: SimMonth) -> CompanyMonth:
     loans = db.scalar(select(func.coalesce(func.sum(CompanyLoan.balance), 0)).where(
         CompanyLoan.company_id == c.id, CompanyLoan.status == LoanStatus.ACTIVE))
     served = sold >= math.floor(min(demand, capacity)) and not stockout
-    c.reputation = max(5, min(100, c.reputation + (2 if served else -4 if stockout or irregular else -1)))
+    new_relevance = rules.next_relevance(relevance, sold=sold, demand=demand, reputation=c.reputation, marketing=marketing,
+                                         stockout=stockout, price_ratio=float(c.price) / float(seg.price), irregular=irregular)
+    c.relevance = D(str(round(new_relevance, 2)))
+    c.reputation = rules.next_reputation(c.reputation, served=served, stockout=stockout, irregular=irregular)
     equity = wealth_service.company_equity(db, c)
     row = CompanyMonth(company_id=c.id, ref_month=ref, demand_units=D(str(round(demand, 2))), capacity_units=D(str(round(capacity, 2))),
                        units_sold=D(str(sold)), stockout=stockout, revenue=revenue, variable_costs=variable_total,
-                       fixed_costs=fixed_total, payroll=payroll, taxes=taxes, interest=quantize_money(interest),
+                       fixed_costs=fixed_total, payroll=payroll, taxes=taxes, tax_regime=tax.regime, tax_breakdown=tax.breakdown(), interest=quantize_money(interest),
                        operating_result=operating, net_result=net, cash_end=balance,
                        debts_end=quantize_money(loans + max(-balance, ZERO)), equity_end=equity, reputation_end=c.reputation,
-                       irregular=irregular, fines=fine)
+                       irregular=irregular, fines=fine, relevance_end=c.relevance, zero_sales=sales.zero_month)
     db.add(row)
     c.last_processed_month = ref
-    _event(db, c, ref, CompanyEventType.MONTH, f"Mês fechado: receita {revenue}, resultado líquido {net}", net)
+    _event(db, c, ref, CompanyEventType.MONTH, f"Mês fechado: receita {revenue}, resultado líquido {net}"
+           + (" (mês sem nenhuma venda: relevância ainda baixa ou preço fora do mercado)" if sales.zero_month else ""), net)
     db.flush()
     return row
 

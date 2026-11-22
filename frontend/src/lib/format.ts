@@ -113,5 +113,5 @@ export const LEDGER_LINE_LABEL: Record<string, string> = {
   CAPITAL_IN: "Aporte de capital", REVENUE: "Receitas", VARIABLE: "Custos variáveis", PAYROLL: "Folha", PRO_LABORE: "Pró-labore",
   RENT: "Aluguel", FIXED: "Custos fixos", ASSET_COSTS: "Custos de bens", TAX: "Impostos", INTEREST: "Juros", LOAN_IN: "Empréstimo",
   LOAN_PRINCIPAL: "Amortização", STOCK_PURCHASE: "Compra de estoque", LAND: "Compra de terreno", EQUIPMENT: "Equipamentos", FEES: "Multas e taxas", SETUP: "Estruturação",
-  HIRING: "Contratação", SEVERANCE: "Rescisão", EXPANSION: "Expansão", MARKETING: "Marketing", DISTRIBUTION: "Distribuição de lucros",
+  HIRING: "Contratação", RELOCATION: "Mudança de endereço", SEVERANCE: "Rescisão", EXPANSION: "Expansão", MARKETING: "Marketing", DISTRIBUTION: "Distribuição de lucros",
 };

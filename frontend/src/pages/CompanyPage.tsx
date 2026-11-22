@@ -1,6 +1,6 @@
 import { Suspense, lazy, useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { HireModal, LeaseModal, LoanModal, MoneyModal } from "../components/CompanyModals";
+import { HireModal, LeaseModal, LoanModal, MoneyModal, RelocateModal } from "../components/CompanyModals";
 import { StatCard } from "../components/StatCard";
 import { api, type CompanyDetail, type Good, type Listing } from "../services/api";
 import { cachedGet } from "../services/dataCache";
@@ -9,7 +9,14 @@ import { CATEGORY_LABEL, CO_COST_LABEL, CO_EVENT_LABEL, EDUCATION_LABEL, LEDGER_
 const RevenueCostChart = lazy(() => import("../components/charts/CompanyCharts").then((m) => ({ default: m.RevenueCostChart })));
 const NetResultChart = lazy(() => import("../components/charts/CompanyCharts").then((m) => ({ default: m.NetResultChart })));
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : "Erro inesperado");
-type Modal = "contribute" | "distribute" | "hire" | "loan" | "lease" | null;
+type Modal = "contribute" | "distribute" | "hire" | "loan" | "lease" | "relocate" | null;
+// rótulos por tipo de empresa (metrics_kind): produção/varejo têm estoque e produção; serviços têm capacidade de atendimento própria
+const CAP_LABEL: Record<string, string> = {
+  "atendimento": "Capacidade de atendimento (clientes/mês)", "serviço": "Capacidade de atendimento (serviços/mês)", "contrato": "Projetos/mês",
+  "conta atendida": "Contas atendidas/mês", "negócio fechado": "Negócios fechados/mês", "viagem": "Viagens/mês", "pedido": "Pedidos/mês",
+};
+const capLabel = (kind: string, unit: string) => kind === "SERVICE" ? (CAP_LABEL[unit] ?? `Capacidade de atendimento (${unit}s/mês)`) : `Capacidade de produção (${unit}s/mês)`;
+const demandLabel = (kind: string, unit: string) => kind === "SERVICE" ? `Demanda esperada (${CAP_LABEL[unit]?.split(" (")[0].toLowerCase() ?? unit})` : `Demanda esperada (${unit}s/mês)`;
 const SCHEDULE_HELP = "6x1 = seis dias de trabalho e uma folga; 5x2 = segunda a sexta; 12x36 = 12 h de trabalho e 36 h de folga; 4x3 = quatro dias de trabalho e três de folga";
 const EXPANSIONS: [string, string, string][] = [
   ["CAPACITY", "Ampliar capacidade", "+25% de capacidade de atendimento/produção."],
@@ -17,6 +24,8 @@ const EXPANSIONS: [string, string, string][] = [
   ["LARGER_PREMISES", "Instalações maiores", "Passa para o próximo porte: mais demanda, mais aluguel e custos."],
   ["MARKETING", "Campanha de publicidade", "+12% de demanda por 3 meses."],
 ];
+
+const TAX_REGIME_LABEL: Record<string, string> = { MEI: "MEI (DAS-MEI)", SIMPLES: "Simples Nacional (DAS)", LUCRO_PRESUMIDO: "Lucro Presumido" };
 
 export function CompanyPage() {
   const id = Number(useParams().id);
@@ -62,6 +71,12 @@ export function CompanyPage() {
           <b>Empresa irregular.</b> Faltam: {d.compliance.missing_labels.join(", ")}. Sem isso a empresa não vende e paga multa (estimada em {fmtBRL(d.compliance.estimated_fine)}) no fechamento do mês. Contrate antes de fechar o mês.
         </div>
       )}
+      {d.market?.crisis.active && (
+        <div className="alert" role="alert">
+          <b>Crise econômica afetando o seu setor.</b> {d.market.crisis.crises.map((x) => `${x.label} (${x.phase === "ONSET" ? "início" : x.phase === "PEAK" ? "auge" : "recuperação"})`).join("; ") || "Demanda geral em queda"}:
+          vendas do mês esperadas com <b>{fmtPct(String((d.market.crisis.sales_mult - 1) * 100))}</b> de variação na demanda (efeito do setor {String(d.market.crisis.sector_pct).replace(".", ",")}%; índice de demanda do país {String(d.market.crisis.demand_index).replace(".", ",")}). Segure custos e caixa até a recuperação.
+        </div>
+      )}
       {lowRunway && <div className="alert">Atenção: o caixa cobre apenas {Number(d.runway_months).toFixed(1).replace(".", ",")} mês(es) de custos fixos e folha. Aporte capital, ajuste custos ou reduza a equipe.</div>}
 
       <section className="stats-grid">
@@ -70,33 +85,54 @@ export function CompanyPage() {
         <StatCard label="Dívidas" value={fmtBRL(c.debts)} />
         <StatCard label="Lucro distribuível" value={fmtBRL(d.distributable_profit)} sub="acumulado ainda não distribuído" />
         <StatCard label="Reputação" value={`${c.reputation}/100`} sub={c.marketing_until ? `campanha até ${fmtMonth(c.marketing_until)}` : undefined} />
+        <StatCard label="Relevância" value={`${c.relevance.toFixed(1).replace(".", ",")}/100`} sub={`demanda em ${d.market ? Math.round(d.market.demand_factor * 100) : "—"}% do potencial`} />
         <StatCard label="Custos fixos + folha / mês" value={fmtBRL(d.monthly_obligations)} />
       </section>
 
       <section className="card">
         <h2>Indicadores operacionais</h2>
         <dl className="facts">
-          <div><dt>Demanda esperada (sem sazonalidade)</dt><dd className="num">{d.expected_demand} {c.segment_label.toLowerCase() === "" ? "" : "un."}/mês</dd></div>
-          <div><dt>Capacidade operacional</dt><dd className="num">{d.expected_capacity} /mês{d.expected_capacity < d.expected_demand ? " — abaixo da demanda: você perde vendas" : ""}</dd></div>
+          <div><dt>{demandLabel(c.metrics_kind, c.unit_label)}</dt><dd className="num">≈ {d.expected_demand}/mês — estimativa, sem sazonalidade; o mês real varia (sazonalidade, economia, sorte){d.market && d.market.zero_month_prob > 0.02 ? ` e há ${Math.round(d.market.zero_month_prob * 100)}% de chance de o próximo mês fechar sem nenhuma venda` : ""}</dd></div>
+          <div><dt>{capLabel(c.metrics_kind, c.unit_label)}</dt><dd className="num">{d.expected_capacity}/mês{d.market ? ` (teto do porte: ${d.market.production_cap})` : ""}{d.expected_capacity < d.expected_demand ? " — abaixo da demanda: você perde vendas" : ""}</dd></div>
+          {d.market && c.metrics_kind !== "SERVICE" && <div><dt>Teto de estoque (armazenagem)</dt><dd className="num">{d.market.storage_cap_units} {c.unit_label}(s) vendáveis</dd></div>}
+          {d.market && <div><dt>Funcionários</dt><dd className="num">{d.market.staff_count} de {d.market.max_staff} (teto do porte)</dd></div>}
           <div><dt>Preço de venda</dt><dd className="num">{fmtBRL(c.price)}</dd></div>
           <div><dt>Pró-labore mensal</dt><dd className="num">{fmtBRL(c.owner_salary)}</dd></div>
         </dl>
         <SettingsForm d={d} showRestock={c.metrics_kind !== "SERVICE"} onSave={(body) => act(() => api.coSettings(c.id, body), "Ajustes salvos.")} />
       </section>
 
+      {d.market && (
+        <section className="card" aria-label="Relevância">
+          <h2>Relevância no mercado</h2>
+          <div className="meter" style={{ height: 10, background: "var(--line, #ddd)", borderRadius: 6, overflow: "hidden" }} role="progressbar" aria-valuenow={Math.round(c.relevance)} aria-valuemin={0} aria-valuemax={100}>
+            <div style={{ width: `${Math.max(2, c.relevance)}%`, height: "100%", background: "var(--accent, #2b6cb0)" }} />
+          </div>
+          <p className="muted small" style={{ margin: "6px 0 0" }}>
+            <b>{c.relevance.toFixed(1).replace(".", ",")}/100</b> — a demanda do ponto é multiplicada por {d.market.demand_factor.toFixed(2).replace(".", ",")} (de 0,25 com relevância 0 a 1,00 com 100).
+            Preço do mercado: {Math.round(d.market.price_ratio * 100)}% ({d.market.price_ratio > 1.25 ? "caro demais: derruba as vendas e aumenta a chance de mês sem vendas" : d.market.price_ratio < 0.9 ? "barato: vende um pouco mais, mas o ganho é limitado" : "dentro do mercado"}).
+          </p>
+          <p className="muted small" style={{ margin: 0 }}>
+            A relevância sobe devagar (cerca de 1 ponto por mês quando tudo vai bem; chegar a 50 leva mais de 2 anos) com clientes atendidos (vendas ≥ 60% da demanda), boa reputação, campanha de marketing ativa, estoque em dia e preço justo. Cai em meses sem vendas ou irregulares.
+            No começo é normal ter prejuízo e até meses sem nenhuma venda: o capital mínimo já traz uma reserva para isso.
+          </p>
+        </section>)}
+
       <section className="card">
         <h2>Demonstrativo do último mês fechado{last ? ` (${fmtMonth(last.ref_month)})` : ""}</h2>
         {!last ? <div className="empty">Feche o mês do simulador (aba Orçamento) para a empresa operar e gerar o primeiro demonstrativo.</div> : (
           <>
             <dl className="facts">
-              <div><dt>Vendas</dt><dd className="num">{last.units_sold} {c.unit_label}(s) de {last.demand_units} de demanda{last.stockout && c.metrics_kind !== "SERVICE" ? " — faltou estoque" : ""}</dd></div>
+              <div><dt>Vendas</dt><dd className="num">{last.units_sold} {c.unit_label}(s) de {last.demand_units} de demanda{last.stockout && c.metrics_kind !== "SERVICE" ? " — faltou estoque" : ""}{last.zero_sales ? " — mês sem nenhuma venda (relevância baixa ou preço fora do mercado)" : ""}</dd></div>
               <div><dt>Receita bruta</dt><dd className="num tone-up">{fmtBRL(last.revenue)}</dd></div>
               <div><dt>(−) Custos variáveis ({c.metrics_kind === "SERVICE" ? "insumos diretos, taxas e comissões" : "mercadorias e outros"})</dt><dd className="num">{fmtBRL(last.variable_costs)}</dd></div>
               <div><dt>(−) Custos fixos ({c.channel === "ONLINE" || c.site_mode === "BUY" ? "energia, estrutura" : "aluguel, energia, estrutura"})</dt><dd className="num">{fmtBRL(last.fixed_costs)}</dd></div>
               {last.irregular && <div><dt className="tone-down">Mês irregular</dt><dd className="tone-down">sem cargos obrigatórios: vendas zeradas e multa de {fmtBRL(last.fines ?? "0")} (dentro dos custos fixos)</dd></div>}
               <div><dt>(−) Folha de pagamento (CLT 2×, PJ 1×) e pró-labore</dt><dd className="num">{fmtBRL(last.payroll)}</dd></div>
               <div><dt>= Resultado operacional</dt><dd className={`num tone-${trend(last.operating_result)}`}>{fmtBRL(last.operating_result)}</dd></div>
-              <div><dt>(−) Impostos</dt><dd className="num">{fmtBRL(last.taxes)}</dd></div>
+              <div><dt>(−) Impostos{last.tax_regime ? ` — ${TAX_REGIME_LABEL[last.tax_regime] ?? last.tax_regime}` : ""}</dt><dd className="num">{fmtBRL(last.taxes)}</dd></div>
+              {(last.tax_breakdown ?? []).map((t) => (
+                <div key={t.name}><dt className="muted small">&nbsp;&nbsp;↳ {t.name} ({t.rate_pct}% sobre {fmtBRL(t.base)})</dt><dd className="num muted small">{fmtBRL(t.amount)}</dd></div>))}
               <div><dt>(−) Juros</dt><dd className="num">{fmtBRL(last.interest)}</dd></div>
               <div><dt>= Resultado líquido</dt><dd className={`num tone-${trend(last.net_result)}`}><b>{Number(last.net_result) >= 0 ? "▲ " : "▼ "}{fmtBRL(last.net_result)}</b></dd></div>
               <div><dt>Saldo de caixa / dívidas / patrimônio</dt><dd className="num">{fmtBRL(last.cash_end)} / {fmtBRL(last.debts_end)} / {fmtBRL(last.equity_end)}</dd></div>
@@ -104,6 +140,13 @@ export function CompanyPage() {
           </>
         )}
       </section>
+      {last && (
+        <p className="muted small" style={{ margin: "0 0 .75rem" }}>
+          <b>Como o imposto é calculado:</b> o regime é escolhido automaticamente todo mês pelo faturamento dos últimos 12 meses (RBT12; com menos de 12 meses, usa-se a média mensal × 12):
+          MEI (até R$ 81 mil/ano, 1 empregado CLT e atividade permitida, valor fixo — nunca se volta ao MEI depois de sair), Simples Nacional (DAS, alíquota efetiva = (RBT12 × alíquota − parcela a deduzir) ÷ RBT12; no Fator R, folha ≥ 28% do faturamento paga o Anexo III em vez do V)
+          e Lucro Presumido acima de R$ 4,8 mi/ano (IRPJ, CSLL, PIS, COFINS e ISS, ICMS ou IPI conforme a atividade). Encargos já incluídos no custo CLT de 2× (INSS patronal, FGTS, 13º e férias não são cobrados de novo).
+          <i> Simplificações: ICMS fixo de 18% (varia por estado), IPI fixo de 10%, ISS típico por atividade, sem sublimite do Simples, apuração mensal; pró-labore, IRPF do dono e retenção sobre dividendos não são calculados.</i>
+        </p>)}
       <Suspense fallback={<div className="card muted">Carregando gráficos…</div>}>
         <div className="grid-2"><RevenueCostChart months={d.months} /><NetResultChart months={d.months} /></div>
       </Suspense>
@@ -123,7 +166,7 @@ export function CompanyPage() {
               <span className={q.present ? "tone-up" : "tone-down"}>{q.present ? "✓" : "✗"} <b>{q.label}</b></span>
               {q.present ? <span className="muted small">contratado</span> : <button className="link-btn" onClick={() => { setHireRole(q.role); setModal("hire"); }}>contratar</button>}
             </li>))}</ul>
-          <p className="muted small" style={{ margin: 0 }}>Contador e Advogado são obrigatórios{c.channel === "PHYSICAL" ? "; empresa física também precisa de Auxiliar de limpeza" : " (empresa online não precisa de limpeza)"}. Sem todos no fechamento do mês a empresa fica irregular: não vende e paga multa de 1 salário-base de cada cargo faltante. Não há tolerância no mês da abertura.</p>
+          <p className="muted small" style={{ margin: 0 }}>Basta o cargo estar preenchido com jornada de pelo menos 20 h/semana (meio período vale; no porte pequeno o salário é bem menor e proporcional às horas). Contador e Advogado são obrigatórios{c.channel === "PHYSICAL" ? "; empresa física também precisa de Auxiliar de limpeza" : " (empresa online não precisa de limpeza)"}. Sem todos no fechamento do mês a empresa fica irregular: não vende e paga multa de 1 salário-base de cada cargo faltante. Não há tolerância no mês da abertura.</p>
         </section>
       )}
 
@@ -153,11 +196,11 @@ export function CompanyPage() {
         <section className="card">
           <h2>Estoque</h2>
           <div className="table-wrap"><table>
-            <thead><tr><th>Item</th><th>Fornecedor</th><th className="r">Quantidade</th><th className="r">Custo médio</th><th className="r">Mínimo</th><th className="r">Consumo estimado/mês</th><th /></tr></thead>
+            <thead><tr><th>Item</th><th>Fornecedor</th><th className="r">Quantidade</th><th className="r">Custo médio</th><th className="r">Mínimo</th><th className="r">Teto</th><th className="r">Consumo estimado/mês</th><th /></tr></thead>
             <tbody>{d.inventory.map((i) => (
               <tr key={i.id}>
                 <td><b>{i.name}</b> {i.low && <span className="tag tone-warn">baixo</span>}</td><td className="muted">{i.supplier}</td>
-                <td className="r num">{i.quantity} {i.unit}</td><td className="r num">{fmtBRL(i.unit_cost)}</td><td className="r num">{i.min_quantity}</td><td className="r num">{i.monthly_consumption_est}</td>
+                <td className="r num">{i.quantity} {i.unit}</td><td className="r num">{fmtBRL(i.unit_cost)}</td><td className="r num">{i.min_quantity}</td><td className="r num">{i.max_quantity ?? "—"}</td><td className="r num">{i.monthly_consumption_est}</td>
                 <td className="r"><button className="link-btn" onClick={() => { const q = window.prompt(`Quantidade de ${i.name} a comprar (${i.unit})`); if (q) void act(() => api.coStock(c.id, i.id, parseMoneyInput(q)), "Estoque comprado."); }}>comprar</button></td>
               </tr>
             ))}</tbody>
@@ -167,7 +210,7 @@ export function CompanyPage() {
       )}
 
       <section className="card">
-        <div className="row"><h2>Instalações e custos</h2>{c.channel === "PHYSICAL" && c.site_mode !== "BUY" && <button className="btn small ghost" onClick={() => setModal("lease")}>Alterar instalações</button>}</div>
+        <div className="row"><h2>Instalações e custos</h2><span className="row-gap">{c.channel === "PHYSICAL" && <button className="btn small ghost" onClick={() => setModal("relocate")}>Mudar de endereço</button>}{c.channel === "PHYSICAL" && c.site_mode !== "BUY" && <button className="btn small ghost" onClick={() => setModal("lease")}>Alterar instalações</button>}</span></div>
         <dl className="facts">
           <div><dt>Instalações</dt><dd>{c.channel === "ONLINE" ? "operação online — sem ponto físico nem aluguel" : c.site_mode === "BUY" ? `terreno próprio (${fmtBRL(c.site_value)}) — sem aluguel` : d.lease ? `${d.lease.name} — ${fmtBRL(d.lease.monthly_rent)}/mês (${d.lease.kind === "EXTERNAL" ? "alugado de terceiros" : d.lease.kind === "OWN_GOOD" ? "imóvel seu, alugado à empresa" : "imóvel da empresa"})` : "nenhuma"}</dd></div>
           {d.costs.map((x) => <div key={x.id}><dt>{CO_COST_LABEL[x.kind] ?? x.kind}</dt><dd className="num">{fmtBRL(x.amount)}/mês{x.active ? "" : " (inativo)"}</dd></div>)}
@@ -237,6 +280,7 @@ export function CompanyPage() {
         run={(a) => api.coDistribute(c.id, a)} onClose={() => setModal(null)} onDone={(x) => done(x, "Lucros distribuídos.")} />}
       {modal === "hire" && <HireModal d={d} initialRole={hireRole} onClose={() => setModal(null)} onChange={(x) => setD(x)} onDone={(x, m) => done(x, m)} />}
       {modal === "loan" && <LoanModal d={d} onClose={() => setModal(null)} onDone={(x) => done(x, "Empréstimo contratado.")} />}
+      {modal === "relocate" && <RelocateModal d={d} onClose={() => setModal(null)} onDone={(x) => done(x, "Mudança de endereço concluída: a empresa vende menos neste mês e perdeu parte da relevância.")} />}
       {modal === "lease" && <LeaseModal d={d} goods={personalGoods} onClose={() => setModal(null)} onDone={(x) => done(x, "Instalações atualizadas.")} />}
     </div>
   );

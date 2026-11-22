@@ -56,7 +56,8 @@ export function CompaniesPage() {
             <div key={s.key} className="card good-card">
               <b>{s.label}</b>
               <span className="muted small">{s.description}</span>
-              <span className="muted small">Vende por {s.unit_label} · preço padrão {fmtBRL(s.price)} · impostos {s.tax_pct}%</span>
+              <span className="muted small">Vende por {s.unit_label} · preço padrão {fmtBRL(s.price)}</span>
+              <span className="muted small">Impostos: {s.tax.regime_label}, alíquota efetiva de {s.tax.effective_min_pct}% a {s.tax.effective_max_pct}% conforme o faturamento dos últimos 12 meses{s.tax.mei_allowed ? " · pode começar como MEI (até R$ 81 mil/ano e 1 empregado)" : " · não pode ser MEI"}</span>
               <span className="muted small">Equipe: {s.roles.map((r) => r.label).join(", ")}{s.stock.length ? ` · Estoque: ${s.stock.join(", ")}` : " · sem estoque (serviço)"}</span>
               <span className="num good-value">a partir de {fmtBRL(s.minimum_capital)} · {s.channels.length > 1 ? "online ou física" : s.channels[0] === "ONLINE" ? "só online" : "só física"}</span>
               <button className="btn small primary" onClick={() => setCreating(s)}>Criar empresa</button>
@@ -168,6 +169,7 @@ function CreateModal({ segment, catalog, onClose, onCreated }: { segment: CoSegm
             <div><dt>Equipe obrigatória no capital mínimo (1 mês de folha + custo de contratação)</dt><dd className="num">{fmtBRL(quote.mandatory_cost)}</dd></div>
             <div><dt>Custos fixos mensais{physical && siteMode === "RENT" ? " (aluguel e outros)" : ""}</dt><dd className="num">{fmtBRL(quote.monthly_fixed)}</dd></div>
             <div><dt>Capital mínimo para abrir</dt><dd className="num"><b>{fmtBRL(quote.minimum_capital)}</b></dd></div>
+            {quote.tax && <div><dt>Regime tributário provável</dt><dd>{quote.tax.regime_label}, alíquota efetiva de {quote.tax.effective_min_pct}% a {quote.tax.effective_max_pct}% conforme o faturamento dos últimos 12 meses (o regime muda sozinho: MEI até R$ 81 mil/ano, Simples até R$ 4,8 mi, depois Lucro Presumido). Simplificações: ICMS 18%, IPI 10% e ISS típico; encargos da folha já estão no custo CLT de 2×.</dd></div>}
           </dl>
         )}
         {accepted.length === 0 && <label>Sua participação societária (%)<input inputMode="decimal" value={share} onChange={(e) => setShare(e.target.value)} /></label>}

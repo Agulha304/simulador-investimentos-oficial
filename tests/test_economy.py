@@ -232,7 +232,8 @@ def test_economy_and_events_change_company_demand_and_costs(client, auth_headers
         ref = month.ref_month
         seg = company_rules.SEGMENTS[c.segment]
         expected = company_rules.demand_units(seg, location=c.location, size=c.size, units=c.units, reputation=c.reputation,
-                                              price=c.price, company_id=c.id, ref=ref, marketing=False)
+                                              price=c.price, company_id=c.id, ref=ref, marketing=False,
+                                              relevance=float(c.relevance))
         st = s.scalar(select(EconomyState).where(EconomyState.user_id == u))
         st.demand = D("50")                                                  # recessão forte
         s.commit()
@@ -255,6 +256,49 @@ def test_economy_and_events_change_company_demand_and_costs(client, auth_headers
         c = s.get(Company, co["id"])
         ref = s.scalar(select(SimMonth.ref_month).where(SimMonth.user_id == u, SimMonth.status == "OPEN"))
         assert abs(economy_service.company_demand_mult(s, c, ref) / mult_before - 1.2) < 1e-9     # só o setor CAFE sobe
+
+
+def test_recession_cuts_company_sales_proportionally_to_the_sector(client, auth_headers):
+    """Mesmo mês, com e sem crise: a recessão (-14% no pico no café, x3 nas vendas) derruba a demanda em dezenas de %."""
+    from sqlalchemy.orm.attributes import flag_modified
+    from backend.models import Company, EconomicCrisis
+    credit(client, auth_headers, "5000000")
+    start_world(client, auth_headers, seed=2)
+    co = create_ok(client, auth_headers, name="Café Crise", segment="CAFE")["company"]
+    cafe2 = create_ok(client, auth_headers, name="Mercado Crise", segment="SUPERMARKET")["company"]
+    u = uid(client, auth_headers)
+    with SessionLocal() as s:
+        for cid in (co["id"], cafe2["id"]):
+            s.get(Company, cid).relevance = D("40")
+        s.commit()
+        c = s.get(Company, co["id"])
+        ref = s.scalar(select(SimMonth.ref_month).where(SimMonth.user_id == u, SimMonth.status == "OPEN"))
+        calm = economy_service.company_demand_mult(s, c, ref)
+        assert not economy_service.company_crisis_info(s, c, ref)["active"]
+        st = s.scalar(select(EconomyState).where(EconomyState.user_id == u).order_by(EconomyState.ref_month.desc()))
+        eng = dict(st.engine)
+        eng["info"] = {**eng.get("info", {}), "sector": {"CAFE": -14.0, "SUPERMARKET": -4.0}}      # recessão em intensidade 1
+        st.engine = eng
+        flag_modified(st, "engine")
+        s.add(EconomicCrisis(user_id=u, type="RECESSION", label="Recessão econômica", start_month=ref, status="ACTIVE", phase="PEAK",
+                             intensity=D("1"), peak=D("1"), sectors={"CAFE": -14.0, "SUPERMARKET": -4.0}, assets={}, triggers={}, path=[]))
+        s.commit()
+        crisis = economy_service.company_demand_mult(s, c, ref)
+        assert crisis / calm == pytest.approx(0.58, abs=0.01)                               # -42% no café
+        sm = economy_service.company_demand_mult(s, s.get(Company, cafe2["id"]), ref)
+        assert crisis < sm                                                                  # proporcional ao setor (supermercado sofre menos)
+        info = economy_service.company_crisis_info(s, c, ref)
+        assert info["active"] and info["sector_pct"] == -42.0 and info["crises"][0]["type"] == "RECESSION"
+    d = client.get(f"/api/companies/{co['id']}", headers=auth_headers).json()
+    assert d["market"]["crisis"]["active"] is True
+    advance(client, auth_headers)
+    with SessionLocal() as s:
+        cm = s.scalar(select(CompanyMonth).where(CompanyMonth.company_id == co["id"]))
+        c = s.get(Company, co["id"])
+        no_crisis = company_rules.demand_units(company_rules.SEGMENTS[c.segment], location=c.location, size=c.size, units=c.units,
+                                               reputation=50, price=c.price, company_id=c.id, ref=cm.ref_month, marketing=False,
+                                               relevance=40.0) * float(st.demand) / 100
+        assert float(cm.demand_units) == pytest.approx(no_crisis * 0.58, rel=0.02)
 
 
 def test_interest_rate_makes_financing_more_expensive(client, auth_headers):
