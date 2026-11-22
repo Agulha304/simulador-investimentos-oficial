@@ -386,10 +386,11 @@ export const EXPANSION_KINDS: { key: CoExpKind; label: string; text: string }[] 
 ];
 const OUTCOME_LABEL = { FULL: "Funcionou", PARTIAL: "Funcionou em parte", FAIL: "Não funcionou" } as const;
 
-export function ExpansionModal({ d, onClose, onDone }: { d: CompanyDetail; onClose: () => void; onDone: (d: CompanyDetail, msg: string) => void }) {
+export function ExpansionModal({ d, onClose, onDone, initialKind }: { d: CompanyDetail; onClose: () => void; onDone: (d: CompanyDetail, msg: string) => void; initialKind?: CoExpKind }) {
   const c = d.company;
-  const [step, setStep] = useState<1 | 2 | 3 | 4 | 5>(1);
-  const [kind, setKind] = useState<CoExpKind | null>(null);
+  // Com tipo pré-selecionado (botão do aporte clicado) abre direto no nível; sem tipo, começa pela escolha do tipo.
+  const [step, setStep] = useState<1 | 2 | 3 | 4 | 5>(initialKind ? 2 : 1);
+  const [kind, setKind] = useState<CoExpKind | null>(initialKind ?? null);
   const [tier, setTier] = useState<CoTier | null>(null);
   const [opts, setOpts] = useState<CoExpOptions | null>(null);
   const [optKey, setOptKey] = useState<string | null>(null);
@@ -427,7 +428,7 @@ export function ExpansionModal({ d, onClose, onDone }: { d: CompanyDetail; onClo
       setStep(5);
     } catch (e) { setMsg(errMsg(e)); } finally { setBusy(false); }
   }
-  const stepTitle = ["", "1. Tipo de aporte", "2. Nível de investimento", "3. Escolha uma opção", "4. Confirmar", "Resultado"][step];
+  const stepTitle = ["", "1. Tipo de aporte", `${initialKind ? (EXPANSION_KINDS.find((k) => k.key === initialKind)?.label ?? "") + " — " : ""}2. Nível de investimento`, "3. Escolha uma opção", "4. Confirmar", "Resultado"][step];
   return (
     <Panel title={`Expansão — ${stepTitle}`} onClose={result ? () => onDone(result.company, result.message) : onClose} wide>
       {step === 1 && (
@@ -444,7 +445,7 @@ export function ExpansionModal({ d, onClose, onDone }: { d: CompanyDetail; onClo
             <button key={t.tier} type="button" className="card good-card" style={{ textAlign: "left" }} disabled={busy} onClick={() => void pickTier(t.tier)}>
               <b>{t.label}</b><span className="num good-value">{fmtBRL(t.cost)}</span><span className="muted small">{t.chance}</span>
             </button>))}</div>
-          <button type="button" className="link-btn" onClick={() => setStep(1)}>← voltar</button>
+          <button type="button" className="link-btn" onClick={() => (initialKind ? onClose() : setStep(1))}>{initialKind ? "← fechar" : "← voltar"}</button>
         </>
       )}
       {step === 3 && opts && (

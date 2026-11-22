@@ -27,6 +27,7 @@ from backend.models.goods import (
 from backend.models.games import AccountCategory, Game
 from backend.models.holding import Holding
 from backend.models.life import Child, LifeLog, LifeProfile, Person, Relationship
+from backend.models.password_reset import PasswordResetRequest, PasswordResetToken
 from backend.models.performance import LessonProgress, PortfolioSnapshot
 from backend.models.portfolio import Portfolio
 from backend.models.progress import Achievement, Goal, MonthReport
@@ -34,6 +35,7 @@ from backend.models.transaction import Transaction
 from backend.models.user import User
 
 __all__ = [
+    "PasswordResetRequest", "PasswordResetToken",
     "CareerJob", "Education", "Gig", "JobApplication",    "InvestorProfile",    "PersonalLoan", "PersonalLoanInstallment",    "CompanyPartner", "PartnerInvite",    "ShortStayMonth",    "AccountCategory", "Game",
     "Achievement", "Goal", "MonthReport",
     "EconomicCrisis", "EconomyState", "GameProfile", "SimPrice", "WorldEvent",

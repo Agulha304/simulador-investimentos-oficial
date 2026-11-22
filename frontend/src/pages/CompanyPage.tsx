@@ -3,7 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { EXPANSION_KINDS, ExpansionModal, HireModal, LeaseModal, LoanModal, MoneyModal, RelocateModal, SupplierModal } from "../components/CompanyModals";
 import { RecruiterCard, ReportPanel, SupplierLimitsModal, TeamModal } from "../components/CompanyRecruiter";
 import { StatCard } from "../components/StatCard";
-import { api, type CoRecruiterReport, type CoSupplierContract, type CompanyDetail, type Good, type Listing } from "../services/api";
+import { api, type CoExpKind, type CoRecruiterReport, type CoSupplierContract, type CompanyDetail, type Good, type Listing } from "../services/api";
 import { cachedGet } from "../services/dataCache";
 import { CATEGORY_LABEL, CO_COST_LABEL, CO_EVENT_LABEL, EDUCATION_LABEL, LEDGER_LINE_LABEL, LEVEL_LABEL, fmtBRL, fmtMonth, fmtPct, parseMoneyInput, trend } from "../lib/format";
 
@@ -27,6 +27,7 @@ export function CompanyPage() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [modal, setModal] = useState<Modal>(null);
+  const [expKind, setExpKind] = useState<CoExpKind | null>(null);
   const [hireRole, setHireRole] = useState<string | undefined>(undefined);
   const [supCat, setSupCat] = useState<string>("");
   const [report, setReport] = useState<CoRecruiterReport | null>(null);
@@ -198,10 +199,11 @@ export function CompanyPage() {
                 <tr key={r.category}>
                   <td><b>{r.label}</b><br /><span className="muted small">{Math.round(Number(r.weight) * 100)}% do custo</span></td>
                   <td>{r.supplier ?? <span className="tone-down">sem contrato</span>}{ct && <><br /><span className="muted small">mín. {ct.min_monthly_order} · até {ct.effective_volume ?? ct.max_units_month} {ct.unit}/mês · confiab. {Math.round(ct.reliability * 100)}% · prazo {ct.lead_days} d{ct.is_default ? " · contrato padrão" : ""}</span>
+                    {!(ct.max_monthly_spend != null || ct.volume_cap != null || ct.min_reliability != null || ct.max_lead_days != null) && <><br /><span className="muted small">limites: sem limite (opcional)</span></>}
                     {(ct.max_monthly_spend != null || ct.volume_cap != null || ct.min_reliability != null || ct.max_lead_days != null) && <><br /><span className="muted small">limites: {[ct.max_monthly_spend != null ? `gasto até ${fmtBRL(ct.max_monthly_spend)}/mês (gasto no mês: ${fmtBRL(ct.spend_used ?? "0")})` : "", ct.volume_cap != null ? `volume até ${ct.volume_cap}` : "", ct.min_reliability != null ? `confiab. mín. ${Math.round(ct.min_reliability * 100)}%` : "", ct.max_lead_days != null ? `prazo até ${ct.max_lead_days} d` : ""].filter(Boolean).join(" · ")}</span></>}</>}</td>
                   <td className="r num">{fmtBRL(r.unit_price)}{r.estimated ? <span className="muted small"> (ref.)</span> : ""}<br /><span className="muted small">/{r.unit}</span></td>
                   <td className="r num">{r.planned_volume} {r.unit}</td>
-                  <td className="r num">{r.estimated ? <span className="muted">{fmtBRL(r.planned_spend)} (estimativa)</span> : fmtBRL(r.planned_spend)}{r.max_monthly_spend != null && <><br /><span className={`small ${r.over_limit ? "tone-down" : "muted"}`}>limite {fmtBRL(r.max_monthly_spend)}{r.over_limit ? " — previsto acima do limite: a reposição trava" : ""}</span></>}</td>
+                  <td className="r num">{r.estimated ? <span className="muted">{fmtBRL(r.planned_spend)} (estimativa)</span> : fmtBRL(r.planned_spend)}{r.supplier_id != null && (r.max_monthly_spend != null ? <><br /><span className={`small ${r.over_limit ? "tone-down" : "muted"}`}>limite {fmtBRL(r.max_monthly_spend)}{r.over_limit ? " — previsto acima do limite: a reposição trava" : ""}</span></> : <><br /><span className="muted small">sem limite de gasto</span></>)}</td>
                   <td className="r num">{d.supply!.budget.last_month ? fmtBRL(r.last_actual) : "—"}</td>
                   <td className="r">
                     {!ct && <button className="btn small ghost" onClick={() => { setSupCat(r.category); setModal("supplier"); }}>Procurar fornecedores</button>}
@@ -276,7 +278,7 @@ export function CompanyPage() {
         <div className="goods-grid">{EXPANSION_KINDS.map((k) => (
           <div key={k.key} className="card good-card"><b>{k.label}</b><span className="muted small">{k.text}</span>
             <span className="num small">{fmtBRL(d.expansion_costs[k.key]?.BARATO ?? "0")} a {fmtBRL(d.expansion_costs[k.key]?.CARO ?? "0")}</span>
-            <button className="btn small ghost" onClick={() => setModal("expansion")}>Escolher…</button></div>
+            <button className="btn small ghost" onClick={() => { setExpKind(k.key); setModal("expansion"); }}>Escolher…</button></div>
         ))}</div>
         <dl className="facts" style={{ marginTop: 12 }}>
           <div><dt>Qualidade dos produtos</dt><dd className="num">{(c.quality ?? 50).toFixed(1).replace(".", ",")}/100 — mais qualidade: mais relevância e tolerância a preço, insumos mais caros</dd></div>
@@ -362,7 +364,7 @@ export function CompanyPage() {
       {modal === "limits" && limitsCt && <SupplierLimitsModal d={d} ct={limitsCt} onClose={() => setModal(null)} onDone={(x) => done(x, "Limites do contrato salvos.")} />}
       {report && <ReportPanel r={report} onClose={() => setReport(null)} />}
       {modal === "supplier" && <SupplierModal d={d} category={supCat} onClose={() => setModal(null)} onDone={(x, m) => done(x, m)} />}
-      {modal === "expansion" && <ExpansionModal d={d} onClose={() => setModal(null)} onDone={(x, m) => done(x, m)} />}
+      {modal === "expansion" && <ExpansionModal initialKind={expKind ?? undefined} d={d} onClose={() => setModal(null)} onDone={(x, m) => done(x, m)} />}
       {modal === "loan" && <LoanModal d={d} onClose={() => setModal(null)} onDone={(x) => done(x, "Empréstimo contratado.")} />}
       {modal === "relocate" && <RelocateModal d={d} onClose={() => setModal(null)} onDone={(x) => done(x, "Mudança de endereço concluída: a empresa vende menos neste mês e perdeu parte da relevância.")} />}
       {modal === "lease" && <LeaseModal d={d} goods={personalGoods} onClose={() => setModal(null)} onDone={(x) => done(x, "Instalações atualizadas.")} />}

@@ -283,6 +283,7 @@ class CompanySegment(StrEnum):
     TRANSPORT = "TRANSPORT"
     REAL_ESTATE_AGENCY = "REAL_ESTATE_AGENCY"
     ECOMMERCE = "ECOMMERCE"
+    AGRIBUSINESS = "AGRIBUSINESS"
 
 
 class CompanySize(StrEnum):

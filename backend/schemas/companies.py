@@ -2,7 +2,7 @@
 from datetime import date, datetime
 from decimal import Decimal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from backend.models import (
     CompanyChannel, CompanyCostKind, CompanyEventType, CompanySegment, CompanySize, CompanyStatus, EmployeeEducation, EmployeeLevel, EmployeeRegime, EmployeeStatus, WorkSchedule,
@@ -74,12 +74,19 @@ class RecruiterHireIn(BaseModel):
     idempotency_key: str = Field(min_length=8, max_length=100)
 
 
+def _empty_to_none(v):
+    """Campo opcional de fornecedor: "" / só espaços = vazio = sem restrição."""
+    return None if isinstance(v, str) and not v.strip() else v
+
+
 class SupplierLimitsBriefIn(BaseModel):
     """Critérios de UMA categoria no briefing (prevalecem sobre o geral)."""
     max_spend: Decimal | None = None
     min_reliability: float | None = None
     max_lead_days: int | None = None
     volume_cap: Decimal | None = None
+
+    _blank = field_validator("max_spend", "min_reliability", "max_lead_days", "volume_cap", mode="before")(_empty_to_none)
 
 
 class RecruiterSettingsIn(BaseModel):
@@ -93,7 +100,10 @@ class RecruiterSettingsIn(BaseModel):
     supplier_min_reliability: float | None = None
     supplier_max_lead_days: int | None = None
     supplier_volume_cap: Decimal | None = None
-    supplier_overrides: dict[str, SupplierLimitsBriefIn] = {}
+    supplier_overrides: dict[str, SupplierLimitsBriefIn | None] = {}
+
+    _blank = field_validator("max_salary", "max_monthly_payroll", "supplier_max_total_spend", "supplier_min_reliability",
+                             "supplier_max_lead_days", "supplier_volume_cap", mode="before")(_empty_to_none)
 
 
 class RecruiterRoleIn(BaseModel):
@@ -116,10 +126,13 @@ class RecruiterSuppliersIn(BaseModel):
 
 
 class SupplierLimitsIn(BaseModel):
+    """Limites do contrato: TODOS opcionais (ausente/null/"" = sem limite)."""
     max_monthly_spend: Decimal | None = None
     min_reliability: float | None = None
     max_lead_days: int | None = None
     volume_cap: Decimal | None = None
+
+    _blank = field_validator("max_monthly_spend", "min_reliability", "max_lead_days", "volume_cap", mode="before")(_empty_to_none)
 
 
 class StockIn(BaseModel):

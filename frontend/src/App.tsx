@@ -15,6 +15,8 @@ const imports = {
   FixedIncomePage: () => import("./pages/FixedIncomePage"), PortfolioPage: () => import("./pages/PortfolioPage"), HistoryPage: () => import("./pages/HistoryPage"),
   AssetPage: () => import("./pages/AssetPage"),
 };
+const ForgotPasswordPage = page(() => import("./pages/ForgotPasswordPage"), "ForgotPasswordPage");
+const ResetPasswordPage = page(() => import("./pages/ResetPasswordPage"), "ResetPasswordPage");
 const AssetPage = page(imports.AssetPage, "AssetPage");
 const PerformancePage = page(() => import("./pages/PerformancePage"), "PerformancePage");
 const PainelPage = page(imports.PainelPage, "PainelPage");
@@ -59,6 +61,8 @@ export default function App() {
         <Routes>
           <Route path="/login" element={<AuthPage mode="login" />} />
           <Route path="/cadastro" element={<AuthPage mode="register" />} />
+          <Route path="/esqueci-senha" element={<ForgotPasswordPage />} />
+          <Route path="/redefinir-senha" element={<ResetPasswordPage />} />
           <Route element={<ProtectedRoute />}>
             {/* fora da partida: menu inicial, aulas, ranking e conquistas */}
             <Route element={<HubLayout />}>

@@ -438,6 +438,10 @@ export const api = {
     request<{ access_token: string }>("/auth/register", { method: "POST", body: JSON.stringify({ email, name, password }) }),
   login: (email: string, password: string) =>
     request<{ access_token: string }>("/auth/login", { method: "POST", body: JSON.stringify({ email, password }) }),
+  forgotPassword: (email: string) =>
+    request<{ message: string }>("/auth/forgot-password", { method: "POST", body: JSON.stringify({ email }) }),
+  resetPassword: (token: string, new_password: string) =>
+    request<{ message: string }>("/auth/reset-password", { method: "POST", body: JSON.stringify({ token, new_password }) }),
   me: () => request<User>("/auth/me"),
   searchAssets: (q: string) => request<Asset[]>(`/assets/search?q=${encodeURIComponent(q)}`),
   asset: (id: number) => request<Asset>(`/assets/${id}`),

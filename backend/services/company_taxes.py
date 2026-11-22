@@ -74,7 +74,7 @@ ANEXO_LABEL = {"I": "Comércio", "II": "Indústria", "III": "Serviços", "IV": "
 ANEXO_SEGMENTO: dict[str, str | None] = {
     "RESTAURANT": "I", "CAFE": "I", "CLOTHING": "I", "SUPERMARKET": "I", "ECOMMERCE": "I",
     "WORKSHOP": "III", "TECH": None, "AGENCY": None, "INDUSTRY": "II", "CONSTRUCTION": "IV",
-    "TRANSPORT": "III", "REAL_ESTATE_AGENCY": "III",
+    "TRANSPORT": "III", "REAL_ESTATE_AGENCY": "III", "AGRIBUSINESS": "I",       # agro: comercialização da produção (Anexo I; SIMPLIFICAÇÃO, ver lista)
 }
 
 # ---------------------------------------------------------------- Lucro Presumido
@@ -94,6 +94,7 @@ PRESUNCAO_SEGMENTO = {
     "RESTAURANT": "comercio", "CAFE": "comercio", "CLOTHING": "comercio", "SUPERMARKET": "comercio", "ECOMMERCE": "comercio",
     "WORKSHOP": "servicos", "TECH": "servicos", "AGENCY": "servicos", "INDUSTRY": "industria",
     "CONSTRUCTION": "construcao_com_material", "TRANSPORT": "transporte_carga", "REAL_ESTATE_AGENCY": "intermediacao",
+    "AGRIBUSINESS": "comercio",
 }
 ISS_MIN, ISS_MAX = D("0.02"), D("0.05")       # [OFICIAL] LC 116 art. 8º e 8º-A
 ISS_TIPICO = {                                # sugestão para o jogo (doc, incerteza 5: NÃO CONFIRMADO por cidade)
@@ -102,7 +103,8 @@ ISS_TIPICO = {                                # sugestão para o jogo (doc, ince
 }
 ICMS_TIPICO = D("0.18")                       # SP 18% [SECUNDÁRIA]; varia por estado (17%-23%): SIMPLIFICAÇÃO
 IPI_TIPICO = D("0.10")                        # depende da TIPI: valor lúdico, SIMPLIFICAÇÃO
-ICMS_SEGMENTOS = {"RESTAURANT", "CAFE", "CLOTHING", "SUPERMARKET", "ECOMMERCE", "INDUSTRY", "TRANSPORT"}   # vendem mercadoria/transportam
+ICMS_SEGMENTOS = {"RESTAURANT", "CAFE", "CLOTHING", "SUPERMARKET", "ECOMMERCE", "INDUSTRY", "TRANSPORT",
+                 "AGRIBUSINESS"}   # vendem mercadoria/transportam
 IPI_SEGMENTOS = {"INDUSTRY"}
 TRANSPORT_ICMS_SHARE = D("0.5")               # fatia da receita do transporte que é intermunicipal (ICMS); o resto paga ISS: SIMPLIFICAÇÃO
 
@@ -113,6 +115,8 @@ SIMPLIFICACOES = [
     "Sublimite do Simples (R$ 3,6 mi, ICMS/ISS por fora) e ICMS-ST/monofásico não são modelados.",
     "MEI: sem tolerância de 20% sobre o limite de R$ 81 mil; o desenquadramento é imediato.",
     "Lucro Presumido apurado por mês (no real, IRPJ/CSLL são trimestrais); majoração da LC 224 (presunção +10% acima de R$ 5 mi) proporcional ao RBT12.",
+    "Agronegócio: tratado como comercialização da produção (Simples Anexo I, presunção de comércio e ICMS de 18% com crédito dos insumos); "
+    "no real há diferimento/isenção de ICMS em muitas operações rurais, tributação do produtor rural pessoa física e Funrural, não modelados. ISS não se aplica.",
     "Encargos da folha (INSS patronal, FGTS, 13º, férias) já estão incluídos no custo CLT de 2x o salário e não são cobrados de novo.",
     "Pró-labore, INSS e IRPF do dono e retenção sobre dividendos não são calculados.",
 ]

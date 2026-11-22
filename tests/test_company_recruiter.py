@@ -520,3 +520,74 @@ def test_budget_shows_planned_spend_versus_limits(client, rich):
     row = next(r for r in b["rows"] if r["category"] == ct["category"])
     assert D(row["max_monthly_spend"]) == D("0.01") and row["over_limit"] is True
     assert D(b["total_limit"]) == 1000 and b["over_total"] is (D(b["total_planned"]) > 1000)
+
+
+# ------------------------------------------------------------------ especificações de fornecedores OPCIONAIS (vazio/null = sem restrição)
+
+def test_briefing_saved_without_any_supplier_field(client, rich):
+    cid = new_company(client, rich)
+    client.post(f"{C}/{cid}/recruiter", headers=rich, json={"tier": "BASIC", "idempotency_key": key()})
+    r = client.put(f"{C}/{cid}/recruiter/settings", headers=rich, json={"max_salary": "9000"})                    # nenhum campo de fornecedor
+    assert r.status_code == 200, r.text
+    s = r.json()["recruiter"]["settings"]
+    assert s["supplier_max_total_spend"] is None and s["supplier_min_reliability"] is None and s["supplier_max_lead_days"] is None
+    assert s["supplier_volume_cap"] is None and s["supplier_overrides"] == {}
+    r = client.put(f"{C}/{cid}/recruiter/settings", headers=rich, json={               # vazios ("" / null) também valem como "sem restrição"
+        "max_salary": "9000", "supplier_max_total_spend": "", "supplier_min_reliability": "", "supplier_max_lead_days": None, "supplier_volume_cap": " ",
+        "supplier_overrides": {"graos": {"max_spend": "", "min_reliability": None, "max_lead_days": "", "volume_cap": None}, "laticinios": None}})
+    assert r.status_code == 200, r.text
+    s = r.json()["recruiter"]["settings"]
+    assert s["supplier_overrides"] == {} and s["supplier_max_total_spend"] is None and s["supplier_min_reliability"] is None   # override vazio não vira lixo guardado
+
+
+def test_contract_suppliers_without_any_criteria_contracts_the_best_value_available(client, rich):
+    cid = new_company(client, rich)
+    hire_rec(client, rich, cid, "ELITE")                                                                            # briefing só com salário/escala
+    out = post(client, rich, cid, "contract-suppliers").json()
+    assert {x["category"] for x in out["contracted"]} == {"graos", "laticinios", "embalagens"} and out["skipped"] == []
+    for ct in sup_rows(client, rich, cid).values():
+        assert ct["max_monthly_spend"] is None and ct["volume_cap"] is None and ct["min_reliability"] is None and ct["max_lead_days"] is None
+    for x in out["contracted"]:                                                    # preço negociado, nunca acima da referência x 1,07
+        assert D(x["unit_price"]) <= D(x["reference_price"]) * D("1.07")
+
+
+def test_clearing_a_contract_limit_removes_the_purchase_block(client, rich):
+    cid = new_company(client, rich)
+    d = contract_suppliers(client, rich, cid, ideal=True, stock=False)
+    ct = d["supply"]["contracts"][0]
+    item = first_item(d, ct["category"])
+    q = D(ct["min_monthly_order"])
+    url = f"{C}/{cid}/suppliers/{ct['id']}/limits"
+    buy = lambda: client.post(f"{C}/{cid}/stock", headers=rich, json={"item_id": item["id"], "quantity": str(q), "idempotency_key": key()})  # noqa: E731
+    assert client.put(url, headers=rich, json={"max_monthly_spend": "0.01", "volume_cap": "1000000"}).status_code == 200
+    assert buy().status_code == 409                                                  # travado pelo limite
+    r = client.put(url, headers=rich, json={"max_monthly_spend": "", "min_reliability": None})                       # limpa (vazio e null)
+    assert r.status_code == 200, r.text
+    x = next(c for c in r.json()["supply"]["contracts"] if c["id"] == ct["id"])
+    assert x["max_monthly_spend"] is None and x["volume_cap"] is None and x["min_reliability"] is None and x["max_lead_days"] is None
+    assert buy().status_code == 201                                                  # sem limite: compra normalmente
+    assert client.put(url, headers=rich, json={}).status_code == 200                 # tudo ausente também é aceito
+
+
+def test_override_empty_fields_inherit_only_the_general_and_clearing_removes_it():
+    st = rec.build_settings({"supplier_min_reliability": 0.9, "supplier_overrides": {"graos": {"max_lead_days": 5, "min_reliability": ""}}},
+                            {"graos", "laticinios"})
+    lim = st.limits_for("graos")
+    assert lim.max_lead_days == 5 and lim.min_reliability == 0.9 and lim.volume_cap is None and lim.max_spend is None       # só herda o geral
+    assert st.limits_for("laticinios") == st.general
+    cleared = rec.build_settings({"supplier_overrides": {"graos": {"max_lead_days": 5}}}, {"graos"})
+    assert cleared.general == rec.Limits() and cleared.limits_for("graos").min_reliability is None                           # limpar o geral remove
+    assert rec.build_settings({"supplier_overrides": {"graos": {}}}, {"graos"}).overrides == {}
+    with pytest.raises(ValueError):
+        rec.build_settings({"supplier_overrides": {"graos": {"min_reliability": 1.5}}}, {"graos"})                           # preenchido => valida
+
+
+def test_legacy_briefings_and_contracts_keep_working():
+    cats = {"graos", "laticinios"}
+    assert rec.settings_from_json({}, cats) == rec.Settings() and rec.settings_from_json(None, cats) == rec.Settings()
+    old = {"max_salary": "5000", "schedule": "6x1", "hours_week": 44, "regime_policy": "CLT_ONLY", "supplier_min_reliability": 0,
+           "supplier_max_lead_days": 999, "supplier_max_total_spend": "20000", "supplier_overrides": {"graos": {"volume_cap": -1, "max_spend": "300"}, "x": {}}}
+    st = rec.settings_from_json(old, cats)                                         # campos de fornecedor inválidos viram "sem restrição"; o resto fica
+    assert st.max_salary == D(5000) and st.regime_policy == "CLT_ONLY" and st.hours_week == 44 and st.supplier_max_total_spend == D(20000)
+    assert st.general.min_reliability is None and st.general.max_lead_days is None
+    assert st.overrides["graos"] == rec.Limits(max_spend=D(300)) and "x" not in st.overrides

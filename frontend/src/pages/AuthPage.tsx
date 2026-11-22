@@ -45,6 +45,7 @@ export function AuthPage({ mode }: { mode: "login" | "register" }) {
           <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required
             minLength={isLogin ? 1 : 8} maxLength={72} autoComplete={isLogin ? "current-password" : "new-password"} />
         </label>
+        {isLogin && <p className="muted small"><Link to="/esqueci-senha">Esqueci minha senha</Link></p>}
         {error && <div className="alert">{error}</div>}
         <button className="btn primary" disabled={busy}>{busy ? "Aguarde…" : isLogin ? "Entrar" : "Criar conta"}</button>
         <p className="muted small center">

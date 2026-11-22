@@ -36,6 +36,16 @@ class Settings(BaseSettings):
     # MEDIA_BASE_URL=https://seu-bucket.r2.dev  (enviando o conteúdo de media/ para a raiz do bucket)
     media_base_url: str = "/api/media"
 
+    # E-mail (redefinição de senha). Sem SMTP_HOST o app só LOGA o link em desenvolvimento (ver services/mailer.py).
+    # APP_BASE_URL = endereço PÚBLICO do frontend; o link enviado é ${APP_BASE_URL}/redefinir-senha?token=...
+    app_base_url: str = "http://localhost:5173"
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_from: str = ""            # ex.: "SimulaInvest <nao-responda@seudominio.com>"; vazio = usa SMTP_USER
+    smtp_starttls: bool = True     # porta 465 usa SSL direto (ignora este flag)
+
     cors_origins: str = "http://localhost:5173,https://wealthy-simulator.giuliapeluzzos.workers.dev"
     log_level: str = "INFO"
 

@@ -104,7 +104,8 @@ def update_briefing(db: Session, user_id: int, month: SimMonth, company_id: int,
     db.flush()
     cs._event(db, c, month.ref_month, CompanyEventType.SETTINGS,
               f"Briefing do contratador atualizado: {rec.POLICY_LABEL[st.regime_policy]}, escala {st.schedule.value}, {st.hours_week} h/semana"
-              + (f", salário máximo {st.max_salary}" if st.max_salary else ""))
+              + (f", salário máximo {st.max_salary}" if st.max_salary else "")
+              + ("" if st.supplier_max_total_spend or st.general != rec.Limits() or st.overrides else "; fornecedores sem restrições (opcional)"))
     return row
 
 

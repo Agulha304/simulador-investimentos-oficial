@@ -198,10 +198,10 @@ def rich(client, auth_headers):
 
 # ------------------------------------------------------------------ 1/2. criação
 
-def test_catalog_has_twelve_segments_with_distinct_models(client, auth_headers):
+def test_catalog_has_thirteen_segments_with_distinct_models(client, auth_headers):
     cat = client.get(f"{C}/catalog", headers=auth_headers).json()
     keys = {s["key"] for s in cat["segments"]}
-    assert len(keys) == 12 and {"RESTAURANT", "TECH", "INDUSTRY", "CONSTRUCTION", "ECOMMERCE"} <= keys
+    assert len(keys) == 13 and {"RESTAURANT", "TECH", "INDUSTRY", "CONSTRUCTION", "ECOMMERCE", "AGRIBUSINESS"} <= keys
     by = {s["key"]: s for s in cat["segments"]}
     assert by["RESTAURANT"]["stock"] and by["TECH"]["stock"] == []              # segmentos com e sem estoque
     assert {r["key"] for r in by["RESTAURANT"]["roles"]} != {r["key"] for r in by["TECH"]["roles"]}
@@ -214,12 +214,12 @@ def test_catalog_has_twelve_segments_with_distinct_models(client, auth_headers):
 def test_catalog_channels_locations_and_metrics_kind_per_segment(client, auth_headers):
     by = {s["key"]: s for s in client.get(f"{C}/catalog", headers=auth_headers).json()["segments"]}
     assert by["ECOMMERCE"]["channels"] == ["ONLINE"] and by["ECOMMERCE"]["locations"] == []
-    for k in ("WORKSHOP", "INDUSTRY", "CONSTRUCTION", "TRANSPORT", "RESTAURANT", "CAFE", "SUPERMARKET"):      # só físicos (restaurante/café/supermercado não existem online)
+    for k in ("WORKSHOP", "INDUSTRY", "CONSTRUCTION", "TRANSPORT", "RESTAURANT", "CAFE", "SUPERMARKET", "AGRIBUSINESS"):      # só físicos (restaurante/café/supermercado não existem online)
         assert by[k]["channels"] == ["PHYSICAL"], k
     for k in ("CLOTHING", "TECH", "AGENCY", "REAL_ESTATE_AGENCY"):
         assert set(by[k]["channels"]) == {"PHYSICAL", "ONLINE"}, k
     kinds = {k: v["metrics_kind"] for k, v in by.items()}
-    assert {k for k, v in kinds.items() if v == "PRODUCTION"} == {"RESTAURANT", "CAFE", "INDUSTRY", "CONSTRUCTION"}
+    assert {k for k, v in kinds.items() if v == "PRODUCTION"} == {"RESTAURANT", "CAFE", "INDUSTRY", "CONSTRUCTION", "AGRIBUSINESS"}
     assert {k for k, v in kinds.items() if v == "RETAIL"} == {"CLOTHING", "SUPERMARKET"}
     assert {k for k, v in kinds.items() if v == "SERVICE"} == {"WORKSHOP", "TRANSPORT", "TECH", "AGENCY", "REAL_ESTATE_AGENCY", "ECOMMERCE"}
     for k, v in by.items():
@@ -1515,7 +1515,7 @@ def _active(db, cid):
 
 def test_segments_define_supply_categories_with_weights_summing_one():
     expected = {"RESTAURANT": 4, "CAFE": 3, "CLOTHING": 3, "SUPERMARKET": 4, "INDUSTRY": 4, "CONSTRUCTION": 3, "WORKSHOP": 2, "TRANSPORT": 2,
-                "TECH": 0, "AGENCY": 0, "REAL_ESTATE_AGENCY": 0, "ECOMMERCE": 0}
+                "TECH": 0, "AGENCY": 0, "REAL_ESTATE_AGENCY": 0, "ECOMMERCE": 0, "AGRIBUSINESS": 4}
     for seg in company_rules.SEGMENTS.values():
         assert len(seg.supply_categories) == expected[seg.key.value], seg.key
         if seg.supply_categories:

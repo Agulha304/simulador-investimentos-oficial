@@ -431,6 +431,23 @@ SEGMENTS: dict[CompanySegment, Segment] = {s.key: s for s in [
          [(K.UTILITIES, "Internet e energia", 600), (K.TOOLS, "Plataforma e ferramentas", 1800), (K.ACCOUNTING, "Contabilidade", 700)],
          3500, 35000, 3000, "Margem apertada, concorrência por preço e dependência de logística; produtos e frete nos custos variáveis.",
          kind=SERVICE, channels=[ONLINE], locations=[]),
+    _seg("AGRIBUSINESS", "Agronegócio", "tonelada colhida", 1800, 300, 1.5, 0.22, 40,
+         [Role("agronomist", "Agrônomo", D(6500), 40), Role("machine_operator", "Operador de máquinas agrícolas", D(3000), 70),
+          Role("farm_worker", "Trabalhador rural", D(1900), 35), Role("agri_technician", "Técnico agrícola", D(3200), 30),
+          Role("zootechnician", "Veterinário/zootecnista", D(6000), 25), Role("farm_manager", "Gerente de fazenda", D(7000), 35)],
+         ["farm_worker", "farm_worker", "machine_operator", "agronomist"],
+         [Stock("Insumos da lavoura", "t", D(900), D(1), "Cooperativa Agrícola", D(5))], 4,
+         [(K.UTILITIES, "Energia, irrigação e água", 3500), (K.TOOLS, "Manutenção de máquinas e implementos", 2000),
+          (K.INSURANCE, "Seguro rural", 1200), (K.ACCOUNTING, "Contabilidade", 800)],
+         7000, 250000, 4000, "Venda por safra: muita demanda na colheita e pouca na entressafra; depende de sementes, adubo, combustível e ração, "
+         "e sofre com oferta, câmbio e inflação de insumos.",
+         kind=PRODUCTION, channels=[PHYSICAL],
+         supply=[("sementes", "Sementes e mudas", "kg", "0.20", "12"), ("fertilizantes", "Fertilizantes e defensivos", "kg", "0.35", "90"),
+                 ("combustivel_maquinas", "Combustível e manutenção de máquinas", "litro", "0.20", "24"),
+                 ("racao", "Ração e insumos pecuários", "kg", "0.25", "90")],
+         locations=[("cerrado", "Zona rural (cerrado)", 1.0, 1.0, 100), ("sul", "Zona rural (sul)", 1.1, 1.2, 105),
+                    ("polo_agro", "Polo agroindustrial", 1.25, 1.6, 110), ("cooperativas", "Região de cooperativas", 1.15, 1.1, 95),
+                    ("fronteira", "Fronteira agrícola (norte)", 0.8, 0.5, 70)]),
 ]}
 
 
@@ -563,7 +580,7 @@ def relevance_factor(relevance: float) -> float:
     return DEMAND_FLOOR + (1 - DEMAND_FLOOR) * x ** DEMAND_EXP
 
 
-PRICE_CEILING = {"REAL_ESTATE_AGENCY": 1.5, "CONSTRUCTION": 1.6, "SUPERMARKET": 1.6, "ECOMMERCE": 1.7, "CAFE": 1.9,
+PRICE_CEILING = {"REAL_ESTATE_AGENCY": 1.5, "CONSTRUCTION": 1.6, "SUPERMARKET": 1.6, "ECOMMERCE": 1.7, "AGRIBUSINESS": 1.5, "CAFE": 1.9,
                  "RESTAURANT": 2.0}                                       # acima disto ninguém compra
 DEFAULT_CEILING = 2.0
 
@@ -598,8 +615,20 @@ def price_factor(seg: Segment, price: Decimal, quality: float = QUALITY_BASE) ->
     return (r ** -(seg.elasticity * 2.2)) * ((ceil - r) / (ceil - 1)) ** 1.3
 
 
+# Curva sazonal por segmento (12 multiplicadores jan..dez, média 1,0), somada ao sorteio mensal. Agronegócio: pico de vendas na colheita
+# (mar-jun), entressafra fraca (out-dez).
+SEASON_CURVE: dict[str, tuple[float, ...]] = {
+    "AGRIBUSINESS": (0.80, 0.90, 1.20, 1.45, 1.40, 1.20, 1.00, 0.90, 0.85, 0.75, 0.70, 0.85),
+}
+
+
+def season_curve(seg: Segment, ref) -> float:
+    curve = SEASON_CURVE.get(seg.key.value)
+    return curve[ref.month - 1] if curve else 1.0
+
+
 def season_factor(seg: Segment, company_id: int, ref) -> float:
-    return 1 + (hash01("season", company_id, ref.isoformat()) - 0.5) * 2 * seg.volatility
+    return (1 + (hash01("season", company_id, ref.isoformat()) - 0.5) * 2 * seg.volatility) * season_curve(seg, ref)
 
 
 def zero_month_prob(relevance: float, price_ratio: float) -> float:

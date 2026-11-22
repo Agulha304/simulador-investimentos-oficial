@@ -44,6 +44,14 @@ with TestClient(app) as c:
         for sym in ("AAPL", "PETR4", "BTC"):
             a = db.scalar(select(Asset).where(Asset.symbol == sym))
             if a: c.post("/api/trades/buy", headers=h, json={"asset_id": a.id, "amount_brl": "1000"})
+    if "--games" in sys.argv:        # N partidas de treino (data histórica) + N vidas, com uma compra no treino: mede /api/games com patrimônio ao vivo
+        n = int(sys.argv[sys.argv.index("--games") + 1])
+        with SessionLocal() as db:
+            aid = db.scalar(select(Asset.id).where(Asset.symbol == "PETR4"))
+        for i in range(n):
+            g = c.post("/api/games", headers=h, json={"kind": "TRAINING", "name": f"Treino {i}", "start_date": "2024-01-01"}).json()
+            c.post("/api/games", headers=h, json={"kind": "LIFE", "name": f"Vida {i}"})
+            if aid: c.post("/api/trades/buy", headers={**h, "X-Game-Id": str(g["id"])}, json={"asset_id": aid, "quantity": "10"})
     if TRACE:
         c.get(TRACE, headers=h); stmts.clear(); c.get(TRACE, headers=h)
         from collections import Counter

@@ -102,6 +102,11 @@ class Settings:
                       volume_cap=o.volume_cap if o.volume_cap is not None else g.volume_cap)
 
 
+def _blank(v):
+    """Campo de fornecedor vazio ("" ou só espaços) = não preenchido = sem restrição."""
+    return None if isinstance(v, str) and not v.strip() else v
+
+
 def _dec(v) -> Decimal | None:
     return None if v is None else D(str(v))
 
@@ -149,14 +154,16 @@ def build_settings(raw: dict, categories: set[str]) -> Settings:
         if cat not in categories:
             raise ValueError(f"categoria de fornecimento inexistente neste segmento: {cat}")
         o = o or {}
-        overrides[cat] = Limits(_pos(o.get("max_spend"), "o gasto máximo da categoria"), _rel(o.get("min_reliability"), "a confiabilidade mínima"),
-                                _lead(o.get("max_lead_days"), "o prazo máximo"), _pos(o.get("volume_cap"), "o volume máximo"))
+        lim = Limits(_pos(_blank(o.get("max_spend")), "o gasto máximo da categoria"), _rel(_blank(o.get("min_reliability")), "a confiabilidade mínima"),
+                     _lead(_blank(o.get("max_lead_days")), "o prazo máximo"), _pos(_blank(o.get("volume_cap")), "o volume máximo"))
+        if lim != Limits():                  # override sem nenhum campo preenchido = sem override (herda só o geral, nada guardado)
+            overrides[cat] = lim
     return Settings(
         max_salary=_pos(raw.get("max_salary"), "o salário máximo", MAX_SALARY_LIMIT), schedule=schedule, hours_week=hours, regime_policy=policy,
         max_monthly_payroll=_pos(raw.get("max_monthly_payroll"), "o teto de folha extra"),
-        supplier_max_total_spend=_pos(raw.get("supplier_max_total_spend"), "o gasto máximo com fornecedores"),
-        general=Limits(None, _rel(raw.get("supplier_min_reliability"), "a confiabilidade mínima"),
-                       _lead(raw.get("supplier_max_lead_days"), "o prazo máximo"), _pos(raw.get("supplier_volume_cap"), "o volume máximo")),
+        supplier_max_total_spend=_pos(_blank(raw.get("supplier_max_total_spend")), "o gasto máximo com fornecedores"),
+        general=Limits(None, _rel(_blank(raw.get("supplier_min_reliability")), "a confiabilidade mínima"),
+                       _lead(_blank(raw.get("supplier_max_lead_days")), "o prazo máximo"), _pos(_blank(raw.get("supplier_volume_cap")), "o volume máximo")),
         overrides=overrides)
 
 
@@ -172,9 +179,32 @@ def settings_to_json(st: Settings) -> dict:
 
 
 def settings_from_json(raw: dict | None, categories: set[str]) -> Settings:
+    raw = raw or {}
     try:
-        return build_settings(raw or {}, categories)
-    except ValueError:                       # briefing salvo antes de uma mudança de regra: volta ao padrão em vez de quebrar a empresa
+        return build_settings(raw, categories)
+    except ValueError:
+        pass
+    # Briefing salvo antes de uma mudança de regra: em vez de zerar tudo, descarta só os campos de fornecedor que ficaram inválidos
+    # (viram "sem restrição") e mantém o resto; se ainda falhar, volta ao padrão em vez de quebrar a empresa.
+    clean = dict(raw)
+    for k in ("supplier_max_total_spend", "supplier_min_reliability", "supplier_max_lead_days", "supplier_volume_cap"):
+        try:
+            build_settings({k: clean.get(k)}, categories)
+        except ValueError:
+            clean[k] = None
+    ov = {}
+    for cat, o in (raw.get("supplier_overrides") or {}).items():
+        o = dict(o or {})
+        for k in ("max_spend", "min_reliability", "max_lead_days", "volume_cap"):
+            try:
+                build_settings({"supplier_overrides": {cat: {k: o.get(k)}}}, categories)
+            except ValueError:
+                o[k] = None
+        ov[cat] = o
+    clean["supplier_overrides"] = {c: o for c, o in ov.items() if c in categories}
+    try:
+        return build_settings(clean, categories)
+    except ValueError:
         return Settings()
 
 

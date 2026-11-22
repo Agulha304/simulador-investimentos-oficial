@@ -280,6 +280,16 @@ CAMPAIGNS: dict[str, tuple[Opt, ...]] = {
         o("evento_investidores", "Evento para investidores", "Palestra sobre mercado imobiliário.", 1.0, 1.0, 0.02, "Contatos qualificados."),
         o("indicacao_proprietarios", "Programa de indicação a proprietários", "Bônus para quem indicar um imóvel.", 0.7, 0.9, -0.02, "Seguro e barato."),
     ),
+    "AGRIBUSINESS": (
+        o("dia_de_campo", "Dia de campo na propriedade", "Visita guiada com compradores, cooperados e técnicos para mostrar a lavoura e o rebanho.", 1.0, 1.1, 0.02, "Gera contatos qualificados, mas depende do clima no dia."),
+        o("feira_agro", "Estande em feira agropecuária", "Exposição de produtos e rodadas de negócios com tradings e atacadistas.", 1.5, 1.4, 0.10, "Pode render contratos grandes ou só gastos de estande."),
+        o("contrato_cooperativa", "Contrato de entrega com cooperativa", "Parceria de compra antecipada para a próxima safra.", 1.0, 1.1, 0.0, "Volume previsível, preço menos livre."),
+        o("selo_origem", "Selo de origem e rastreabilidade", "Certificação da procedência para vender a mercados mais exigentes.", 1.2, 1.2, 0.05, "Retorno gradual: o mercado leva tempo para reconhecer."),
+        o("venda_direta", "Venda direta a restaurantes e mercados", "Rota de entregas frescas a compradores locais, sem intermediário.", 0.9, 1.0, 0.0, "Margem melhor, mas o volume é limitado."),
+        o("radio_rural", "Anúncios em rádio e revista rural", "Divulgação entre produtores e compradores da região.", 0.7, 0.8, -0.03, "Barata, alcance regional."),
+        o("parceria_trading", "Parceria com trading de grãos", "Acesso a compradores e à exportação.", 1.3, 1.3, 0.07, "Pode abrir o mercado externo ou só pressionar o preço."),
+        o("programa_indicacao_agro", "Programa de indicação entre produtores", "Bônus para quem trouxer novos compradores ou parceiros.", 0.7, 0.9, -0.02, "Seguro e barato."),
+    ),
     "ECOMMERCE": (
         o("cupom_novos", "Cupom de primeira compra", "Desconto para novos clientes.", 0.7, 0.9, -0.02, "Barato e previsível."),
         o("influenciador_digital", "Parceria com influenciador digital", "Divulgação com link de afiliado.", 1.3, 1.4, 0.10, "Pode viralizar ou passar despercebido."),
@@ -292,11 +302,60 @@ CAMPAIGNS: dict[str, tuple[Opt, ...]] = {
 }
 
 
+# ------------------------------------------------------------------ pools PRÓPRIOS de um segmento (substituem os da família)
+SEGMENT_POOLS: dict[tuple[str, str], tuple[Opt, ...]] = {
+    ("CAPACITY", "AGRIBUSINESS"): (
+        o("ampliar_silo", "Ampliar silos e armazéns", "Mais espaço para guardar a safra e esperar preço melhor: sobe o teto de estoque.",
+          1.0, 0.7, 0.0, "Energia, manutenção e seguro do armazém ficam mais caros.", storage=0.35, fixed=0.05),
+        o("irrigacao", "Instalar sistema de irrigação", "Pivôs e gotejamento reduzem a dependência da chuva e elevam a produção.",
+          1.4, 1.4, 0.10, "Aposta alta: depende de água e energia disponíveis.", fixed=0.06),
+        o("novas_maquinas", "Comprar colheitadeira e trator novos", "Máquinas mais rápidas encurtam a janela de plantio e colheita.",
+          1.2, 1.1, 0.0, "Manutenção e combustível somam aos custos fixos.", fixed=0.04),
+        o("novo_talhao", "Abrir nova área de plantio", "Desmatamento legal e preparo do solo de uma área adicional.",
+          1.3, 1.3, 0.08, "Solo novo pode decepcionar nos primeiros ciclos.", fixed=0.03),
+        o("gerente_fazenda", "Contratar gerente de fazenda", "Quem cobra metas, escalas e manutenção preventiva.",
+          0.9, 1.2, 0.06, "Pode render muito, mas parte da equipe pode pedir demissão.", manager=True, quit=0.10),
+        o("segundo_turno_colheita", "Turno extra na colheita", "Mais horas de máquina e gente na janela da safra.",
+          0.6, 1.0, 0.05, "Equipe cansada: salários e risco de processo sobem.", hours=6, salary=0.10),
+        o("rotacao_culturas", "Rotação de culturas e plantio direto", "Melhora o solo e o aproveitamento da área sem obra.",
+          0.5, 0.6, -0.06, "Ganho pequeno, mas raramente dá errado."),
+        o("agricultura_precisao", "Agricultura de precisão", "Sensores, GPS e mapas de produtividade para plantar e adubar melhor.",
+          1.5, 1.5, 0.12, "Pode dar muito ganho ou não se adaptar à propriedade.", fixed=0.05),
+        o("parceria_arrendamento", "Arrendar terras vizinhas", "Mais área sem comprar terra.",
+          0.8, 0.9, 0.07, "Preço do arrendamento e qualidade da terra são incertos.", fixed=0.04),
+    ),
+    ("NEW_UNIT", "AGRIBUSINESS"): (
+        o("nova_fazenda", "Nova fazenda nos mesmos moldes", "Uma segunda propriedade com a mesma operação da matriz.", 1.0, 1.0, 0.0, "O desempenho depende do solo, do clima e da força da marca."),
+        o("sitio_compacto", "Sítio compacto", "Propriedade pequena, barata de abrir e de manter.", 0.7, 1.0, 0.0, "Produz menos por ser pequena.", rent=0.6, viab=-0.08),
+        o("fazenda_polo", "Fazenda perto do polo agroindustrial", "Logística curta até agroindústrias e compradores.", 1.3, 1.0, 0.05, "Terra mais cara; pode vender mais ou não cobrir o custo.", rent=1.4, viab=0.10),
+        o("fazenda_modelo", "Fazenda-modelo com tecnologia", "Unidade de ponta que serve de vitrine da marca.", 1.5, 1.0, 0.08, "Aposta alta com chance de brilhar.", rent=1.2, viab=0.15, relfrac=0.05),
+        o("unidade_cooperada", "Unidade em parceria com cooperativa", "Operação dentro da estrutura de uma cooperativa.", 0.8, 1.0, -0.02, "Compra garantida, porém com preço e volume limitados.", rent=0.5, viab=-0.10, relfrac=0.05),
+        o("gerente_socio_fazenda", "Fazenda com gerente-sócio local", "Um gerente com participação toca o dia a dia.", 0.9, 1.0, -0.03, "Mais estável, mas dividir o comando limita o potencial.", viab=-0.02, relfrac=0.03),
+        o("assumir_propriedade", "Assumir propriedade de produtor que parou", "Infraestrutura pronta e benfeitorias antigas.", 0.75, 1.0, 0.02, "Barata, mas o produtor pode ter parado por um motivo.", rent=0.85, viab=-0.05),
+        o("unidade_pecuaria", "Unidade de pecuária e confinamento", "Estrutura voltada a engorda e laticínios.", 1.2, 1.0, 0.06, "Exige mais capital de giro e ração.", rent=1.1, viab=0.05),
+    ),
+    ("QUALITY", "AGRIBUSINESS"): (
+        o("sementes_certificadas", "Sementes e genética certificadas", "Material genético melhor: produtividade e padrão superiores.", 1.1, 1.1, 0.0, "O custo dos insumos sobe junto com a qualidade."),
+        o("analise_solo", "Análise de solo e correção", "Calagem e adubação pensadas para cada talhão.", 0.7, 0.8, -0.05, "Ganho moderado e seguro."),
+        o("certificacao_organica", "Certificação orgânica ou boas práticas", "Selo reconhecido pelo mercado e pelas redes de varejo.", 1.3, 1.2, 0.05, "Pode ser reprovada na auditoria.", fixed=0.02),
+        o("assistencia_tecnica", "Assistência técnica contínua", "Agrônomo acompanha a lavoura e o rebanho ao longo do ciclo.", 0.9, 0.9, -0.03, "Retorno gradual."),
+        o("controle_pragas", "Manejo integrado de pragas", "Monitoramento e controle biológico reduzem perdas.", 0.8, 1.0, 0.0, "Depende da pressão de pragas na safra."),
+        o("pos_colheita", "Melhor pós-colheita e armazenagem", "Secagem, classificação e armazenagem corretas preservam a qualidade.", 0.9, 1.0, 0.02, "Custa energia e manutenção."),
+        o("melhoramento_rebanho", "Melhoramento genético do rebanho", "Matrizes e sêmen de linhagens melhores.", 1.4, 1.4, 0.12, "Aposta alta: o retorno demora e depende da sanidade."),
+        o("consultoria_agro", "Consultoria agronômica especializada", "Um especialista reformula o sistema de produção.", 1.2, 1.2, 0.06, "Depende de o diagnóstico acertar."),
+        o("rastreabilidade", "Rastreabilidade do campo à mesa", "Registro de lotes e origem para compradores exigentes.", 0.6, 0.6, -0.04, "Efeito pequeno, mas barato."),
+    ),
+}
+
+
 def family_of(metrics_kind: str) -> str:
     return metrics_kind if metrics_kind in FAMILIES else "SERVICE"
 
 
 def pool(kind: str, *, family: str, segment: str) -> tuple[Opt, ...]:
+    own = SEGMENT_POOLS.get((kind, segment))
+    if own is not None:
+        return own
     if kind == "CAPACITY":
         return CAPACITY[family]
     if kind == "NEW_UNIT":

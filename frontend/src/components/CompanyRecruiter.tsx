@@ -8,7 +8,11 @@ const SCHEDULE_HOURS: Record<CoSchedule, number> = { "6x1": 44, "5x2": 40, "12x3
 const SCHEDULE_LABEL: Record<CoSchedule, string> = { "5x2": "5x2 (segunda a sexta)", "6x1": "6x1 (seis dias, uma folga)", "12x36": "12x36", "4x3": "4x3 (quatro dias, três de folga)" };
 const optMoney = (v: string) => (v.trim() ? parseMoneyInput(v) : null);
 const optInt = (v: string) => (v.trim() ? Math.round(Number(v)) : null);
+/** Campo OPCIONAL de fornecedor: vazio (ou zero) = sem restrição = null; nunca envia zero por padrão. */
+const optLimit = (v: string) => { const m = optMoney(v); return m !== null && Number(m) > 0 ? m : null; };
+const optLimitInt = (v: string) => { const n = optInt(v); return n !== null && n > 0 ? n : null; };
 const optPct = (v: string) => (v.trim() ? Number(v.replace(",", ".")) / 100 : null);
+const optLimitPct = (v: string) => { const n = optPct(v); return n !== null && Number.isFinite(n) && n > 0 ? n : null; };
 const pctStr = (v: number | null | undefined) => (v == null ? "" : String(Math.round(v * 100)));
 const numStr = (v: string | number | null | undefined) => (v == null ? "" : String(v));
 
@@ -37,7 +41,7 @@ export function RecruiterCard({ d, act, onReport, onTeam }: {
         <>
           <p className="muted small" style={{ margin: 0 }}>
             <b>Opcional.</b> O contratador contrata por você: você dá o salário máximo e a escala; ele contrata sozinho os cargos obrigatórios, a equipe que você pedir (por cargo/área) e os
-            fornecedores (respeitando gasto, confiabilidade, prazo e volume máximos), ajustando salários e jornadas dentro do orçamento da empresa. Quanto melhor o nível, mais candidatos e
+            fornecedores (se você quiser, respeitando limites opcionais de gasto, confiabilidade, prazo e volume; sem limites ele escolhe o melhor custo-benefício), ajustando salários e jornadas dentro do orçamento da empresa. Quanto melhor o nível, mais candidatos e
             fornecedores ele avalia e melhor o custo-benefício que consegue. Cobra uma taxa mensal (no fechamento) e uma comissão por contratação (no lugar do custo de recrutamento); pode ser dispensado a qualquer momento, sem multa.
           </p>
           <div className="goods-grid">{tiers.map((t) => (
@@ -86,16 +90,19 @@ function BriefingForm({ d, s, onSave }: { d: CompanyDetail; s: CoRecruiterSettin
     for (const [k, v] of Object.entries(s.supplier_overrides ?? {})) o[k] = { spend: numStr(v.max_spend), rel: pctStr(v.min_reliability), lead: numStr(v.max_lead_days), vol: numStr(v.volume_cap) };
     setOv(o);
   }, [s]);
+  const noSupLimits = !total && !rel && !lead && !vol && Object.values(ov).every((v) => !v.spend && !v.rel && !v.lead && !v.vol);
+  const clearAllSup = () => { setTotal(""); setRel(""); setLead(""); setVol(""); setOv({}); };
   const setO = (k: string, f: "spend" | "rel" | "lead" | "vol", v: string) => setOv((p) => ({ ...p, [k]: { ...(p[k] ?? { spend: "", rel: "", lead: "", vol: "" }), [f]: v } }));
   function submit(e: FormEvent) {
     e.preventDefault();
     const overrides: CoRecruiterSettings["supplier_overrides"] = {};
     for (const [k, v] of Object.entries(ov)) {
-      if (v.spend || v.rel || v.lead || v.vol) overrides[k] = { max_spend: optMoney(v.spend), min_reliability: optPct(v.rel), max_lead_days: optInt(v.lead), volume_cap: optMoney(v.vol) };
+      const o = { max_spend: optLimit(v.spend), min_reliability: optLimitPct(v.rel), max_lead_days: optLimitInt(v.lead), volume_cap: optLimit(v.vol) };
+      if (Object.values(o).some((x) => x !== null)) overrides[k] = o;           // linha toda vazia = sem override
     }
     void onSave({
       max_salary: optMoney(maxSalary), schedule, hours_week: Number(hours) || SCHEDULE_HOURS[schedule], regime_policy: policy, max_monthly_payroll: optMoney(payroll),
-      supplier_max_total_spend: optMoney(total), supplier_min_reliability: optPct(rel), supplier_max_lead_days: optInt(lead), supplier_volume_cap: optMoney(vol), supplier_overrides: overrides,
+      supplier_max_total_spend: optLimit(total), supplier_min_reliability: optLimitPct(rel), supplier_max_lead_days: optLimitInt(lead), supplier_volume_cap: optLimit(vol), supplier_overrides: overrides,
     });
   }
   return (
@@ -115,23 +122,30 @@ function BriefingForm({ d, s, onSave }: { d: CompanyDetail; s: CoRecruiterSettin
       </p>
       {d.supply?.required && (
         <>
-          <h3 style={{ margin: 0 }}>Fornecedores</h3>
+          <div className="row"><h3 style={{ margin: 0 }}>Fornecedores (opcional)</h3>
+            <button type="button" className="link-btn" onClick={clearAllSup}>limpar todas as restrições</button></div>
+          <p className="muted small" style={{ margin: 0 }}>
+            Tudo aqui é opcional: campo vazio = <b>sem limite</b> (o contratador escolhe o melhor custo-benefício disponível e as compras não são travadas por esse critério).
+            {noSupLimits ? " Hoje o briefing não restringe nenhum fornecedor." : ""} A linha de uma categoria só vale se tiver algum campo preenchido; campo vazio na categoria usa o valor geral acima (ou nenhum).
+          </p>
           <div className="row-gap" style={{ maxWidth: "none", flexWrap: "wrap" }}>
-            <label>Gasto máximo total/mês (R$)<input inputMode="decimal" value={total} onChange={(e) => setTotal(e.target.value)} /></label>
-            <label>Confiabilidade mínima (%)<input inputMode="numeric" value={rel} onChange={(e) => setRel(e.target.value)} /></label>
-            <label>Prazo máximo (dias)<input inputMode="numeric" value={lead} onChange={(e) => setLead(e.target.value.replace(/\D/g, ""))} /></label>
-            <label>Volume máximo/mês (unidades)<input inputMode="decimal" value={vol} onChange={(e) => setVol(e.target.value)} /></label>
+            <label>Gasto máximo total/mês (R$, opcional)<input inputMode="decimal" value={total} placeholder="sem limite" onChange={(e) => setTotal(e.target.value)} /></label>
+            <label>Confiabilidade mínima (%, opcional)<input inputMode="numeric" value={rel} placeholder="sem limite" onChange={(e) => setRel(e.target.value)} /></label>
+            <label>Prazo máximo (dias, opcional)<input inputMode="numeric" value={lead} placeholder="sem limite" onChange={(e) => setLead(e.target.value.replace(/\D/g, ""))} /></label>
+            <label>Volume máximo/mês (unidades, opcional)<input inputMode="decimal" value={vol} placeholder="sem limite" onChange={(e) => setVol(e.target.value)} /></label>
           </div>
           <div className="table-wrap"><table>
-            <thead><tr><th>Categoria (sobrepõe o geral)</th><th>Gasto máx. (R$)</th><th>Confiab. mín. (%)</th><th>Prazo máx. (dias)</th><th>Volume máx.</th></tr></thead>
+            <thead><tr><th>Categoria (opcional; sobrepõe o geral)</th><th>Gasto máx. (R$)</th><th>Confiab. mín. (%)</th><th>Prazo máx. (dias)</th><th>Volume máx.</th><th /></tr></thead>
             <tbody>{cats.map((x) => {
               const v = ov[x.category] ?? { spend: "", rel: "", lead: "", vol: "" };
+              const filled = !!(v.spend || v.rel || v.lead || v.vol);
               return (
-                <tr key={x.category}><td><b>{x.label}</b></td>
-                  <td><input inputMode="decimal" aria-label={`Gasto máximo de ${x.label}`} value={v.spend} onChange={(e) => setO(x.category, "spend", e.target.value)} /></td>
-                  <td><input inputMode="numeric" aria-label={`Confiabilidade mínima de ${x.label}`} value={v.rel} onChange={(e) => setO(x.category, "rel", e.target.value)} /></td>
-                  <td><input inputMode="numeric" aria-label={`Prazo máximo de ${x.label}`} value={v.lead} onChange={(e) => setO(x.category, "lead", e.target.value.replace(/\D/g, ""))} /></td>
-                  <td><input inputMode="decimal" aria-label={`Volume máximo de ${x.label}`} value={v.vol} onChange={(e) => setO(x.category, "vol", e.target.value)} /></td></tr>);
+                <tr key={x.category}><td><b>{x.label}</b>{!filled && <><br /><span className="muted small">sem limite</span></>}</td>
+                  <td><input inputMode="decimal" placeholder="sem limite" aria-label={`Gasto máximo de ${x.label} (opcional)`} value={v.spend} onChange={(e) => setO(x.category, "spend", e.target.value)} /></td>
+                  <td><input inputMode="numeric" placeholder="sem limite" aria-label={`Confiabilidade mínima de ${x.label} (opcional)`} value={v.rel} onChange={(e) => setO(x.category, "rel", e.target.value)} /></td>
+                  <td><input inputMode="numeric" placeholder="sem limite" aria-label={`Prazo máximo de ${x.label} (opcional)`} value={v.lead} onChange={(e) => setO(x.category, "lead", e.target.value.replace(/\D/g, ""))} /></td>
+                  <td><input inputMode="decimal" placeholder="sem limite" aria-label={`Volume máximo de ${x.label} (opcional)`} value={v.vol} onChange={(e) => setO(x.category, "vol", e.target.value)} /></td>
+                  <td>{filled && <button type="button" className="link-btn" aria-label={`Limpar ${x.label}`} onClick={() => setOv((p) => ({ ...p, [x.category]: { spend: "", rel: "", lead: "", vol: "" } }))}>limpar</button>}</td></tr>);
             })}</tbody>
           </table></div>
         </>
@@ -222,17 +236,18 @@ export function SupplierLimitsModal({ d, ct, onClose, onDone }: { d: CompanyDeta
   async function submit(e: FormEvent) {
     e.preventDefault();
     setBusy(true); setMsg(null);
-    try { onDone(await api.coSupplierLimits(d.company.id, ct.id, { max_monthly_spend: optMoney(spend), volume_cap: optMoney(vol), min_reliability: optPct(rel), max_lead_days: optInt(lead) })); }
+    try { onDone(await api.coSupplierLimits(d.company.id, ct.id, { max_monthly_spend: optLimit(spend), volume_cap: optLimit(vol), min_reliability: optLimitPct(rel), max_lead_days: optLimitInt(lead) })); }
     catch (err) { setMsg(errMsg(err)); setBusy(false); }
   }
   return (
     <Panel title={`Limites — ${ct.name}`} onClose={onClose}>
       <form className="stack" onSubmit={submit}>
-        <p className="muted small" style={{ margin: 0 }}>{ct.category_label}. Gasto máximo e volume máximo são aplicados em TODA compra (manual e reposição automática): ao atingi-los a compra trava e a tela explica. Confiabilidade mínima e prazo máximo são critérios do contratador ao renovar ou trocar o fornecedor. Deixe em branco para não limitar.</p>
-        <label>Gasto máximo por mês (R$)<input inputMode="decimal" value={spend} onChange={(e) => setSpend(e.target.value)} /></label>
-        <label>Volume máximo por mês ({ct.unit}; contrato: {ct.max_units_month})<input inputMode="decimal" value={vol} onChange={(e) => setVol(e.target.value)} /></label>
-        <label>Confiabilidade mínima (%)<input inputMode="numeric" value={rel} onChange={(e) => setRel(e.target.value)} /></label>
-        <label>Prazo máximo (dias)<input inputMode="numeric" value={lead} onChange={(e) => setLead(e.target.value.replace(/\D/g, ""))} /></label>
+        <p className="muted small" style={{ margin: 0 }}>{ct.category_label}. Todos os limites são <b>opcionais</b>: campo vazio = <b>sem limite</b>. Gasto máximo e volume máximo são aplicados em TODA compra (manual e reposição automática): ao atingi-los a compra trava e a tela explica. Confiabilidade mínima e prazo máximo são critérios do contratador ao renovar ou trocar o fornecedor.</p>
+        <label>Gasto máximo por mês (R$, opcional)<input inputMode="decimal" value={spend} placeholder="sem limite" onChange={(e) => setSpend(e.target.value)} /></label>
+        <label>Volume máximo por mês ({ct.unit}; contrato: {ct.max_units_month}; opcional)<input inputMode="decimal" value={vol} placeholder="sem limite" onChange={(e) => setVol(e.target.value)} /></label>
+        <label>Confiabilidade mínima (%, opcional)<input inputMode="numeric" value={rel} placeholder="sem limite" onChange={(e) => setRel(e.target.value)} /></label>
+        <label>Prazo máximo (dias, opcional)<input inputMode="numeric" value={lead} placeholder="sem limite" onChange={(e) => setLead(e.target.value.replace(/\D/g, ""))} /></label>
+        <div><button type="button" className="link-btn" disabled={!spend && !vol && !rel && !lead} onClick={() => { setSpend(""); setVol(""); setRel(""); setLead(""); }}>limpar todos os limites</button></div>
         {msg && <div className="alert">{msg}</div>}
         <button className="btn primary" disabled={busy}>{busy ? "Salvando…" : "Salvar limites"}</button>
       </form>

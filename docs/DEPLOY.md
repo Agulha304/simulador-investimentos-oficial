@@ -113,3 +113,28 @@ for f in media/captions/*.vtt; do npx wrangler r2 object put "simulador-media/ca
 - **Backup do banco:** use o do provedor. O livro-razão (`transactions`) é o registro histórico e não deve ser perdido.
 - Teste local do Worker (aponta para o backend local): `BACKEND_PORT=8010 ... scripts/dev.sh` e, em outro terminal,
   `npm run build && npx wrangler dev --var BACKEND_URL:http://localhost:8010`.
+
+
+## E-mail de "Esqueci minha senha"
+
+O link de redefinição é enviado por SMTP. No Render (Environment) configure:
+
+| Variável | Exemplo | Observação |
+|---|---|---|
+| `APP_BASE_URL` | `https://wealthy-simulator.giuliapeluzzos.workers.dev` | endereço PÚBLICO do frontend (sem `/` no fim); o link é `${APP_BASE_URL}/redefinir-senha?token=...` |
+| `SMTP_HOST` | `smtp-relay.brevo.com` | vazio = e-mail desligado |
+| `SMTP_PORT` | `587` | 587 usa STARTTLS; 465 usa SSL direto |
+| `SMTP_USER` / `SMTP_PASSWORD` | (do provedor) | segredos: só no painel do Render, nunca no repositório |
+| `SMTP_FROM` | `SimulaInvest <nao-responda@seudominio.com>` | vazio = usa `SMTP_USER`; o domínio deve estar verificado (SPF/DKIM) no provedor |
+| `SMTP_STARTTLS` | `true` | |
+
+Provedores recomendados: Brevo (plano grátis ~300 e-mails/dia), Resend ou Mailgun (SMTP) e, para testes, Gmail com **senha de app**
+(`smtp.gmail.com:587`, exige verificação em duas etapas). Prefira um domínio próprio verificado: remetentes sem SPF/DKIM caem no spam.
+
+Sem `SMTP_HOST`: em desenvolvimento o link só é LOGADO no servidor; em produção é logado o aviso
+`SMTP não configurado: e-mail de redefinição NÃO enviado` (o token nunca vai para log de produção).
+
+Segurança: token aleatório (`secrets.token_urlsafe(32)`), guardado só como SHA-256 (`password_reset_tokens`), válido por 1 h e de uso único;
+um novo pedido invalida os anteriores. Rate limit (tabela `password_reset_requests`, vale entre instâncias): 3 pedidos/h por e-mail
+(excedente responde igual, sem enviar) e 10/h por IP (429). O IP vem de `X-Forwarded-For` (primeiro valor). Os JWT já emitidos NÃO são
+revogados na troca de senha (não há versão de sessão): expiram em `JWT_EXPIRE_MINUTES`.

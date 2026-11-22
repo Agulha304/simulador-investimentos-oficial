@@ -181,3 +181,17 @@ Pedido: o headhunter por consulta foi removido; no lugar entra um **serviço opc
 - API: `POST/DELETE /companies/{id}/recruiter`, `PUT .../recruiter/settings`, `POST .../recruiter/hire-mandatory | hire-team | contract-suppliers` (409
   sem contratador ativo), `PUT .../suppliers/{id}/limits`; o estado vem em `recruiter` e `recruiter_tiers` do detalhe. Migration `e1f2a3b4c5d6` (aditiva,
   com defaults e reaplicável).
+
+## Agronegócio (AGRIBUSINESS) e fornecedores opcionais
+
+- **Agronegócio**: 13º segmento (`PRODUCTION`, só canal físico). Venda em "tonelada colhida" (R$ 1.800), demanda base 300, elasticidade 1,5
+  (commodity) e sazonalidade de safra (`SEASON_CURVE`: pico mar-jun, entressafra out-dez, média 1,0) somada ao sorteio mensal.
+  Cargos: agrônomo, operador de máquinas agrícolas, trabalhador rural, técnico agrícola, veterinário/zootecnista, gerente de fazenda.
+  Fornecimento: sementes e mudas (20%), fertilizantes e defensivos (35%), combustível e manutenção de máquinas (20%), ração e insumos pecuários (25%).
+  Impostos: Simples Anexo I, presunção de comércio, ICMS 18% (sem ISS/IPI); simplificação registrada em `SIMPLIFICACOES`.
+  Crises: SUPPLY -12, DEBT -9, INFLATION -7, RECESSION -7, GLOBAL -8, FINANCIAL -6, BANKING -5; CURRENCY +6 (exportação).
+  Balanceamento (porte pequeno, preço de lista): virada no mês 13; com fornecedores 7% acima da lista, mês 16.
+- **Fornecedores opcionais**: no briefing do contratador e nos contratos, TODOS os critérios/limites (gasto total e por categoria,
+  confiabilidade mínima, prazo máximo, volume máximo) são opcionais: vazio/`null`/`""` = sem restrição. Override de categoria sem nenhum
+  campo preenchido não é guardado; campo vazio no override herda apenas o valor geral. Briefings antigos com campo de fornecedor
+  inválido mantêm o resto e tratam só o campo inválido como "sem limite".
