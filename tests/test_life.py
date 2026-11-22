@@ -46,6 +46,20 @@ def arrange_partner(client, h, stage="MARRIED", affinity=80, trust=70, income="8
         return p.id
 
 
+def have_child(client, h, monkeypatch=None):
+    """Força o sucesso do 'tentar ter um filho' (sorteios = 0.0): devolve a resposta do POST /children/try."""
+    from backend.services import life_service
+    mp = monkeypatch or __import__("pytest").MonkeyPatch()
+    mp.setattr(life_service, "_roll", lambda *key: 0.0)
+    try:
+        r = client.post(f"{L}/children/try", headers=h)
+    finally:
+        if monkeypatch is None:
+            mp.undo()
+    assert r.status_code == 200 and r.json()["outcome"] == "PREGNANT", r.text
+    return r
+
+
 def move_ok(client, h, kind, budget):
     """O jogo decide se há oferta para o valor desejado: tenta valores próximos até achar e devolve o aluguel REAL da oferta."""
     for i in range(40):
@@ -258,8 +272,8 @@ def test_separate_finance_requires_household(client, auth_headers):
 def test_child_birth_ages_and_family_expenses_flow_into_budget(client, auth_headers):
     credit(client, auth_headers, "500000")
     arrange_partner(client, auth_headers, stage="MARRIED", wants_children=80)
-    assert client.post(f"{L}/children/plan", headers=auth_headers).status_code == 200
-    assert client.post(f"{L}/children/plan", headers=auth_headers).status_code == 409      # já em gestação
+    have_child(client, auth_headers)
+    assert client.post(f"{L}/children/try", headers=auth_headers).status_code == 409       # já em gestação
     advance(client, auth_headers, 8)
     assert life(client, auth_headers)["children"] == []
     advance(client, auth_headers)                                                          # 9º mês: nascimento

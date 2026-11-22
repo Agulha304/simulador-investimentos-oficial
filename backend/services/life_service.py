@@ -382,6 +382,8 @@ def advance_relationship(db: Session, user_id: int, month: SimMonth, person_id: 
         r.ended_month = ref
         r.finance_mode = "SEPARATE"
         go("ENDED", f"Você encerrou o relacionamento com {person.name}")
+        if p.pregnancy_relationship_id == r.id:
+            log(db, user_id, ref, "PREGNANCY_PARTNER_LEFT", f"{person.name} saiu do relacionamento durante a gestação (a gravidez continua)")
         if was_household:
             p.wellbeing = _clamp(p.wellbeing - 8)
             p.satisfaction = _clamp(p.satisfaction - 6)
@@ -445,21 +447,148 @@ def child_age_years(c: Child, ref: date) -> int:
     return budget_service.months_between(c.birth_month, ref) // 12
 
 
-def plan_child(db: Session, user_id: int, month: SimMonth) -> LifeProfile:
+# --- tentar ter um filho: 2 etapas determinísticas (aceite do(a) parceiro(a) e concepção) ----------------
+CHILD_PERSONALITY = {"caseiro": 0.08, "tranquilo": 0.03, "metódico": 0.02, "criativo": 0.01, "extrovertido": 0.0,
+                     "reservado": -0.02, "aventureiro": -0.05, "ambicioso": -0.06}
+# idade fértil mínima -> chance mensal de concepção (tabela do pedido)
+CONCEPTION_BY_AGE = ((29, 0.28), (34, 0.22), (37, 0.14), (39, 0.09), (42, 0.04))
+CONCEPTION_OLD = 0.015
+
+
+def _roll(*key) -> float:
+    """Sorteio determinístico (hash01). Existe só para os testes poderem forçar o resultado (monkeypatch)."""
+    return R.hash01(*key)
+
+
+def _seed(db: Session, user_id: int):
+    g = economy_service_game(db, user_id)
+    return g.seed if g is not None else user_id
+
+
+def fertile_age(p: LifeProfile, person: Person) -> int:
+    """Idade usada na fertilidade: parceiro(a) F -> idade dele(a); senão jogador F -> idade do jogador; senão a média.
+    O gênero vem de `Person.gender` (M/F) e `LifeProfile.gender` (M/F/N); 'N' ou casal M+M usa a média das idades."""
+    if person.gender == "F":
+        return person.age
+    if p.gender == "F":
+        return p.age_years
+    return round((person.age + p.age_years) / 2)
+
+
+def conception_base(age: int) -> float:
+    for top, prob in CONCEPTION_BY_AGE:
+        if age <= top:
+            return prob
+    return CONCEPTION_OLD
+
+
+def health_factor(p: LifeProfile) -> float:
+    """0,7..1,1: 60% saúde, 25% bem-estar, 15% ausência de estresse; +10% com tempo em família ALTO (pode passar de 1,1)."""
+    score = 0.60 * p.health + 0.25 * p.wellbeing + 0.15 * (100 - (p.stress or 0))
+    f = 0.7 + 0.4 * score / 100
+    return f * 1.10 if p.family_time == "HIGH" else f
+
+
+def conception_probability(p: LifeProfile, person: Person) -> float:
+    return round(min(0.35, conception_base(fertile_age(p, person)) * health_factor(p)), 4)
+
+
+def _accept_parts(db: Session, p: LifeProfile, r: Relationship, person: Person, month: SimMonth) -> tuple[float, list[tuple[float, str]]]:
+    """Probabilidade de aceite e, para a mensagem de recusa, os motivos (peso, texto)."""
+    nome = person.name.split()[0]
+    comp = compatibility(p, person, r.compat_bonus)
+    n_kids = len(children(db, p.user_id))
+    tight = financial_stability(db, p.user_id, month) <= 40       # caixa < 3 meses das despesas planejadas do mês
+    kids_pen = 0.08 * n_kids
+    recent = 0.0
+    if p.last_child_refusal_month is not None:
+        since = budget_service.months_between(p.last_child_refusal_month, month.ref_month)
+        recent = 0.10 if since <= 1 else 0.05 if since == 2 else 0.0
+    prob = (0.20 + 0.004 * r.affinity + 0.003 * r.trust + 0.002 * comp + 0.35 * person.wants_children / 100
+            + (0.12 if r.stage == "MARRIED" else 0.0) + CHILD_PERSONALITY.get(person.personality, 0.0)
+            - kids_pen - (0.10 if tight else 0.0) - recent)
+    prob = round(max(0.05, min(0.90, prob)), 4)
+    reasons = [
+        (0.004 * max(0, 70 - r.affinity), f"{nome} acha que ainda não é a hora: falta afinidade entre vocês"),
+        (0.003 * max(0, 60 - r.trust), f"{nome} acha que ainda não é a hora: falta confiança"),
+        (kids_pen, f"{nome} acha que já tem muita coisa com os filhos que vocês têm"),
+        (0.10 if tight else 0.0, f"{nome} está preocupado(a) com as finanças da casa"),
+        (recent, f"{nome} ainda está chateado(a) com o último pedido: deem um tempo"),
+        (0.35 * max(0, 60 - person.wants_children) / 100, f"{nome} ainda não está muito animado(a) com a ideia de ter filhos"),
+    ]
+    return prob, reasons
+
+
+def accept_probability(db: Session, p: LifeProfile, r: Relationship, person: Person, month: SimMonth) -> float:
+    return _accept_parts(db, p, r, person, month)[0]
+
+
+def child_try_info(db: Session, user_id: int, month: SimMonth, p: LifeProfile | None = None) -> dict:
+    """Estado exibido na tela: se dá para tentar agora, por que não e as chances (transparência)."""
+    p = p or get_profile(db, user_id)
+    r = active_partner(db, user_id)
+    person = db.get(Person, r.person_id) if r is not None else None
+    info = {"can_try": False, "blocked_reason": None, "accept_chance_pct": None, "conceive_chance_pct": None, "tries": p.child_tries or 0,
+            "last_try_month": p.last_child_try_month.isoformat() if p.last_child_try_month else None,
+            "partner_name": person.name if person else None,
+            "pregnancy_due_month": p.pregnancy_due_month.isoformat() if p.pregnancy_due_month else None}
+    if p.pregnancy_due_month:
+        info["blocked_reason"] = "já existe uma gestação em andamento"
+    elif r is None or r.stage not in R.HOUSEHOLD_STAGES:
+        info["blocked_reason"] = "tentar ter um filho exige um parceiro(a) em união estável ou casamento"
+    elif p.last_child_try_month == month.ref_month:
+        info["blocked_reason"] = "vocês já tentaram este mês"
+    if r is not None and r.stage in R.HOUSEHOLD_STAGES:
+        info["accept_chance_pct"] = 0 if person.wants_children < 25 else round(100 * accept_probability(db, p, r, person, month))
+        info["conceive_chance_pct"] = round(100 * conception_probability(p, person))
+    info["can_try"] = info["blocked_reason"] is None
+    return info
+
+
+def try_for_child(db: Session, user_id: int, month: SimMonth) -> dict:
+    """Uma tentativa por mês: 1) o(a) parceiro(a) aceita? 2) se aceitou, engravidou? Sorteios por hash01 (determinísticos)."""
     budget_service.require_open(month)
     p = get_profile(db, user_id, lock=True)
+    ref = month.ref_month
     if p.pregnancy_due_month:
         raise ConflictError("já existe uma gestação em andamento")
     r = active_partner(db, user_id)
     if r is None or r.stage not in R.HOUSEHOLD_STAGES:
-        raise ConflictError("planejar filhos exige um parceiro(a) em união estável ou casamento")
+        raise ConflictError("tentar ter um filho exige um parceiro(a) em união estável ou casamento")
+    if p.last_child_try_month == ref:
+        raise ConflictError("vocês já tentaram este mês")
     person = db.get(Person, r.person_id)
+    nome = person.name.split()[0]
+    p.last_child_try_month = ref                                  # recusa também consome a tentativa do mês
+    accept = 0.0 if person.wants_children < 25 else accept_probability(db, p, r, person, month)
+    conceive = conception_probability(p, person)
+    out = {"accept_chance_pct": round(100 * accept), "conceive_chance_pct": round(100 * conceive)}
+
+    def refused(text: str, aff: int, trust: int, mood: int, sat: int) -> dict:
+        p.last_child_refusal_month = ref
+        _bump(r, aff, trust=trust)
+        _hit_mood(p, mood, sat)
+        log(db, user_id, ref, "CHILD_REFUSED", text, person_id=person.id)
+        return {**out, "outcome": "REFUSED", "text": text}
+
     if person.wants_children < 25:
-        raise ConflictError(f"{person.name} não quer ter filhos no momento")
-    p.pregnancy_due_month = budget_service.shift_month(month.ref_month, R.PREGNANCY_MONTHS)
-    p.pregnancy_relationship_id = r.id
-    log(db, user_id, month.ref_month, "PREGNANCY", f"Vocês estão esperando um bebê (nascimento previsto: {p.pregnancy_due_month:%m/%Y})")
-    return p
+        return refused(f"{nome} não quer ter filhos no momento.", -1, 0, -1, 0)
+    if _roll("child-accept", _seed(db, user_id), user_id, person.id, ref.isoformat()) >= accept:
+        reasons = _accept_parts(db, p, r, person, month)[1]
+        w, why = max(reasons, key=lambda t: t[0])
+        why = why if w > 0 else f"{nome} acha que ainda não é a hora"
+        return refused(f"{why}. A afinidade e a confiança com {person.name} diminuíram um pouco.", -3, -1, -3, -2)
+    if _roll("child-conceive", _seed(db, user_id), user_id, person.id, ref.isoformat()) < conceive:
+        p.pregnancy_due_month = budget_service.shift_month(ref, R.PREGNANCY_MONTHS)
+        p.pregnancy_relationship_id = r.id
+        p.child_tries = 0
+        text = f"Vocês estão esperando um bebê! Nascimento previsto: {p.pregnancy_due_month:%m/%Y}."
+        log(db, user_id, ref, "PREGNANCY", f"Vocês estão esperando um bebê (nascimento previsto: {p.pregnancy_due_month:%m/%Y})")
+        return {**out, "outcome": "PREGNANT", "text": text}
+    p.child_tries = (p.child_tries or 0) + 1
+    text = f"{nome} topou, mas desta vez não deu certo. Podem tentar de novo no mês que vem."
+    log(db, user_id, ref, "CHILD_TRY", f"Tentaram ter um filho, mas não deu certo desta vez ({p.child_tries} tentativa(s) seguida(s))")
+    return {**out, "outcome": "NOT_CONCEIVED", "text": text}
 
 
 def update_child(db: Session, user_id: int, month: SimMonth, child_id: int, *, school_kind: str | None = None,
@@ -1092,6 +1221,8 @@ def process_month(db: Session, user_id: int, month: SimMonth) -> None:
             r.stage, r.stage_since, r.ended_month, r.finance_mode = "ENDED", ref, ref, "SEPARATE"
             _hit_mood(p, -2, -1)
             log(db, user_id, ref, "DRIFT_APART", f"O relacionamento com {person.name} esfriou e acabou")
+            if p.pregnancy_relationship_id == r.id:
+                log(db, user_id, ref, "PREGNANCY_PARTNER_LEFT", f"{person.name} saiu do relacionamento durante a gestação (a gravidez continua)")
     for c in children(db, user_id):
         c.development = _clamp(c.development + (1 if c.school_kind == "PRIVATE" else 0) + (1 if c.activities else 0)
                                + {"LOW": -1, "NORMAL": 0, "HIGH": 1}[p.family_time])

@@ -18,13 +18,18 @@ export interface Career {
 }
 export interface Condition { key: string; label: string; kind: "MENTAL" | "FISICA"; text: string; since: string; until: string | null; treated: boolean; treatment_cost: number; chronic: boolean }
 export interface Calendar { month: string; total: number; free_left: number; overloaded: boolean; stress: number; rows: { key: string; label: string; hours: number }[] }
+export interface ChildTry {
+  can_try: boolean; blocked_reason: string | null; accept_chance_pct: number | null; conceive_chance_pct: number | null;
+  tries: number; last_try_month: string | null; partner_name: string | null; pregnancy_due_month: string | null;
+}
 export interface Life {
   month: string; character: { name: string; age_years: number; gender: string; interested_in: string }; career: Career; attributes: Attrs; choices: Record<string, string>;
   options: Record<string, string[]>; housing: { quality: number; description: string; kind: string; monthly_cost: string; pending: { kind: string; monthly_cost: string; effective_month: string } | null };
-  pregnancy_due_month: string | null; relationships: Rel[]; children: Kid[]; expenses: FamExpense[]; family_expense_total: string;
+  pregnancy_due_month: string | null; child_try: ChildTry; relationships: Rel[]; children: Kid[]; expenses: FamExpense[]; family_expense_total: string;
   activities: { key: string; label: string; cost: number; hours: number }[]; interactions: { key: string; label: string; cost: number; hours: number }[];
   history: { month: string; kind: string; text: string }[];
   stress?: number; conditions?: Condition[];
+  outcome?: "REFUSED" | "NOT_CONCEIVED" | "PREGNANT"; text?: string;
   result?: { cost?: string; met?: string | null; story?: string; person_id?: number; reaction?: string; reaction_text?: string; delta?: number };
 }
 export interface EcoState {
@@ -194,7 +199,7 @@ export const sim = {
   lifeInteract: (id: number, key: string) => request<Life>(`/life/people/${id}/interact`, post({ key })),
   lifeRelationship: (id: number, action: string) => request<Life>(`/life/people/${id}/relationship`, post({ action })),
   lifeFinances: (id: number, mode: string, contribution_pct?: string) => request<Life>(`/life/people/${id}/finances`, put({ mode, contribution_pct })),
-  lifePlanChild: () => request<Life>("/life/children/plan", post()),
+  lifeTryChild: () => request<Life>("/life/children/try", post()),
   lifeChild: (id: number, body: Partial<Pick<Kid, "school_kind" | "daycare" | "activities">>) => request<Life>(`/life/children/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
   lifeMove: (kind: string, monthly_cost: string) => request<Life>("/life/move", post({ kind, monthly_cost })),
   economy: () => request<Economy>("/economy"),

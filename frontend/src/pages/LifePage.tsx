@@ -114,8 +114,13 @@ export function LifePage() {
           </section>
           <section className="card stack">
             <div className="row between"><h2>Filhos</h2>
-              <button className="btn primary small" disabled={busy} onClick={() => void act(sim.lifePlanChild, () => "Gestação iniciada: o nascimento ocorre em 9 meses.")}>Planejar um filho</button></div>
-            {life.children.length === 0 && <p className="muted small">Planejar filhos exige parceiro(a) em união estável ou casamento.</p>}
+              <button className="btn primary small" disabled={busy || !life.child_try.can_try} title={life.child_try.blocked_reason ?? undefined}
+                onClick={() => void act(sim.lifeTryChild, (l) => l.outcome === "PREGNANT" ? "🎉 " + (l.text ?? "") : l.outcome === "REFUSED" ? "💬 " + (l.text ?? "") : l.outcome === "NOT_CONCEIVED" ? "🌱 " + (l.text ?? "") : null)}>Tentar ter um filho</button></div>
+            {life.child_try.blocked_reason && <p className="muted small">{life.child_try.blocked_reason.charAt(0).toUpperCase() + life.child_try.blocked_reason.slice(1)}.</p>}
+            {life.child_try.accept_chance_pct !== null && (
+              <p className="muted small">Chance de {life.child_try.partner_name?.split(" ")[0]} topar: {life.child_try.accept_chance_pct}% · Chance de engravidar por mês: {life.child_try.conceive_chance_pct}%
+                {life.child_try.tries > 0 && ` · ${life.child_try.tries} tentativa(s) sem sucesso`}</p>)}
+            <p className="muted small">Tentar ter um filho exige parceiro(a) em união estável ou casamento; ele(a) pode recusar e, mesmo aceitando, pode não dar certo.</p>
             {life.children.map((c) => <ChildCard key={c.id} c={c} busy={busy} act={act} />)}
           </section>
           <section className="card stack">

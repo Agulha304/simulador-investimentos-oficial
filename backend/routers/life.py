@@ -134,6 +134,7 @@ def _overview(db: Session, user_id: int) -> dict:
                                  "effective_month": p.pending_housing_month.isoformat()} if p.pending_housing_month else None)},
         "stress": p.stress or 0, "conditions": ls.condition_out(p, month.ref_month),
         "pregnancy_due_month": p.pregnancy_due_month.isoformat() if p.pregnancy_due_month else None,
+        "child_try": ls.child_try_info(db, user_id, month, p),
         "relationships": rels, "children": kids, "expenses": expenses,
         "family_expense_total": str(sum((Decimal(e["amount"]) for e in expenses if e["kind"] == "EXPENSE"), Decimal("0.00"))),
         "activities": [{"key": k, "label": a["label"], "cost": a["cost"], "hours": a["hours"]} for k, a in R.ACTIVITIES.items()],
@@ -207,11 +208,11 @@ def finances(person_id: int, body: FinanceRulesIn, user: CurrentUser, db: DbSess
     return _run(db, go)
 
 
-@router.post("/children/plan")
-def plan_child(user: CurrentUser, db: DbSession):
+@router.post("/children/try")
+def try_child(user: CurrentUser, db: DbSession):
     def go():
-        ls.plan_child(db, user.id, bs.ensure_setup(db, user.id))
-        return _overview(db, user.id)
+        res = ls.try_for_child(db, user.id, bs.ensure_setup(db, user.id))   # recusa/falha também gravam efeitos (200)
+        return {**_overview(db, user.id), **res}
     return _run(db, go)
 
 

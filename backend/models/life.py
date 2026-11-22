@@ -69,6 +69,9 @@ class LifeProfile(Base):
     pending_housing_month: Mapped[date | None] = mapped_column(Date)
     pregnancy_due_month: Mapped[date | None] = mapped_column(Date)
     pregnancy_relationship_id: Mapped[int | None] = mapped_column(Integer)
+    last_child_try_month: Mapped[date | None] = mapped_column(Date)                              # no máx. uma tentativa de filho por mês
+    last_child_refusal_month: Mapped[date | None] = mapped_column(Date)                          # última recusa do(a) parceiro(a)
+    child_tries: Mapped[int] = mapped_column(Integer, default=0, server_default="0")             # tentativas seguidas sem gravidez
     hours_committed: Mapped[int] = mapped_column(Integer, default=0, server_default="0")   # horas/mês fixas (gestão de temporada)
     hours_used: Mapped[int] = mapped_column(Integer, default=0)            # horas livres gastas no mês corrente
     activity_seq: Mapped[int] = mapped_column(Integer, default=0)          # contador (chaves idempotentes, sorteios)
