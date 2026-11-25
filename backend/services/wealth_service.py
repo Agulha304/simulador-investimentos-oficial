@@ -58,7 +58,10 @@ def companies_net_value(db: Session, user_id: int) -> Decimal:
     """Participação do usuário no patrimônio das empresas ativas (entra no patrimônio total)."""
     total = ZERO
     for c in db.scalars(select(Company).where(Company.user_id == user_id, Company.status == CompanyStatus.ACTIVE)):
-        total += company_equity(db, c) * c.owner_share_pct / 100
+        from backend.models import CompanyListing
+        listing = db.scalar(select(CompanyListing).where(CompanyListing.company_id == c.id, CompanyListing.status == "LISTED"))
+        base = quantize_money(listing.price * listing.shares_total) if listing is not None else company_equity(db, c)   # capital aberto: valor de mercado
+        total += base * c.owner_share_pct / 100
     return quantize_money(total)
 
 

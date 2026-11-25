@@ -1,6 +1,7 @@
 import { Suspense, lazy, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { PurchaseModal } from "../components/GoodsModals";
+import { BuildPanel } from "../components/BuildPanel";
 import { StatCard } from "../components/StatCard";
 import { type Good, type GoodCategory, type Listing, type PortfolioSummary, type WealthOverview } from "../services/api";
 import { cachedGet, useApi } from "../services/dataCache";
@@ -8,7 +9,7 @@ import { CATEGORY_LABEL, GOOD_STATUS_LABEL, OCCUPANCY_LABEL, fmtBRL, fmtDay, tre
 
 const WealthSeriesChart = lazy(() => import("../components/charts/WealthCharts").then((m) => ({ default: m.WealthSeriesChart })));
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : "Erro inesperado");
-type Tab = "overview" | "mine" | "market";
+type Tab = "overview" | "mine" | "market" | "build";
 export type Group = "goods" | "realty" | "vehicles";
 const GROUPS: Record<Group, { cats: GoodCategory[]; title: string; emoji: string; intro: string; path: string }> = {
   goods: { cats: ["INSTRUMENT", "EQUIPMENT", "ANTIQUE", "COLLECTIBLE", "OTHER"], title: "Bens", emoji: "🎻", path: "/patrimonio",
@@ -52,6 +53,7 @@ export function WealthPage({ group = "goods" }: { group?: Group }) {
         <button className={tab === "overview" ? "on" : ""} onClick={() => setTab("overview")}>Visão geral</button>
         <button className={tab === "mine" ? "on" : ""} onClick={() => setTab("mine")}>Meus {G.title.toLowerCase()} ({mine.length})</button>
         <button className={tab === "market" ? "on" : ""} onClick={() => setTab("market")}>Mercado de bens</button>
+        {G.cats.includes("RESIDENTIAL") && <button className={tab === "build" ? "on" : ""} onClick={() => setTab("build")}>Construir</button>}
       </div>
 
       {tab === "overview" && (
@@ -83,6 +85,7 @@ export function WealthPage({ group = "goods" }: { group?: Group }) {
       )}
 
       {tab === "mine" && <MyGoods goods={goods} cats={G.cats} onOpen={(id) => nav(`/patrimonio/${id}`)} />}
+      {tab === "build" && <BuildPanel onBuilt={(g) => { setNotice(`Obra contratada: ${g.good.name}.`); void reload(); nav(`/patrimonio/${g.good.id}`); }} />}
       {tab === "market" && <Market cash={cash} cats={G.cats} onBought={(g) => { setNotice(`${g.good.name} comprado.`); void reload(); nav(`/patrimonio/${g.good.id}`); }} />}
     </div>
   );
@@ -113,6 +116,7 @@ function MyGoods({ goods, cats: CATS, onOpen }: { goods: Good[]; cats: GoodCateg
             <span className="muted small">{g.status === "ACTIVE"
               ? <>Adquirido em {fmtDay(g.acquired_on)} por {fmtBRL(g.acquisition_cost)}</>
               : <>Resultado da venda {g.sold_on ? `em ${fmtDay(g.sold_on)}` : ""}</>}</span>
+            {g.available_month && g.status === "ACTIVE" && <span className="tag">{g.construction_plan ? "Em obra" : "Em escritura"} até {g.available_month.slice(0, 7)}</span>}
             {g.occupancy && g.status === "ACTIVE" && <span className="tag">{OCCUPANCY_LABEL[g.occupancy]}{g.occupancy === "RENTED" ? ` · ${fmtBRL(g.monthly_rent)}/mês` : ""}</span>}
             {g.loan_balance && Number(g.loan_balance) > 0 && g.status === "ACTIVE" && <span className="muted small">Saldo devedor {fmtBRL(g.loan_balance)}</span>}
           </button>

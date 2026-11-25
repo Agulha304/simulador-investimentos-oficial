@@ -189,7 +189,7 @@ def _validate_limits(db: Session, c: Company, kind: str) -> None:
     if kind == "CAPACITY" and float(c.capacity_boost) >= rules.MAX_CAPACITY_LEVEL:
         raise ConflictError("a capacidade já está no nível máximo")
     if kind == "NEW_UNIT" and c.units >= rules.MAX_UNITS:
-        raise ConflictError("número máximo de unidades atingido")
+        raise ConflictError(f"limite de {rules.MAX_BRANCHES} filiais próprias atingido: para crescer mais, franqueie a marca")
     if kind == "LARGER_PREMISES" and c.size == rules.CompanySize.LARGE:
         raise ConflictError("a empresa já está no maior porte")
     if kind == "QUALITY" and float(c.quality) >= 100:
@@ -350,12 +350,15 @@ def _open_unit(db, c, seg, ref, tier, opt, kind_cost, channel, mode, loc, key, i
     n = (db.scalar(select(func.count()).select_from(CompanyUnit).where(CompanyUnit.company_id == c.id)) or 0) + 1
     unit = CompanyUnit(company_id=c.id, kind="BRANCH", name=f"Filial {n}", location=loc, channel=channel, site_mode=mode, site_value=land,
                        monthly_rent=rent, relevance=D(str(round(float(c.relevance) * frac, 2))), viability=D(str(round(viab, 3))),
-                       status="OPEN", opened_month=ref, investment=kind_cost)
+                       status="OPEN", opened_month=ref, investment=kind_cost,
+                       opens_month=shift_month(ref, rules.unit_build_months(channel, mode)))
     db.add(unit)
     c.units += 1
     db.flush()
     label = "online" if channel == CompanyChannel.ONLINE else rules.resolve_location(seg, loc).label
-    effects = [f"Filial aberta ({label}; {'terreno comprado' if mode == SiteMode.BUY else 'alugada' if mode == SiteMode.RENT else 'online'})",
+    build = rules.unit_build_months(channel, mode)
+    effects = [f"Filial em {'obra' if mode == SiteMode.BUY else 'instalação'}: começa a vender em {unit.opens_month:%m/%Y} ({build} {'mês' if build == 1 else 'meses'})",
+               f"Filial aberta ({label}; {'terreno comprado' if mode == SiteMode.BUY else 'alugada' if mode == SiteMode.RENT else 'online'})",
                f"Relevância inicial {float(unit.relevance):.1f} ({round(frac * 100)}% da marca, que é {float(c.relevance):.1f})",
                "O desempenho real só aparece nos próximos meses: pode vender menos ou mais que a matriz e fechar se acumular prejuízo"]
     if rent > 0:

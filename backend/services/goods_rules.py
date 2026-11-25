@@ -267,3 +267,42 @@ EPOCH = date(2026, 11, 1)
 
 def month_index(month: date) -> int:
     return (month.year - EPOCH.year) * 12 + (month.month - EPOCH.month)
+
+
+# ------------------------------------------------------------------ construir imóveis (prazos reais)
+@dataclass(frozen=True)
+class BuildPlan:
+    key: str
+    category: GoodCategory
+    name: str
+    property_type: str
+    area_m2: Decimal
+    bedrooms: int | None
+    cost_m2: Decimal           # custo de construção por m²
+    land: Decimal              # terreno de referência (multiplicado pela cidade)
+    months: int                # prazo da obra
+
+
+BUILD_PLANS: dict[str, BuildPlan] = {p.key: p for p in [
+    BuildPlan("casa-popular", GoodCategory.RESIDENTIAL, "Casa popular (60 m²)", "house", Decimal(60), 2, Decimal(2600), Decimal(70000), 3),
+    BuildPlan("casa-media", GoodCategory.RESIDENTIAL, "Casa de 3 quartos (120 m²)", "house", Decimal(120), 3, Decimal(3400), Decimal(140000), 3),
+    BuildPlan("sobrado", GoodCategory.RESIDENTIAL, "Sobrado de alto padrão (220 m²)", "house", Decimal(220), 4, Decimal(5200), Decimal(320000), 4),
+    BuildPlan("mansao", GoodCategory.RESIDENTIAL, "Mansão (450 m²)", "house", Decimal(450), 6, Decimal(8200), Decimal(900000), 6),
+    BuildPlan("predio-aptos", GoodCategory.RESIDENTIAL, "Prédio de 8 apartamentos (800 m²)", "apartment", Decimal(800), None, Decimal(4300), Decimal(600000), 6),
+    BuildPlan("loja", GoodCategory.COMMERCIAL, "Loja de rua (80 m²)", "commercial", Decimal(80), None, Decimal(3600), Decimal(180000), 3),
+    BuildPlan("galpao", GoodCategory.COMMERCIAL, "Galpão comercial (600 m²)", "commercial", Decimal(600), None, Decimal(2400), Decimal(420000), 5),
+]}
+BUILD_CITIES: dict[str, tuple[str, Decimal]] = {
+    "sp": ("São Paulo, SP", Decimal("1.60")), "rj": ("Rio de Janeiro, RJ", Decimal("1.50")), "bh": ("Belo Horizonte, MG", Decimal("1.10")),
+    "cwb": ("Curitiba, PR", Decimal("1.05")), "flo": ("Florianópolis, SC", Decimal("1.30")), "poa": ("Porto Alegre, RS", Decimal("1.00")),
+    "interior": ("Interior", Decimal("0.60")),
+}
+CLOSING_MONTHS_CASH = 1            # compra à vista: escritura e registro levam ~1 mês
+CLOSING_MONTHS_FINANCED = 2        # financiada: análise do banco + escritura levam ~2 meses
+
+
+def build_quote(plan_key: str, city_key: str) -> dict:
+    plan, (city, mult) = BUILD_PLANS[plan_key], BUILD_CITIES[city_key]
+    construction = quantize_money(plan.area_m2 * plan.cost_m2)
+    land = quantize_money(plan.land * mult)
+    return {"plan": plan, "city": city, "construction": construction, "land": land, "total": quantize_money(construction + land), "months": plan.months}

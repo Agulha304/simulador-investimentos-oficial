@@ -8,6 +8,7 @@ from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import (
+    BigInteger,
     Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, JSON, Numeric, String, UniqueConstraint, func, text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
@@ -60,6 +61,8 @@ class Company(Base):
     status: Mapped[CompanyStatus] = mapped_column(StrEnumType(CompanyStatus, "company_status"), default=CompanyStatus.ACTIVE)
     founded_on: Mapped[date] = mapped_column(Date)
     last_processed_month: Mapped[date | None] = mapped_column(Date)
+    opens_month: Mapped[date | None] = mapped_column(Date)                 # em abertura/obra: sem vendas até este mês (inclusive já opera)
+    franchise_appeal: Mapped[Decimal] = mapped_column(Numeric(5, 2), default=Decimal("0"), server_default="0")   # 0..100: atratividade da franquia (publicidade)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -335,6 +338,7 @@ class CompanyUnit(Base):
     closed_reason: Mapped[str | None] = mapped_column(String(160))
     cumulative_result: Mapped[Decimal] = mapped_column(Money(), default=Decimal("0"), server_default="0")
     investment: Mapped[Decimal] = mapped_column(Money(), default=Decimal("0"), server_default="0")    # custo de abertura (sem o terreno)
+    opens_month: Mapped[date | None] = mapped_column(Date)                 # em obra/instalação: só opera a partir deste mês
 
 
 class CompanyExpansion(Base):
@@ -392,3 +396,76 @@ class CompanyRecruiterRun(Base):
     ref_month: Mapped[date] = mapped_column(Date)
     report: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class CompanyAide(Base):
+    """Marketeiro ou gerente OPCIONAL da empresa (um de cada tipo por empresa; a linha é reaproveitada ao recontratar). `level`
+    LOW/MID/HIGH; `settings` = briefing (marketeiro: orçamento mensal; gerente: rigidez)."""
+
+    __tablename__ = "company_aides"
+    __table_args__ = (
+        UniqueConstraint("company_id", "kind", name="uq_company_aides_company_kind"),
+        CheckConstraint("kind IN ('MARKETER', 'MANAGER')", name="ck_company_aides_kind"),
+        CheckConstraint("level IN ('LOW', 'MID', 'HIGH')", name="ck_company_aides_level"),
+        CheckConstraint("status IN ('ACTIVE', 'ENDED')", name="ck_company_aides_status"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id", ondelete="CASCADE"))
+    kind: Mapped[str] = mapped_column(String(10))
+    level: Mapped[str] = mapped_column(String(6))
+    status: Mapped[str] = mapped_column(String(8), default="ACTIVE", server_default="ACTIVE")
+    hired_month: Mapped[date] = mapped_column(Date)
+    ended_month: Mapped[date | None] = mapped_column(Date)
+    settings: Mapped[dict] = mapped_column(JSON, default=dict)
+
+
+class CompanyFranchise(Base):
+    """Franquia da marca aberta por um terceiro. Rende ao dono uma taxa inicial e royalties mensais (bem menos que uma filial própria)."""
+
+    __tablename__ = "company_franchises"
+    __table_args__ = (
+        CheckConstraint("status IN ('OPEN', 'CLOSED')", name="ck_company_franchises_status"),
+        Index("ix_company_franchises_company_status", "company_id", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id", ondelete="CASCADE"))
+    name: Mapped[str] = mapped_column(String(80))
+    location: Mapped[str] = mapped_column(String(32))
+    status: Mapped[str] = mapped_column(String(8), default="OPEN", server_default="OPEN")
+    signed_month: Mapped[date] = mapped_column(Date)
+    opens_month: Mapped[date] = mapped_column(Date)                        # o franqueado leva alguns meses para montar a loja
+    viability: Mapped[Decimal] = mapped_column(Numeric(4, 3), default=Decimal("1"), server_default="1")
+    royalty_pct: Mapped[Decimal] = mapped_column(Numeric(5, 2))
+    initial_fee: Mapped[Decimal] = mapped_column(Money(), default=Decimal("0"), server_default="0")
+    total_royalties: Mapped[Decimal] = mapped_column(Money(), default=Decimal("0"), server_default="0")
+    closed_month: Mapped[date | None] = mapped_column(Date)
+    closed_reason: Mapped[str | None] = mapped_column(String(160))
+
+
+class CompanyListing(Base):
+    """Abertura de capital (IPO): a empresa vira S.A. de capital aberto. `PENDING` até `lists_month` (prazo do processo), depois `LISTED`
+    com preço por ação que evolui mensalmente; o dono é diluído (`owner_share_pct`) e o público recebe a sua parte dos dividendos."""
+
+    __tablename__ = "company_listings"
+    __table_args__ = (
+        UniqueConstraint("company_id", name="uq_company_listings_company"),
+        CheckConstraint("status IN ('PENDING', 'LISTED', 'DELISTED')", name="ck_company_listings_status"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.id", ondelete="CASCADE"))
+    ticker: Mapped[str] = mapped_column(String(8))
+    status: Mapped[str] = mapped_column(String(10), default="PENDING", server_default="PENDING")
+    shares_total: Mapped[int] = mapped_column(BigInteger, default=0, server_default="0")
+    float_pct: Mapped[Decimal] = mapped_column(Numeric(5, 2))              # % do capital vendido ao público no IPO
+    valuation: Mapped[Decimal] = mapped_column(Money(), default=Decimal("0"), server_default="0")   # valor da empresa no pedido
+    ipo_price: Mapped[Decimal] = mapped_column(Numeric(14, 4), default=Decimal("0"), server_default="0")
+    price: Mapped[Decimal] = mapped_column(Numeric(14, 4), default=Decimal("0"), server_default="0")
+    proceeds: Mapped[Decimal] = mapped_column(Money(), default=Decimal("0"), server_default="0")   # captação líquida
+    applied_month: Mapped[date] = mapped_column(Date)
+    lists_month: Mapped[date] = mapped_column(Date)
+    listed_month: Mapped[date | None] = mapped_column(Date)
+    prev_owner_share: Mapped[Decimal] = mapped_column(Numeric(5, 2), default=Decimal("100"), server_default="100")
+    history: Mapped[list] = mapped_column(JSON, default=list)

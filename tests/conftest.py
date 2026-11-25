@@ -195,3 +195,20 @@ def credit(client, headers, amount) -> None:
         pid = s.scalar(select(Portfolio.id).where(Portfolio.user_id == uid))
         ledger_service.deposit(s, pid, Decimal(str(amount)), source=TransactionSource.USER)
         s.commit()
+
+
+@pytest.fixture(autouse=True)
+def _legacy_economy(request, monkeypatch):
+    """Os testes antigos fixam os números da economia ANTERIOR (vendas fáceis, abertura e escritura instantâneas). Os módulos novos
+    (que definem `NEW_RULES = True`) rodam com a dificuldade, os prazos de abertura/obra e a escritura reais."""
+    if getattr(request.module, "NEW_RULES", False):
+        return
+    from backend.services import company_rules, goods_rules
+    monkeypatch.setattr(company_rules, "MARKET_DIFFICULTY", 1.0)
+    monkeypatch.setattr(company_rules, "RELEVANCE_GAIN_MULT", 1.0)
+    monkeypatch.setattr(company_rules, "ZERO_MONTH_BASE", 0.30)
+    monkeypatch.setattr(company_rules, "OPEN_MONTHS", {"SMALL": 0, "MEDIUM": 0, "LARGE": 0})
+    monkeypatch.setattr(company_rules, "BUILD_MONTHS", 0)
+    monkeypatch.setattr(company_rules, "RENT_FITOUT_MONTHS", 0)
+    monkeypatch.setattr(goods_rules, "CLOSING_MONTHS_CASH", 0)
+    monkeypatch.setattr(goods_rules, "CLOSING_MONTHS_FINANCED", 0)

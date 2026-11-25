@@ -136,6 +136,13 @@ def simulate_financing(category: GoodCategory, price: Decimal, down_payment: Dec
 
 # ------------------------------------------------------------------ compra
 
+def _require_available(good: Good, month: SimMonth) -> None:
+    """Imóvel em escritura (compra) ou em obra (construção): não pode ser alugado, usado nem vendido antes do prazo."""
+    if good.available_month is not None and month.ref_month < good.available_month:
+        what = "em obra" if good.construction_plan else "em escritura"
+        raise ConflictError(f"este imóvel está {what}: fica disponível em {good.available_month:%m/%Y}")
+
+
 def purchase(db: Session, user_id: int, month: SimMonth, *, listing_key: str, purchase_key: str, financed: bool = False,
              down_payment: Decimal | None = None, term_months: int = 0,
              system: AmortizationSystem = AmortizationSystem.PRICE, annual_rate_pct: Decimal | None = None,
@@ -172,6 +179,8 @@ def purchase(db: Session, user_id: int, month: SimMonth, *, listing_key: str, pu
                 description=listing.description, listing_key=listing.key, condition=cond, location=listing.location,
                 acquired_on=month.ref_month, purchase_price=price, acquisition_cost=price + fee, current_value=price,
                 purchase_key=purchase_key)
+    if cat in REAL_ESTATE:                                        # escritura e registro levam tempo
+        good.available_month = shift_month(month.ref_month, rules.CLOSING_MONTHS_FINANCED if financed else rules.CLOSING_MONTHS_CASH)
     db.add(good)
     db.flush()
     start = shift_month(month.ref_month, 1)
@@ -224,6 +233,55 @@ def purchase(db: Session, user_id: int, month: SimMonth, *, listing_key: str, pu
     return good
 
 
+# ------------------------------------------------------------------ construir
+
+def build(db: Session, user_id: int, month: SimMonth, *, plan_key: str, city_key: str, purchase_key: str,
+          company: Company | None = None) -> Good:
+    """CONSTRÓI um imóvel (terreno + obra, pagos à vista) para você ou para uma empresa sua. A obra leva de 3 a 6 meses conforme o projeto; só
+    depois o imóvel pode ser alugado, usado ou vendido. O custo entra todo no mês do contrato."""
+    require_open(month)
+    prev = db.scalar(select(Good).where(Good.user_id == user_id, Good.purchase_key == purchase_key))
+    if prev:
+        return prev
+    if plan_key not in rules.BUILD_PLANS:
+        raise NotFoundError("projeto de obra não encontrado")
+    if city_key not in rules.BUILD_CITIES:
+        raise NotFoundError("cidade não encontrada")
+    q = rules.build_quote(plan_key, city_key)
+    plan, price = q["plan"], q["total"]
+    tax_total, tax_parts = rules.purchase_fee(plan.category, q["land"], q["city"])        # ITBI incide só sobre o terreno
+    ref = month.ref_month
+    account = db.get(FinanceAccount, company.account_id) if company else finance_ledger.personal_account(db, user_id)
+    good = Good(user_id=user_id, owner_account_id=account.id, category=plan.category, name=f"{plan.name} — {q['city']}",
+                description=f"Construída por você: terreno {q['land']} + obra {q['construction']}.", listing_key=f"build:{plan.key}:{purchase_key}"[:64],
+                condition=Condition.EXCELLENT, location=q["city"], acquired_on=ref, purchase_price=price, acquisition_cost=price + tax_total,
+                current_value=price, purchase_key=purchase_key, available_month=shift_month(ref, plan.months), construction_plan=plan.key)
+    db.add(good)
+    db.flush()
+    start = shift_month(good.available_month, 1)
+    db.add(RealEstateDetails(good_id=good.id, property_type=plan.property_type, address=q["city"], area_m2=plan.area_m2,
+                             bedrooms=plan.bedrooms, occupancy=Occupancy.VACANT, monthly_rent=ZERO))
+    for kind, amount, freq in rules.default_costs(plan.category, price, area_m2=plan.area_m2, property_type=plan.property_type, location=q["city"]):
+        db.add(GoodCost(good_id=good.id, kind=kind, name=rules.COST_LABEL[kind], amount=amount, frequency=Frequency(freq), start_month=start))
+    db.add(GoodValue(good_id=good.id, ref_month=ref, value=price, source=ValueSource.PURCHASE))
+    _event(db, good, ref, GoodEventType.PURCHASE, f"Obra contratada: {plan.name} em {q['city']} por {price}; pronta em {good.available_month:%m/%Y}", price)
+    cid = company.id if company else None
+    cat_goods = None if company else _category(db, user_id, FlowKind.EXPENSE, "Bens e imóveis")
+    finance_ledger.post_entry(
+        db, user_id, kind=FlowKind.EXPENSE, amount=price, description=f"Construção: {good.name}", ref_month=ref, entry_date=ref,
+        category_id=cat_goods.id if cat_goods else None, origin=EntryOrigin.ASSET, origin_ref=f"good:{good.id}:purchase",
+        idempotency_key=f"good:{good.id}:purchase", capital=True, company_id=cid, line="EQUIPMENT" if company else None)
+    if tax_total > 0:
+        finance_ledger.post_entry(
+            db, user_id, kind=FlowKind.EXPENSE, amount=tax_total, description=f"Taxas do terreno: {good.name}", ref_month=ref, entry_date=ref,
+            category_id=cat_goods.id if cat_goods else None, origin=EntryOrigin.ASSET, origin_ref=f"good:{good.id}:fees",
+            idempotency_key=f"good:{good.id}:fees", company_id=cid, line="FEES" if company else None,
+            note="; ".join(f"{n} {r}% = {a}" for n, r, a in tax_parts) or None)
+    if company is None:
+        sync_month(db, user_id, month)
+    return good
+
+
 # ------------------------------------------------------------------ venda
 
 def sale_quote(db: Session, good: Good, sale_price: Decimal | None = None, extra_fees: Decimal = ZERO) -> dict:
@@ -250,6 +308,7 @@ def sell(db: Session, user_id: int, month: SimMonth, good_id: int, *, sale_price
         raise FinanceError("o preço de venda deve ser positivo")
     if extra_fees < 0:
         raise FinanceError("as taxas não podem ser negativas")
+    _require_available(good, month)
     det = db.get(RealEstateDetails, good.id)
     if det is not None and det.occupancy == Occupancy.COMPANY_USE:
         raise ConflictError("este imóvel está cedido a uma empresa sua: encerre o contrato de locação antes de vender")
@@ -370,6 +429,7 @@ def set_occupancy(db: Session, user_id: int, month: SimMonth, good_id: int, mode
     _personal_only(db, good)
     if good.status != GoodStatus.ACTIVE:
         raise ConflictError("este bem não está ativo")
+    _require_available(good, month)
     det = db.get(RealEstateDetails, good.id)
     if det is None:
         raise FinanceError("ocupação só se aplica a imóveis")

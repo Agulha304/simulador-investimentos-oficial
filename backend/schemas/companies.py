@@ -74,6 +74,36 @@ class RecruiterHireIn(BaseModel):
     idempotency_key: str = Field(min_length=8, max_length=100)
 
 
+class AideHireIn(BaseModel):
+    level: str = Field(min_length=1, max_length=6)                # LOW | MID | HIGH (validado no serviço: 400)
+
+
+class AideBriefingIn(BaseModel):
+    monthly_budget: Decimal | None = Field(default=None, ge=0)    # marketeiro: orçamento mensal de campanhas
+    rigor: int | None = Field(default=None, ge=0, le=100)         # gerente: rigidez (0 = brando, 100 = linha dura)
+
+
+class CompanyBuildIn(BaseModel):
+    plan_key: str
+    city_key: str
+    idempotency_key: str = Field(min_length=8, max_length=100)
+
+
+class FranchiseAdIn(BaseModel):
+    tier: str = Field(min_length=1, max_length=8)                 # BARATO | MEDIO | CARO
+    idempotency_key: str = Field(min_length=8, max_length=100)
+
+
+class IpoApplyIn(BaseModel):
+    float_pct: Decimal = Field(ge=1, le=90)                       # % do capital oferecido ao público (validado no serviço: 10 a 49)
+    idempotency_key: str = Field(min_length=8, max_length=100)
+
+
+class StakeIn(BaseModel):
+    pct: Decimal = Field(gt=0, le=100)
+    idempotency_key: str = Field(min_length=8, max_length=100)
+
+
 def _empty_to_none(v):
     """Campo opcional de fornecedor: "" / só espaços = vazio = sem restrição."""
     return None if isinstance(v, str) and not v.strip() else v
@@ -695,6 +725,11 @@ class CompanyDetailOut(BaseModel):
     supply: SupplyOut | None = None
     recruiter: "RecruiterOut | None" = None            # contratador (headhunter) opcional
     recruiter_tiers: list["RecruiterTierOut"] = []     # níveis e custos para o porte da empresa
+    aides: dict = {}                                   # marketeiro e gerente ativos (ou None)
+    aide_options: dict = {}                            # níveis e taxas por tipo para o porte da empresa
+    opens_month: date | None = None                    # empresa em abertura/obra até este mês
+    franchise: dict = {}                               # franquias: atratividade, royalties, lista
+    ipo: dict = {}                                     # abertura de capital: elegibilidade e ação negociada
 
 
 class RecruiterTierOut(BaseModel):

@@ -47,7 +47,8 @@ def _good_out(db: Session, g: Good) -> s.GoodOut:
         current_value=g.current_value, unrealized_result=quantize_money(g.current_value - g.acquisition_cost)
         if g.status == GoodStatus.ACTIVE else Decimal("0.00"),
         occupancy=det.occupancy if det else None, monthly_rent=det.monthly_rent if det else None,
-        loan_balance=loan.balance if loan else None, sold_on=g.sold_on, sale_result=g.sale_result)
+        loan_balance=loan.balance if loan else None, sold_on=g.sold_on, sale_result=g.sale_result,
+        available_month=g.available_month, construction_plan=g.construction_plan)
 
 
 def _inst_out(i: LoanInstallment) -> s.InstallmentOut:
@@ -152,6 +153,26 @@ def purchase(body: s.PurchaseIn, user: CurrentUser, db: DbSession):
                         financed=body.financed, down_payment=body.down_payment, term_months=body.term_months,
                         system=body.system, annual_rate_pct=body.annual_rate_pct,
                         usage_km_month=body.usage_km_month)
+        return _detail(db, user.id, g)
+    return _run(db, go)
+
+
+@router.get("/build/catalog")
+def build_catalog(user: CurrentUser):
+    """Projetos de obra (casa, sobrado, prédio, loja, galpão) e cidades, com custo e prazo de cada combinação."""
+    return {"cities": [{"key": k, "name": v[0]} for k, v in rules.BUILD_CITIES.items()],
+            "plans": [{"key": p.key, "name": p.name, "category": p.category, "area_m2": p.area_m2, "months": p.months,
+                       "quotes": {c: {"total": q["total"], "land": q["land"], "construction": q["construction"]}
+                                  for c in rules.BUILD_CITIES for q in [rules.build_quote(p.key, c)]}} for p in rules.BUILD_PLANS.values()],
+            "closing_months": {"cash": rules.CLOSING_MONTHS_CASH, "financed": rules.CLOSING_MONTHS_FINANCED}}
+
+
+@router.post("/build", response_model=s.GoodDetailOut, status_code=status.HTTP_201_CREATED)
+def build(body: s.BuildIn, user: CurrentUser, db: DbSession):
+    """Constrói um imóvel pessoal (terreno + obra à vista; 3 a 6 meses de obra)."""
+    def go():
+        month = bs.ensure_setup(db, user.id)
+        g = gs.build(db, user.id, month, plan_key=body.plan_key, city_key=body.city_key, purchase_key=body.idempotency_key)
         return _detail(db, user.id, g)
     return _run(db, go)
 

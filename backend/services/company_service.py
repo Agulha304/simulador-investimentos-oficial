@@ -21,8 +21,9 @@ from backend.models import (
     AccountKind, AmortizationSystem, Company, CompanyChannel, SiteMode, CompanyCost, CompanyEvent, CompanyEventType, CompanyLease, CompanyLoan,
     CandidateBlock, CompanyLoanInstallment, CompanyMonth, CompanyPartner, CompanySegment, CompanySize, CompanyStatus, Employee, EmployeeLevel, EmployeeStatus,
     EmployeeRegime, EntryOrigin, FinanceAccount, FlowKind, Frequency, Good, GoodCategory, GoodCost, GoodEvent, GoodEventType, GoodStatus,
-    InstallmentStatus, InventoryItem, CompanyRecruiter, CompanySupplier, CompanyUnit, LeaseKind, LedgerEntry, LoanStatus, Occupancy, Person, RealEstateDetails, SimMonth, WorkSchedule,
+    InstallmentStatus, InventoryItem, CompanyAide, CompanyRecruiter, CompanySupplier, CompanyUnit, LeaseKind, LedgerEntry, LoanStatus, Occupancy, Person, RealEstateDetails, SimMonth, WorkSchedule,
 )
+from backend.services import company_aides as aides
 from backend.services import company_recruiter as recruiter
 from backend.services import company_rules as rules
 from backend.services import company_supply as supply
@@ -49,6 +50,11 @@ def get_company(db: Session, user_id: int, company_id: int, *, lock: bool = Fals
     if c is None:
         raise NotFoundError("empresa não encontrada")
     return c
+
+
+def _opening(c: Company, ref: date) -> bool:
+    """Empresa ainda em abertura/obra no mês `ref` (não vende nem franqueia)."""
+    return c.opens_month is not None and ref < c.opens_month
 
 
 def _active(c: Company) -> None:
@@ -99,7 +105,7 @@ def monthly_obligations(db: Session, c: Company) -> Decimal:
     payroll = sum((employee_cost(e) for e in _employees(db, c)), ZERO) + c.owner_salary
     fixed = sum((x.amount * (c.units if x.scales_with_units else 1) for x in db.scalars(
         select(CompanyCost).where(CompanyCost.company_id == c.id, CompanyCost.active.is_(True)))), ZERO)
-    return quantize_money(payroll + fixed + _rent(db, c, seg) + recruiter_fee(db, c))
+    return quantize_money(payroll + fixed + _rent(db, c, seg) + recruiter_fee(db, c) + aide_fees(db, c) + marketing_budget(db, c))
 
 
 def active_recruiter(db: Session, c: Company) -> CompanyRecruiter | None:
@@ -110,6 +116,67 @@ def recruiter_fee(db: Session, c: Company) -> Decimal:
     """Taxa mensal do contratador ativo (0 sem contratador): entra nas obrigações mensais e no runway."""
     r = active_recruiter(db, c)
     return recruiter.monthly_fee(r.tier, c.size) if r is not None else ZERO
+
+
+def active_aide(db: Session, c: Company, kind: str) -> CompanyAide | None:
+    return db.scalar(select(CompanyAide).where(CompanyAide.company_id == c.id, CompanyAide.kind == kind, CompanyAide.status == "ACTIVE"))
+
+
+def aide_fees(db: Session, c: Company) -> Decimal:
+    """Taxas mensais do marketeiro e do gerente ativos (0 sem eles)."""
+    return quantize_money(sum((aides.monthly_fee(a.kind, a.level, c.size) for a in db.scalars(select(CompanyAide).where(
+        CompanyAide.company_id == c.id, CompanyAide.status == "ACTIVE"))), ZERO))
+
+
+def marketing_budget(db: Session, c: Company) -> Decimal:
+    """Orçamento mensal de campanhas definido no briefing do marketeiro ativo (0 sem marketeiro)."""
+    a = active_aide(db, c, "MARKETER")
+    return D(str(a.settings.get("monthly_budget", "0"))) if a is not None else ZERO
+
+
+def manager_boost(db: Session, c: Company) -> float:
+    a = active_aide(db, c, "MANAGER")
+    return aides.productivity_boost(a.level, int(a.settings.get("rigor", 40))) if a is not None else 1.0
+
+
+def _manager_turnover(db: Session, c: Company, ref: date) -> None:
+    """Gerente rígido demais faz funcionários pedirem demissão (sem rescisão; a empresa pode ficar sem um cargo obrigatório)."""
+    a = active_aide(db, c, "MANAGER")
+    if a is None:
+        return
+    rigor, seed = int(a.settings.get("rigor", 40)), _seed(db, c.user_id)
+    for e in _employees(db, c):
+        if aides.quits(a.level, rigor, seed=seed, company_id=c.id, employee_id=e.id, ref=ref):
+            e.status = EmployeeStatus.TERMINATED
+            e.terminated_on = ref
+            _event(db, c, ref, CompanyEventType.FIRE, f"Pediu demissão: {e.name or e.role} ({e.regime.value}) — rigidez do gerente "
+                   f"({aides.LEVEL_LABEL[a.level]}, rigidez {rigor}) pesou na equipe")
+
+
+def _run_marketing(db: Session, c: Company, seg: rules.Segment, ref: date, k: str) -> bool:
+    """Campanha do marketeiro no mês: gasta o orçamento do briefing (se houver caixa) e sorteia o resultado pelo nível. Devolve True se
+    a campanha deu efeito (vale como campanha ativa no mês)."""
+    a = active_aide(db, c, "MARKETER")
+    budget = marketing_budget(db, c)
+    if a is None or budget <= 0:
+        return False
+    if cash(db, c) < budget:
+        _event(db, c, ref, CompanyEventType.SETTINGS, f"Marketeiro sem verba: caixa abaixo do orçamento mensal de {budget}; campanha não rodou")
+        return False
+    _post(db, c, ref, kind=FlowKind.EXPENSE, amount=budget, desc="Campanhas do marketeiro (orçamento mensal)", line="MARKETING", key=f"{k}:mkt-budget", overdraft=True)
+    reference = rules.expansion_cost(seg, "MARKETING", c.size, c.units, "MEDIO")
+    res = aides.campaign(a.level, budget=budget, reference=reference, seed=_seed(db, c.user_id), company_id=c.id, ref=ref)
+    if res.outcome == "NONE":
+        _event(db, c, ref, CompanyEventType.SETTINGS, f"Campanha do marketeiro ({aides.LEVEL_LABEL[a.level]}) não deu resultado neste mês "
+               f"(chance era {round(res.chance * 100)}%)")
+        return False
+    if c.marketing_until is None or c.marketing_until <= ref:       # campanha manual mais longa em curso: mantém a dela
+        c.marketing_boost = D(str(res.boost))
+        c.marketing_until = ref
+    c.relevance = D(str(round(min(100.0, float(c.relevance) + res.relevance * (1 - float(c.relevance) / 100)), 2)))
+    _event(db, c, ref, CompanyEventType.SETTINGS, f"Campanha do marketeiro {'VIRAL' if res.outcome == 'VIRAL' else 'deu certo'}: "
+           f"demanda +{round(res.boost * 100)}% no mês e +{res.relevance:.1f} de relevância")
+    return True
 
 
 def employee_cost(e: Employee) -> Decimal:
@@ -185,7 +252,8 @@ def create_company(db: Session, user_id: int, month: SimMonth, *, name: str, seg
     db.add(account)
     db.flush()
     c = Company(user_id=user_id, account_id=account.id, name=name, segment=segment, channel=channel, site_mode=site_mode,
-                site_value=land, location=location, size=size, price=seg.price, owner_share_pct=owner_share_pct, founded_on=ref)
+                site_value=land, location=location, size=size, price=seg.price, owner_share_pct=owner_share_pct, founded_on=ref,
+                opens_month=shift_month(ref, rules.opening_months(size, site_mode)))
     db.add(c)
     db.flush()
     where = "online" if channel == CompanyChannel.ONLINE else rules.resolve_location(seg, location).label
@@ -767,6 +835,7 @@ def plan_units(db: Session, c: Company, seg: rules.Segment, ref: date, *, season
                econ_mult: float = 1.0, relocation_mult: float = 1.0, branches: list[CompanyUnit] | None = None) -> list[UnitPlan]:
     """Demanda por unidade e a repartição da equipe produtiva global entre elas (documentado em `docs/EMPRESAS_V2.md`)."""
     branches = open_branches(db, c) if branches is None else branches
+    branches = [u for u in branches if u.opens_month is None or u.opens_month <= ref]
     plans = [UnitPlan(None, "Matriz", c.location, float(c.relevance), 1.0, key=c.id)] + [
         UnitPlan(u, u.name or f"Filial {u.id}", u.location, float(u.relevance), float(u.viability), key=f"{c.id}u{u.id}") for u in branches]
     for i, p in enumerate(plans):
@@ -1128,7 +1197,7 @@ def _equipment_factor(db: Session, c: Company) -> float:
     f = 1 + min(0.25, 0.05 * eq)
     if c.segment == CompanySegment.TRANSPORT:
         f += min(0.6, 0.15 * veh)
-    return f
+    return f * manager_boost(db, c)
 
 
 def process_month(db: Session, user_id: int, month: SimMonth) -> list[CompanyMonth]:
@@ -1227,6 +1296,7 @@ def _process_company(db: Session, c: Company, month: SimMonth) -> CompanyMonth:
     ref = month.ref_month
     seg = rules.SEGMENTS[c.segment]
     k = f"co:{c.id}:{ref:%Y-%m}"
+    _manager_turnover(db, c, ref)
     staff = _employees(db, c)
     items = list(db.scalars(select(InventoryItem).where(InventoryItem.company_id == c.id).order_by(InventoryItem.id))) \
         if seg.has_stock else []                                        # segmentos de serviço não têm estoque
@@ -1234,9 +1304,10 @@ def _process_company(db: Session, c: Company, month: SimMonth) -> CompanyMonth:
     if c.suspended_until is not None and ref > c.suspended_until:
         end_suspension(db, c, ref)                                      # fase 5: acabou o período sem operar do despejo
     suspended = c.suspended_until is not None and ref <= c.suspended_until
-    branches = open_branches(db, c)
+    branches = [u for u in open_branches(db, c) if u.opens_month is None or u.opens_month <= ref]
 
     # 1) condições do mês (relevância, demanda, sazonalidade, campanha, economia, mudança de endereço)
+    _run_marketing(db, c, seg, ref, k)
     marketing = c.marketing_until is not None and ref <= c.marketing_until
     relevance = float(c.relevance)
     missing = rules.missing_mandatory(c.channel, [e.role for e in staff if rules.counts_as_filled(e.hours_week)])   # fase 2/3a: cargos obrigatórios
@@ -1244,7 +1315,8 @@ def _process_company(db: Session, c: Company, month: SimMonth) -> CompanyMonth:
     if not missing and c.compliance_grace_months:
         c.compliance_grace_months = 0                              # regular: a tolerância não é mais necessária
     in_grace = grace > 0
-    irregular = bool(missing) and not in_grace
+    opening = _opening(c, ref)                                           # em abertura/obra: ainda não vende
+    irregular = bool(missing) and not in_grace and not opening
     stock_cap = min((float(i.quantity / (i.units_per_sale * (1 + i.waste_pct / 100))) for i in items), default=math.inf)
     # fase 4: fornecedores. Serviços sem contrato numa categoria NÃO operam (vendas 0); nos segmentos com estoque a falta de contrato
     # só impede a reposição (o estoque que sobrou ainda vende). A capacidade efetiva é limitada pelo menor volume contratado.
@@ -1261,7 +1333,9 @@ def _process_company(db: Session, c: Company, month: SimMonth) -> CompanyMonth:
     if service_supply:
         for sp in sup_state["failed"]:
             _event(db, c, ref, CompanyEventType.STOCK, f"Falha de entrega de {sp.name} ({sp.category}): capacidade do mês reduzida")
-    blocked = irregular or supply_blocked or suspended
+    blocked = irregular or supply_blocked or suspended or opening
+    if opening:
+        _event(db, c, ref, CompanyEventType.MONTH, f"Empresa em abertura/obra: começa a vender em {c.opens_month:%m/%Y}")
     if suspended:
         _event(db, c, ref, CompanyEventType.LEASE, "Empresa sem ponto (despejo): vendas zeradas até mudar de endereço ou o prazo acabar")
     seed = _seed(db, c.user_id)
@@ -1322,6 +1396,8 @@ def _process_company(db: Session, c: Company, month: SimMonth) -> CompanyMonth:
     else:
         variable = quantize_money(revenue * seg.variable_pct / 100 * qmult)
         _post(db, c, ref, kind=FlowKind.EXPENSE, amount=variable, desc="Custos variáveis (frete, taxas, comissões)", line="VARIABLE", key=f"{k}:variable", overdraft=True)
+    from backend.services import company_franchise as franchise_svc
+    revenue = quantize_money(revenue + franchise_svc.process_month(db, c, ref, k, matriz_sold=unit_sold[0], seed=seed))   # taxas e royalties de franquias
     # 4) folha de pagamento (+ pró-labore, que vira receita PESSOAL do usuário)
     payroll = quantize_money(sum((employee_cost(e) for e in staff), ZERO))
     _post(db, c, ref, kind=FlowKind.EXPENSE, amount=payroll, desc=f"Folha de pagamento ({len(staff)} funcionários; CLT 2x, PJ 1x)", line="PAYROLL", key=f"{k}:payroll", overdraft=True)
@@ -1357,6 +1433,9 @@ def _process_company(db: Session, c: Company, month: SimMonth) -> CompanyMonth:
         rec = active_recruiter(db, c)
         _post(db, c, ref, kind=FlowKind.EXPENSE, amount=rfee, desc=f"Taxa mensal do contratador ({recruiter.tier_of(rec.tier).label})",
               line="FEES", key=f"{k}:recruiter", overdraft=True)
+    for a in db.scalars(select(CompanyAide).where(CompanyAide.company_id == c.id, CompanyAide.status == "ACTIVE")):
+        _post(db, c, ref, kind=FlowKind.EXPENSE, amount=aides.monthly_fee(a.kind, a.level, c.size),
+              desc=f"Taxa mensal: {aides.KIND_LABEL[a.kind].lower()} ({aides.LEVEL_LABEL[a.level]})", line="FEES", key=f"{k}:aide:{a.kind}", overdraft=True)
     asset_costs = ZERO
     for g in db.scalars(select(Good).where(Good.owner_account_id == c.account_id, Good.status == GoodStatus.ACTIVE)):
         for gc in db.scalars(select(GoodCost).where(GoodCost.good_id == g.id)):
@@ -1442,6 +1521,9 @@ def _process_company(db: Session, c: Company, month: SimMonth) -> CompanyMonth:
         CompanyLoan.company_id == c.id, CompanyLoan.status == LoanStatus.ACTIVE))
     c.relevance = D(str(round(new_relevance, 2)))
     c.reputation = rules.next_reputation(c.reputation, served=served, stockout=stockout, irregular=blocked)
+    from backend.services import company_ipo
+    company_ipo.process_month(db, c, ref, k, seed=seed, sentiment=(econ - 1.0) * 0.08)   # abertura de capital: estreia/preço da ação
+    balance = cash(db, c)
     equity = wealth_service.company_equity(db, c)
     row = CompanyMonth(company_id=c.id, ref_month=ref, demand_units=D(str(round(demand, 2))), capacity_units=D(str(round(capacity, 2))),
                        units_sold=D(str(sold)), stockout=stockout, revenue=revenue, variable_costs=variable_total,

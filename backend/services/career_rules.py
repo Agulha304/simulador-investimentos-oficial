@@ -20,6 +20,18 @@ FIELDS = {
                      degree="Gestão comercial", months=36, cost=800, premium=20, hours=16),
     "artes": dict(label="Artes e comunicação", emoji="🎨", start=0.97, growth=4.0, outlook="mais criativo, ganho irregular",
                   degree="Design / Comunicação", months=36, cost=750, premium=18, hours=16),
+    "agro": dict(label="Agro e meio ambiente", emoji="🌾", start=0.99, growth=4.8, outlook="demanda firme no campo; ganha mais quem se forma",
+                 degree="Agronomia / Engenharia Ambiental", months=60, cost=1250, premium=36, hours=22),
+    "gastronomia": dict(label="Gastronomia e turismo", emoji="🍽️", start=0.98, growth=4.1, outlook="muito movimento, salário base baixo e gorjetas",
+                        degree="Gastronomia / Turismo", months=36, cost=800, premium=19, hours=16),
+    "logistica": dict(label="Logística e transporte", emoji="🚚", start=1.01, growth=4.6, outlook="cresce com o comércio online",
+                      degree="Logística", months=36, cost=850, premium=24, hours=16),
+    "seguranca": dict(label="Segurança e serviço público", emoji="🛡️", start=1.00, growth=4.3, outlook="estabilidade e plano de carreira",
+                      degree="Gestão pública / Segurança", months=36, cost=800, premium=22, hours=16),
+    "industria": dict(label="Indústria e manutenção", emoji="🏭", start=1.02, growth=4.9, outlook="turnos, adicionais e bons técnicos",
+                      degree="Engenharia de Produção / Mecatrônica", months=60, cost=1250, premium=35, hours=22),
+    "ciencia": dict(label="Ciência e pesquisa", emoji="🔬", start=0.97, growth=5.4, outlook="começa baixo, cresce com mestrado e doutorado",
+                    degree="Química / Física / Biologia", months=60, cost=1200, premium=44, hours=24),
 }
 DEFAULT_FIELD = "comercio"
 NO_DEGREE_SWITCH = 0.85           # mudar de área sem diploma = recomeçar com 15% a menos

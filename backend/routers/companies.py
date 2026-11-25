@@ -16,6 +16,9 @@ from backend.schemas import companies as s
 from backend.services import budget_service as bs
 from backend.services import partners
 from backend.services import company_expansion as xp
+from backend.services import company_aides_service as aidesvc
+from backend.services import company_franchise as franchise_svc
+from backend.services import company_ipo as ipo_svc
 from backend.services import company_recruiter_service as recsvc
 from backend.services import company_rules as rules
 from backend.services import company_service as cs
@@ -182,6 +185,8 @@ def _detail(db: Session, c: Company) -> s.CompanyDetailOut:
         compliance=s.ComplianceOut(**cs.compliance(db, c)),
         supply=_supply_out(db, c, seg, open_ref),
         recruiter=s.RecruiterOut(**rv) if (rv := recsvc.view(db, c)) else None, recruiter_tiers=recsvc.tier_options(c),
+        aides=aidesvc.view(db, c), aide_options=aidesvc.options(c), opens_month=c.opens_month,
+        franchise=franchise_svc.view(db, c, open_ref), ipo=ipo_svc.view(db, c, open_ref),
         employees=[_employee_out(e, role_labels, open_ref) for e in employees],
         inventory=[s.InventoryOut(id=i.id, name=i.name, unit=i.unit, quantity=i.quantity, unit_cost=i.unit_cost,
                                   value=quantize_money(i.quantity * i.unit_cost), supplier=i.supplier, min_quantity=i.min_quantity,
@@ -366,6 +371,46 @@ def _report(db: Session, user_id: int, company_id: int, rep: dict) -> s.Recruite
     return s.RecruiterReportOut(**rep, company=_detail(db, cs.get_company(db, user_id, company_id)))
 
 
+@router.post("/{company_id}/aides/{kind}", response_model=s.CompanyDetailOut)
+def aide_hire(company_id: int, kind: str, body: s.AideHireIn, user: CurrentUser, db: DbSession):
+    """Contrata (ou troca o nível d)o marketeiro (MARKETER) ou gerente (MANAGER): baixo, médio ou alto nível. Taxa mensal no fechamento."""
+    return _run(db, lambda: _act(db, user.id, company_id, lambda m: aidesvc.hire(db, user.id, m, company_id, kind, body.level)))
+
+
+@router.delete("/{company_id}/aides/{kind}", response_model=s.CompanyDetailOut)
+def aide_dismiss(company_id: int, kind: str, user: CurrentUser, db: DbSession):
+    return _run(db, lambda: _act(db, user.id, company_id, lambda m: aidesvc.dismiss(db, user.id, m, company_id, kind)))
+
+
+@router.put("/{company_id}/aides/{kind}/briefing", response_model=s.CompanyDetailOut)
+def aide_briefing(company_id: int, kind: str, body: s.AideBriefingIn, user: CurrentUser, db: DbSession):
+    """Briefing: marketeiro = orçamento mensal; gerente = rigidez (0 a 100; alta rende mais, mas funcionários podem se demitir)."""
+    raw = {k: v for k, v in (("monthly_budget", str(body.monthly_budget) if body.monthly_budget is not None else None), ("rigor", body.rigor)) if v is not None}
+    return _run(db, lambda: _act(db, user.id, company_id, lambda m: aidesvc.update_briefing(db, user.id, m, company_id, kind, raw)))
+
+
+@router.post("/{company_id}/franchise/advertise", response_model=s.CompanyDetailOut)
+def franchise_advertise(company_id: int, body: s.FranchiseAdIn, user: CurrentUser, db: DbSession):
+    """Publicidade da franquia: atrai franqueados (difícil: exige marca relevante; o efeito decai todo mês)."""
+    return _run(db, lambda: _act(db, user.id, company_id, lambda m: franchise_svc.advertise(db, user.id, m, company_id, body.tier, body.idempotency_key)))
+
+
+@router.post("/{company_id}/ipo", response_model=s.CompanyDetailOut)
+def ipo_apply(company_id: int, body: s.IpoApplyIn, user: CurrentUser, db: DbSession):
+    """Pede a abertura de capital (IPO): exige empresa madura e lucrativa; leva 3 meses."""
+    return _run(db, lambda: _act(db, user.id, company_id, lambda m: ipo_svc.apply(db, user.id, m, company_id, body.float_pct, body.idempotency_key)))
+
+
+@router.post("/{company_id}/ipo/sell", response_model=s.CompanyDetailOut)
+def ipo_sell(company_id: int, body: s.StakeIn, user: CurrentUser, db: DbSession):
+    return _run(db, lambda: _act(db, user.id, company_id, lambda m: ipo_svc.sell_stake(db, user.id, m, company_id, body.pct, body.idempotency_key)))
+
+
+@router.post("/{company_id}/ipo/buyback", response_model=s.CompanyDetailOut)
+def ipo_buyback(company_id: int, body: s.StakeIn, user: CurrentUser, db: DbSession):
+    return _run(db, lambda: _act(db, user.id, company_id, lambda m: ipo_svc.buy_back(db, user.id, m, company_id, body.pct, body.idempotency_key)))
+
+
 @router.post("/{company_id}/recruiter", response_model=s.CompanyDetailOut)
 def recruiter_hire(company_id: int, body: s.RecruiterHireIn, user: CurrentUser, db: DbSession):
     """Contrata o contratador (headhunter) no nível pedido ou troca o nível. Opcional; taxa mensal no fechamento."""
@@ -530,6 +575,16 @@ def buy_good(company_id: int, body: s.CompanyGoodIn, user: CurrentUser, db: DbSe
         cs._active(c)
         goods_service.purchase(db, user.id, month, listing_key=body.listing_key, purchase_key=body.idempotency_key,
                                company=c)
+    return _run(db, lambda: _act(db, user.id, company_id, fn))
+
+
+@router.post("/{company_id}/goods/build", response_model=s.CompanyDetailOut, status_code=status.HTTP_201_CREATED)
+def build_good(company_id: int, body: s.CompanyBuildIn, user: CurrentUser, db: DbSession):
+    """A empresa CONSTRÓI um imóvel próprio (3 a 6 meses de obra; pago à vista do caixa da empresa)."""
+    def fn(month):
+        c = cs.get_company(db, user.id, company_id, lock=True)
+        cs._active(c)
+        goods_service.build(db, user.id, month, plan_key=body.plan_key, city_key=body.city_key, purchase_key=body.idempotency_key, company=c)
     return _run(db, lambda: _act(db, user.id, company_id, fn))
 
 

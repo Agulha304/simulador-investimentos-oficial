@@ -30,7 +30,15 @@ LOAN_MAX_TERM = 60
 MARKETING_BOOST = D("0.12")
 MARKETING_MONTHS = 3
 MAX_CAPACITY_LEVEL = 4
-MAX_UNITS = 10
+MAX_BRANCHES = 50                   # filiais próprias: passando disto só dá para crescer por franquias
+MAX_UNITS = MAX_BRANCHES + 1        # matriz + filiais
+# dificuldade do mercado: vender é difícil (a demanda calculada é multiplicada por isto e a clientela chega mais devagar)
+MARKET_DIFFICULTY = 0.65
+RELEVANCE_GAIN_MULT = 0.7           # a relevância sobe 30% mais devagar
+# prazos reais (meses): abrir a empresa leva 1 mês (porte grande 2); CONSTRUIR (terreno próprio) leva 3; alugar/online leva 1
+OPEN_MONTHS = {"SMALL": 1, "MEDIUM": 1, "LARGE": 2}
+BUILD_MONTHS = 3
+RENT_FITOUT_MONTHS = 1
 ONLINE_LOCATION_KEY = "online"
 ONLINE_COST_MULT = D("0.55")        # canal online em segmentos que também têm loja: estrutura e custos fixos menores
 ONLINE_DEMAND = 1.0                 # alcance digital no lugar da demanda local
@@ -42,7 +50,7 @@ RESERVE_MONTHS = D("6")             # reserva do capital mínimo: meses de custo
 DEMAND_FLOOR = 0.25                 # fator de demanda com relevância 0 (quase nada, mas não zero)
 DEMAND_EXP = 1.10                   # fator = FLOOR + (1 - FLOOR) * (relevância/100) ** EXP
 PRICE_GAIN_CAP = 1.30               # preço abaixo do mercado vende mais, mas satura em +30%
-ZERO_MONTH_BASE = 0.30              # chance de mês sem nenhuma venda com relevância 0 (decresce até REL_END)
+ZERO_MONTH_BASE = 0.40              # chance de mês sem nenhuma venda com relevância 0 (decresce até REL_END)
 ZERO_MONTH_REL_END = 40.0
 CEILING_FACTOR = 1.6                # teto de produção/atendimento = 1,6x a demanda "de referência" do porte
 STORAGE_MONTHS = 2.5                # teto de estoque: 2,5 meses da demanda de referência do porte
@@ -656,7 +664,7 @@ def demand_units(seg: Segment, *, location: str, size: CompanySize, units: int, 
         d *= season_factor(seg, company_id, ref)
     if marketing:
         d *= 1 + marketing_boost
-    return d
+    return d * MARKET_DIFFICULTY
 
 
 def reference_units(seg: Segment, size: CompanySize, units: int = 1) -> float:
@@ -845,7 +853,7 @@ def next_relevance(relevance: float, *, sold: float, demand: float, reputation: 
     gain = (1.0 if served else 0.3) + 0.5 * (reputation - 50) / 50 + (0.3 if marketing else 0.0) + (0.15 if not stockout else 0.0)
     gain += 0.1 if price_ratio <= 1.1 else (-0.3 if price_ratio > 1.3 else 0.0)
     gain += QUALITY_REL_GAIN * (float(quality) - QUALITY_BASE) / 50          # fase 5: produto melhor conquista a clientela mais rápido
-    gain = max(0.05, min(1.5, gain)) * (1 - relevance / 100) ** 0.7
+    gain = max(0.05, min(1.5, gain)) * (1 - relevance / 100) ** 0.7 * RELEVANCE_GAIN_MULT
     return min(100.0, relevance + gain)
 
 
@@ -868,3 +876,17 @@ def relevance_after_move(seg: Segment, relevance: float, old_location: str, new_
     delta = resolve_location(seg, new_location).demand - resolve_location(seg, old_location).demand
     keep = max(0.60, min(0.95, 0.82 + 0.4 * delta))
     return round(float(relevance) * keep, 2)
+
+
+def opening_months(size: CompanySize, site_mode) -> int:
+    """Meses até a EMPRESA abrir: 1 (porte grande 2); se o ponto é CONSTRUÍDO em terreno próprio, 3."""
+    if site_mode is not None and getattr(site_mode, "value", site_mode) == "BUY":
+        return BUILD_MONTHS
+    return OPEN_MONTHS[size.value]
+
+
+def unit_build_months(channel, site_mode) -> int:
+    """Meses até a FILIAL abrir: 3 construindo em terreno próprio; 1 alugando ou online."""
+    if site_mode is not None and getattr(site_mode, "value", site_mode) == "BUY":
+        return BUILD_MONTHS
+    return RENT_FITOUT_MONTHS

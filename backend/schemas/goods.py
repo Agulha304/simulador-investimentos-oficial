@@ -26,6 +26,12 @@ class PurchaseIn(BaseModel):
     usage_km_month: int | None = Field(None, ge=0, le=20000)
 
 
+class BuildIn(BaseModel):
+    plan_key: str
+    city_key: str
+    idempotency_key: str = Field(min_length=8, max_length=100)
+
+
 class SimulateIn(BaseModel):
     listing_key: str
     down_payment: Decimal = NonNeg
@@ -146,6 +152,8 @@ class GoodOut(BaseModel):
     loan_balance: Decimal | None
     sold_on: date | None
     sale_result: Decimal | None
+    available_month: date | None = None
+    construction_plan: str | None = None
 
 
 class RealEstateOut(BaseModel):

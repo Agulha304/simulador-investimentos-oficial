@@ -1,6 +1,7 @@
 import { Suspense, lazy, useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { EXPANSION_KINDS, ExpansionModal, HireModal, LeaseModal, LoanModal, MoneyModal, RelocateModal, SupplierModal } from "../components/CompanyModals";
+import { AidesCard, FranchiseCard, IpoCard } from "../components/CompanyGrowth";
 import { RecruiterCard, ReportPanel, SupplierLimitsModal, TeamModal } from "../components/CompanyRecruiter";
 import { StatCard } from "../components/StatCard";
 import { api, type CoExpKind, type CoRecruiterReport, type CoSupplierContract, type CompanyDetail, type Good, type Listing } from "../services/api";
@@ -167,6 +168,10 @@ export function CompanyPage() {
               <span className={`chip ${p.status === "ACTIVE" ? "up" : "down"}`}>{p.share_pct}% · {p.status === "ACTIVE" ? "sócio(a)" : "deu calote"}</span></li>))}</ul>
         </section>)}
       <RecruiterCard d={d} act={act} onReport={runReport} onTeam={() => setModal("team")} />
+      {d.opens_month && d.months.reduce((m, x) => (x.ref_month > m ? x.ref_month : m), "") < d.opens_month && <div className="alert">Empresa em abertura: começa a vender em {d.opens_month.slice(0, 7)}. Enquanto isso, só os custos correm.</div>}
+      <AidesCard d={d} act={act} />
+      <FranchiseCard d={d} act={act} />
+      <IpoCard d={d} act={act} />
       {d.compliance && (
         <section className="card" aria-label="Cargos obrigatórios">
           <div className="row"><h2>Obrigatórios</h2>

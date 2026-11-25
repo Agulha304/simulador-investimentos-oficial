@@ -44,6 +44,8 @@ class Good(Base):
     acquisition_cost: Mapped[Decimal] = mapped_column(Money())            # preço + taxas e impostos
     current_value: Mapped[Decimal] = mapped_column(Money())
     purchase_key: Mapped[str] = mapped_column(String(128))                # idempotência da compra
+    available_month: Mapped[date | None] = mapped_column(Date)            # escritura/obra: só pode ser alugado, usado ou vendido a partir daqui
+    construction_plan: Mapped[str | None] = mapped_column(String(40))     # preenchido se o imóvel foi CONSTRUÍDO
     sold_on: Mapped[date | None] = mapped_column(Date)
     sale_price: Mapped[Decimal | None] = mapped_column(Money())
     sale_fees: Mapped[Decimal | None] = mapped_column(Money())
