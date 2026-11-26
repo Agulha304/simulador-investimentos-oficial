@@ -27,6 +27,7 @@ const PortfolioPage = page(imports.PortfolioPage, "PortfolioPage");
 const HistoryPage = page(imports.HistoryPage, "HistoryPage");
 const CareerPage = page(() => import("./pages/CareerPage"), "CareerPage");
 const EducationPage = page(() => import("./pages/EducationPage"), "EducationPage");
+const WorldPage = page(() => import("./pages/WorldPage"), "WorldPage");
 const CompaniesPage = page(() => import("./pages/CompaniesPage"), "CompaniesPage");
 const CompanyPage = page(() => import("./pages/CompanyPage"), "CompanyPage");
 const GoodPage = page(() => import("./pages/GoodPage"), "GoodPage");
@@ -93,6 +94,7 @@ export default function App() {
               <Route path="vida" element={<LifePage />} />
               <Route path="carreira" element={<CareerPage />} />
               <Route path="educacao" element={<EducationPage />} />
+              <Route path="mundo" element={<WorldPage />} />
               <Route path="economia" element={<EconomyPage />} />
               <Route path="resumos" element={<ReportsPage />} />
               <Route path="desempenho" element={<DesempenhoPage />} />

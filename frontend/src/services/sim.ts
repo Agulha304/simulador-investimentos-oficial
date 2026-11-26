@@ -128,7 +128,9 @@ export interface BudgetImpact {
 }
 
 export interface HubJob { id: number; title: string; employer: string; field: string; field_label: string; kind: "CLT" | "PJ"; level_name: string; net: string; hired_net: string; since: string; until: string | null; status: "ACTIVE" | "PENDING" | "ENDED"; in_resume: boolean; hours: number; perks: string[]; end_reason: string | null; can_raise?: boolean; raise_note?: string | null; raise_ready_in?: number }
-export interface JobOffer { key: string; field: string; field_label: string; level: number; level_name: string; need: number; title: string; employer: string; chance: number; applied: string | null; clt: { net: number; gross: number; vr: number; health_plan: boolean; fgts_month: number }; pj: { net: number } }
+export interface JobOffer extends JobOfferWorld { key: string; field: string; field_label: string; level: number; level_name: string; need: number; title: string; employer: string; chance: number; applied: string | null; clt: { net: number; gross: number; vr: number; health_plan: boolean; fgts_month: number }; pj: { net: number } }
+export interface JobOfferWorld { country?: string; country_name?: string; flag?: string; work_mode?: "REMOTE" | "ONSITE"; needs_move?: boolean;
+  intl?: { currency: string; symbol: string; net_local: number; net_brl: string; income_tax: number; rate: string } }
 export interface HubApplication { id: number; title: string; employer: string; status: "APPROVED" | "REJECTED" | "ACCEPTED"; chance: number; offer: JobOffer; can_accept: boolean }
 export interface CareerHub {
   month: string; field: { key: string | null; label: string | null; emoji: string | null; outlook: string | null; growth_pct: number | null; next_raise: string | null };
@@ -150,8 +152,8 @@ export const sim = {
   lifeCalendar: () => request<Calendar>("/life/calendar"),
   lifeTreatment: (key: string, treated: boolean) => request<Life>(`/life/conditions/${key}/treatment`, put({ treated })),
   career: () => request<CareerHub>("/career"),
-  careerOffers: (field: string) => request<{ field: string; score: number; offers: JobOffer[] }>(`/career/offers?field=${field}`),
-  careerApply: (field: string, offer_key: string) => request<CareerHub>("/career/apply", post({ field, offer_key })),
+  careerOffers: (field: string, country = "BR") => request<{ field: string; score: number; offers: JobOffer[] }>(`/career/offers?field=${field}&country=${country}`),
+  careerApply: (field: string, offer_key: string, country = "BR") => request<CareerHub>("/career/apply", post({ field, offer_key, country })),
   careerAccept: (id: number, kind: string, replace_job_id?: number) => request<CareerHub>(`/career/applications/${id}/accept`, post({ kind, replace_job_id })),
   careerQuit: (id: number) => request<CareerHub>(`/career/jobs/${id}/quit`, post()),
   careerResume: (kind: string, id: number, in_resume: boolean) => request<CareerHub>("/career/resume", put({ kind, id, in_resume })),
@@ -189,7 +191,14 @@ export const sim = {
   life: () => request<Life>("/life"),
   lifeCharacter: (name: string, age_years: number, gender?: string, interested_in?: string) => request<Life>("/life/character", put({ name, age_years, gender, interested_in })),
   lifeCareerChange: (field: string) => request<Life>("/life/career/change", post({ field })),
-  lifeDegree: (field: string) => request<Life>("/life/degree", post({ field })),
+  lifeDegree: (field: string, uni = "aberta") => request<Life & { admission?: { admitted: boolean; chance: number; uni: string } | null }>("/life/degree", post({ field, uni })),
+  lifeUniversities: (field?: string) => request<{ universities: University[] }>(`/life/universities${field ? `?field=${field}` : ""}`),
+  lifeAbroad: () => request<Abroad>("/life/abroad"),
+  lifeExchange: (program_key: string) => request<Abroad>("/life/exchange", post({ program_key })),
+  lifeExchangeCancel: () => request<Abroad>("/life/exchange", { method: "DELETE" }),
+  lifeMoveAbroad: (country: string) => request<Abroad & { result: { ended_jobs: string[]; reactions: string[] } }>("/life/move-abroad", post({ country })),
+  lifeReturnHome: () => request<Abroad & { result: { flight_brl: string } }>("/life/return-home", post()),
+  economyCountries: () => request<{ month: string; countries: CountryRow[] }>("/economy/countries"),
   lifeDegreeDrop: () => request<Life>("/life/degree", { method: "DELETE" }),
   decisions: () => request<{ month: string; pending: EcoEvent[] }>("/economy/decisions"),
   gameSimParams: (id: number) => request<{ game: string; params: SimParams }>(`/games/${id}/sim-params`),
@@ -216,3 +225,21 @@ export const sim = {
   latestReport: () => request<MonthReport>("/progress/reports/latest"),
   annual: (year: number) => request<AnnualReport>(`/progress/reports/annual/${year}`),
 };
+
+export interface UniField { field: string; label: string; degree: string; months: number; monthly_cost: number; chance: number; wait_months: number; points: number; hours: number }
+export interface University { key: string; name: string; short: string; state: string; kind: "PUBLICA" | "PRIVADA"; ranking: number; weight: number; demand: number;
+  salary_premium_factor: number; fields: UniField[] }
+export interface AbroadCost { country: string; country_name: string; currency: string; rate: string; upfront: { flight: string; visa: string; deposit: string; total: string };
+  tuition_month: string; stipend_month: string; living_month: Record<string, string>; month_total: string; months: number; total: string | null }
+export interface Abroad {
+  country: string; country_name: string; flag: string; currency: string; since: string | null; rate: string; living_month: Record<string, string> | null;
+  exchange: { id: number; program: string; name: string; country: string; progress: number; months: number; points: number; field: string } | null;
+  programs: { key: string; country: string; country_name: string; flag: string; name: string; kind: string; months: number; field: string; points: number; note: string; language: string; cost: AbroadCost }[];
+  countries: { code: string; name: string; flag: string; currency: string; language: string; cost: AbroadCost }[];
+  done: { id: number; name: string; country: string; months: number; points: number; field: string; status: string }[];
+}
+export interface CountryRow {
+  code: string; name: string; flag: string; currency: string; symbol: string; rate: string; rate_start: string; change_12m_pct: number; inflation: number; income_tax: number;
+  corp_tax: number; vat: number; burden: number; cost_index: number; wage_index: number; market: number; language: string; living_local: Record<string, number>;
+  living_brl: string; history: { month: string; rate: string }[];
+}

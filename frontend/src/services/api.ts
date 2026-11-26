@@ -262,7 +262,8 @@ export interface CoCatalog {
   segments: CoSegment[];
   sizes: { key: string; label: string; demand: number; setup_factor: string }[];
 }
-export interface CoQuote {
+export interface CoWorldQuote { country?: string; country_name?: string; currency?: string; rate?: Decimal; country_factor?: Decimal; income_tax?: number; vat?: number; corp_tax?: number; open_months?: number }
+export interface CoQuote extends CoWorldQuote {
   channel: CoChannel; site_mode: CoSiteMode | null; location: string; owner_share_pct: Decimal;
   minimum_capital: Decimal; owner_cost: Decimal; extra_capital: Decimal; total_owner_cost: Decimal;
   setup_cost: Decimal; initial_stock: Decimal; land_cost: Decimal; monthly_fixed: Decimal; monthly_rent: Decimal; monthly_payroll: Decimal; mandatory_cost: Decimal; mandatory_roles: string[]; expected_units: number;
@@ -270,6 +271,7 @@ export interface CoQuote {
 }
 export interface CoSiteInput { channel?: CoChannel; site_mode?: CoSiteMode; location?: string }
 export interface Company {
+  country?: string; country_name?: string; currency?: string; country_factor?: Decimal; opens_month?: string | null;
   id: number; name: string; segment: Segment; segment_label: string; unit_label: string; metrics_kind: CoMetricsKind; channel: CoChannel; site_mode: CoSiteMode | null; site_value: Decimal; location: string; location_label: string;
   size: string; units: number; capacity_level: number; price: Decimal; reputation: number; relevance: number; owner_share_pct: Decimal; owner_salary: Decimal;
   auto_restock: boolean; status: string; founded_on: string; marketing_until: string | null;
@@ -299,6 +301,7 @@ export interface CoExpSite { channel: CoChannel; location: string; label: string
 export interface CoExpOptions { kind: CoExpKind; tier: CoTier; tier_label: string; tier_cost: Decimal; ref_month: string; options: CoExpOption[]; sites: CoExpSite[] }
 export interface CoExpResult { success: boolean; outcome: "FULL" | "PARTIAL" | "FAIL"; message: string; effects: string[]; cost: Decimal; replayed: boolean; company: CompanyDetail }
 export interface CoEmployee {
+  work_mode?: "ONSITE" | "REMOTE"; country?: string; country_name?: string; can_remote?: boolean;
   id: number; name: string; role: string; role_label: string; level: string; regime: CoRegime; schedule: CoSchedule; education: string; education_label: string;
   experience_years: number; salary: Decimal; total_cost: Decimal; severance_estimate: Decimal; lawsuit_risk_pct: number; hours_week: number;
   productivity: Decimal; status: string; hired_on: string; terminated_on: string | null; lawsuit_history?: number;
@@ -307,10 +310,11 @@ export interface CoCompliance {
   regular: boolean; required: { role: string; label: string; present: boolean }[]; missing: string[]; missing_labels: string[]; estimated_fine: Decimal; grace_months?: number;
 }
 export interface CoCandidate {
+  can_remote?: boolean; remote_effect_pct?: number;
   id: string; name: string; role: string; role_label: string; regime: CoRegime; education: string; education_label: string; experience_years: number;
   level: string; level_label: string; productivity: Decimal; asking_salary: Decimal; hours_week: number; schedule: CoSchedule; monthly_cost_at_asking: Decimal; lawsuit_history?: number;
 }
-export interface CoHireBody { candidate_id: string; salary: string; hours_week: number; schedule: CoSchedule; regime: CoRegime; confirm_risk: boolean; idempotency_key: string }
+export interface CoHireBody { work_mode?: "ONSITE" | "REMOTE"; country?: string; candidate_id: string; salary: string; hours_week: number; schedule: CoSchedule; regime: CoRegime; confirm_risk: boolean; idempotency_key: string }
 export interface CoHireResult { accepted: boolean; status: "ACCEPTED" | "COUNTER" | "REFUSED"; message: string; counter_offer: Decimal | null; company: CompanyDetail | null }
 export type CoRecruiterTier = "BASIC" | "PRO" | "ELITE";
 export type CoRegimePolicy = "CLT_ONLY" | "PJ_ONLY" | "BOTH";
@@ -549,12 +553,12 @@ export const api = {
   updateGoodCost: (id: number, costId: number, body: { amount?: string; active?: boolean }) =>
     request<GoodDetail>(`/goods/${id}/costs/${costId}`, { method: "PATCH", body: JSON.stringify(body) }),
   coCatalog: () => request<CoCatalog>("/companies/catalog"),
-  coQuote: (body: { segment: string; size: string; extra_capital: string; owner_share_pct: string } & CoSiteInput) =>
+  coQuote: (body: { segment: string; size: string; extra_capital: string; owner_share_pct: string; country?: string } & CoSiteInput) =>
     request<CoQuote>("/companies/quote", { method: "POST", body: JSON.stringify(body) }),
   coOverview: () => request<CoOverview>("/companies/overview"),
   coInvitePartner: (person_id: number, share_pct: string, capital: string) =>
     request<{ id: number; person_id: number; accepted: boolean; message: string; share_pct: string }>("/companies/partner-invites", { method: "POST", body: JSON.stringify({ person_id, share_pct, capital }) }),
-  coCreate: (body: { name: string; segment: string; size: string; extra_capital: string; owner_share_pct: string; partner_invite_ids?: number[] } & CoSiteInput) =>
+  coCreate: (body: { name: string; segment: string; size: string; extra_capital: string; owner_share_pct: string; partner_invite_ids?: number[]; country?: string } & CoSiteInput) =>
     request<CompanyDetail>("/companies", { method: "POST", body: JSON.stringify(body) }),
   company: (id: number) => request<CompanyDetail>(`/companies/${id}`),
   coContribute: (id: number, amount: string) =>
@@ -563,8 +567,11 @@ export const api = {
     request<CompanyDetail>(`/companies/${id}/distribute`, { method: "POST", body: JSON.stringify({ amount, idempotency_key: crypto.randomUUID() }) }),
   coSettings: (id: number, body: { price?: string; owner_salary?: string; auto_restock?: boolean }) =>
     request<CompanyDetail>(`/companies/${id}/settings`, { method: "PATCH", body: JSON.stringify(body) }),
-  coCandidates: (id: number, role: string, regime: CoRegime) =>
-    request<{ role: string; regime: CoRegime; month: string; candidates: CoCandidate[] }>(`/companies/${id}/candidates`, { method: "POST", body: JSON.stringify({ role, regime }) }),
+  coCandidates: (id: number, role: string, regime: CoRegime, country?: string) =>
+    request<{ role: string; regime: CoRegime; month: string; candidates: CoCandidate[] }>(`/companies/${id}/candidates`, { method: "POST", body: JSON.stringify({ role, regime, country }) }),
+  coAcquisitions: () => request<CoAcquisitions>("/companies/acquisitions"),
+  coAcquisitionOffer: (body: { target_key: string; offer: string; mode: "MERGE" | "KEEP"; buyer_company_id?: number; name?: string }) =>
+    request<CoAcquisitions & { status: string; message: string; counter?: string; rounds_left?: number; company_id?: number }>("/companies/acquisitions/negotiate", { method: "POST", body: JSON.stringify(body) }),
   coHire: (id: number, body: Omit<CoHireBody, "idempotency_key"> & { idempotency_key?: string }) =>
     request<CoHireResult>(`/companies/${id}/hire`, { method: "POST", body: JSON.stringify({ ...body, idempotency_key: body.idempotency_key ?? crypto.randomUUID() }) }),
   coRecruiterHire: (id: number, tier: CoRecruiterTier) =>
@@ -624,3 +631,11 @@ export const api = {
   portfolio: () => request<PortfolioSummary>("/portfolio"),
   transactions: (limit = 20) => request<Transaction[]>(`/portfolio/transactions?limit=${limit}`),
 };
+
+export interface CoAcqTarget {
+  key: string; name: string; segment: string; segment_label: string; size: string; size_label: string; country: string; country_name: string; flag: string; currency: string;
+  relevance: number; reputation: number; employees: number; monthly_revenue: number; annual_profit: number; margin_pct: number; assets: number; valuation: number;
+  ask: number; ask_now: string; months_for_sale: number;
+  deal: null | { id: number; status: string; rounds: number; ask: string; last_offer: string | null; price: string | null; log: { month: string; offer: string; status: string; message?: string }[] };
+}
+export interface CoAcquisitions { month: string; listings: CoAcqTarget[]; max_rounds: number; done: { name: string; price: string; month: string | null; mode: string | null }[] }

@@ -1,4 +1,5 @@
 """Vida pessoal e família (etapa 4)."""
+from datetime import date
 from decimal import Decimal
 
 from fastapi import APIRouter
@@ -12,6 +13,7 @@ from backend.routers.budget import _run
 from backend.services import budget_service as bs
 from backend.services import life_rules as R
 from backend.services import career_rules, item_sync, partners
+from backend.services import university_rules as ur
 from backend.services import life_service as ls
 
 router = APIRouter(prefix="/life", tags=["life"])
@@ -26,6 +28,11 @@ class CharacterIn(BaseModel):
 
 class FieldIn(BaseModel):
     field: str
+
+
+class DegreeIn(BaseModel):
+    field: str
+    uni: str = "aberta"
 
 
 class ChoicesIn(BaseModel):
@@ -98,7 +105,9 @@ def _career_out(db: Session, user_id: int, p, month) -> dict:
         "next_raise": next_raise, "salary": str(item_sync.salary_total(db, user_id, month.ref_month)),
         "degrees": list(p.degrees or []), "pending": p.pending_career,
         "studying": ({"field": p.degree_field, "name": career_rules.FIELDS[p.degree_field]["degree"], "progress": p.degree_progress,
-                      "total": p.degree_total, "cost": career_rules.FIELDS[p.degree_field]["cost"]} if p.degree_field else None),
+                      "total": p.degree_total, "uni": p.degree_uni or "aberta",
+                      "cost": ur.monthly_cost(ur.get(p.degree_uni or "aberta"), p.degree_field, career_rules.FIELDS[p.degree_field]["cost"])} if p.degree_field else None),
+        "degree_unis": dict(p.degree_unis or {}),
         "fields": [{"key": k, "label": f["label"], "emoji": f["emoji"], "outlook": f["outlook"], "growth_pct": f["growth"], "start": f["start"],
                     "degree": f["degree"], "months": f["months"], "cost": f["cost"], "premium_pct": f["premium"], "hours": f["hours"]}
                    for k, f in career_rules.FIELDS.items()],
@@ -274,10 +283,99 @@ def career_change(body: FieldIn, user: CurrentUser, db: DbSession):
 
 
 @router.post("/degree")
-def degree_enroll(body: FieldIn, user: CurrentUser, db: DbSession):
+def degree_enroll(body: DegreeIn, user: CurrentUser, db: DbSession):
     def go():
-        ls.enroll_degree(db, user.id, bs.ensure_setup(db, user.id), body.field)
-        return _overview(db, user.id)
+        p = ls.enroll_degree(db, user.id, bs.ensure_setup(db, user.id), body.field, body.uni)
+        out = _overview(db, user.id)
+        out["admission"] = getattr(p, "admission", None)
+        return out
+    return _run(db, go)
+
+
+class ExchangeIn(BaseModel):
+    program_key: str
+
+
+class CountryIn(BaseModel):
+    country: str
+
+
+@router.get("/abroad")
+def abroad(user: CurrentUser, db: DbSession):
+    """País onde você mora, intercâmbio em andamento, programas disponíveis e o custo de ir morar em cada país (convertido pelo câmbio de hoje)."""
+    def go():
+        from backend.services import abroad_service
+        m = bs.ensure_setup(db, user.id)
+        return abroad_service.view(db, user.id, m.ref_month)
+    return _run(db, go)
+
+
+@router.post("/exchange")
+def exchange_start(body: ExchangeIn, user: CurrentUser, db: DbSession):
+    def go():
+        from backend.services import abroad_service
+        m = bs.ensure_setup(db, user.id)
+        abroad_service.start_exchange(db, user.id, m, body.program_key)
+        return abroad_service.view(db, user.id, m.ref_month)
+    return _run(db, go)
+
+
+@router.delete("/exchange")
+def exchange_cancel(user: CurrentUser, db: DbSession):
+    def go():
+        from backend.services import abroad_service
+        m = bs.ensure_setup(db, user.id)
+        abroad_service.cancel_exchange(db, user.id, m)
+        return abroad_service.view(db, user.id, m.ref_month)
+    return _run(db, go)
+
+
+@router.post("/move-abroad")
+def move_abroad(body: CountryIn, user: CurrentUser, db: DbSession):
+    def go():
+        from backend.services import abroad_service
+        m = bs.ensure_setup(db, user.id)
+        res = abroad_service.move_abroad(db, user.id, m, body.country)
+        return {**abroad_service.view(db, user.id, m.ref_month), "result": res}
+    return _run(db, go)
+
+
+@router.post("/return-home")
+def return_home(user: CurrentUser, db: DbSession):
+    def go():
+        from backend.services import abroad_service
+        m = bs.ensure_setup(db, user.id)
+        res = abroad_service.return_home(db, user.id, m)
+        return {**abroad_service.view(db, user.id, m.ref_month), "result": res}
+    return _run(db, go)
+
+
+@router.get("/universities")
+def universities(user: CurrentUser, db: DbSession, field: str | None = None):
+    """Faculdades do Brasil (ranking, concorrência, mensalidade, peso no currículo) e a sua chance de passar em cada uma."""
+    def go():
+        from backend.services import career_hub, career_rules, university_rules as ur
+        month = bs.ensure_setup(db, user.id)
+        p = ls.get_profile(db, user.id)
+        keys = [field] if field else list(career_rules.FIELDS)
+        out = []
+        for u in ur.UNIVERSITIES.values():
+            fields = []
+            for k in keys:
+                if not ur.offers_field(u, k):
+                    continue
+                f = career_rules.FIELDS[k]
+                prep, _ = career_hub.resume_score(db, user.id, k, month.ref_month)
+                last = (p.uni_attempts or {}).get(f"{u.key}:{k}")
+                wait = max(0, ur.REAPPLY_MONTHS - bs.months_between(date.fromisoformat(last), month.ref_month)) if last else 0
+                fields.append({"field": k, "label": f["label"], "degree": f["degree"], "months": ur.months_for(u, k, f["months"]),
+                               "monthly_cost": ur.monthly_cost(u, k, f["cost"]), "chance": ur.admission_chance(u, prep), "wait_months": wait,
+                               "points": ur.points_for(u, 35), "hours": round(f["hours"] * u.load)})
+            if fields:
+                out.append({"key": u.key, "name": u.name, "short": u.short, "state": u.state, "kind": u.kind, "ranking": u.ranking, "weight": u.weight,
+                            "demand": u.demand, "salary_premium_factor": round(ur.premium_factor(u), 2), "fields": fields})
+        out.sort(key=lambda x: (x["key"] == ur.OPEN_KEY, x["ranking"]))
+        return {"universities": out}
     return _run(db, go)
 
 

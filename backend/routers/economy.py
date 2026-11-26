@@ -84,6 +84,16 @@ def overview(db: Session, user_id: int) -> dict:
     }
 
 
+@router.get("/countries")
+def countries(user: CurrentUser, db: DbSession):
+    """Economia dos países do jogo: moeda, câmbio em reais (e variação de 12 meses), inflação, impostos e custo de vida."""
+    def go():
+        from backend.services import world_service
+        month = bs.ensure_setup(db, user.id)
+        return {"month": month.ref_month.isoformat(), "countries": world_service.table(db, user.id, month.ref_month)}
+    return _run(db, go)
+
+
 @router.get("")
 def get_economy(user: CurrentUser, db: DbSession):
     return _run(db, lambda: overview(db, user.id))

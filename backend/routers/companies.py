@@ -16,7 +16,11 @@ from backend.schemas import companies as s
 from backend.services import budget_service as bs
 from backend.services import partners
 from backend.services import company_expansion as xp
+from backend.services import company_acquisition as acq
 from backend.services import company_aides_service as aidesvc
+from backend.services import company_world as cw
+from backend.services import country_rules as crules
+from backend.services import world_service as wsvc
 from backend.services import company_franchise as franchise_svc
 from backend.services import company_ipo as ipo_svc
 from backend.services import company_recruiter_service as recsvc
@@ -51,6 +55,8 @@ def _company_out(db: Session, c: Company, last=_UNSET) -> s.CompanyOut:
         auto_restock=c.auto_restock, status=c.status, founded_on=c.founded_on, marketing_until=c.marketing_until,
         cash=balance, debts=quantize_money(loans + max(-balance, ZERO)), equity=wealth_service.company_equity(db, c),
         last_revenue=last.revenue if last else None, last_net_result=last.net_result if last else None,
+        country=c.country, country_name=crules.get(c.country).name, currency=crules.get(c.country).currency, opens_month=c.opens_month,
+        country_factor=cw.company_factor(db, c, c.last_processed_month or c.founded_on),
         supplier_budget=cs.supplier_budget(db, c)["total_planned"], supply_ready=all(x["present"] for x in cs.supply_checklist(db, c)))
 
 
@@ -72,7 +78,8 @@ def _employee_out(e: Employee, labels: dict, ref) -> s.EmployeeOut:
     return s.EmployeeOut(
         id=e.id, name=e.name, role=e.role, role_label=labels.get(e.role, e.role), level=e.level, regime=e.regime, schedule=e.schedule,
         education=e.education, education_label=team.EDUCATION_LABEL[e.education], experience_years=e.experience_years, salary=e.salary,
-        total_cost=cs.employee_cost(e), severance_estimate=team.severance(e.regime, e.salary, tenure),
+        total_cost=cs.employee_cost(e), work_mode=e.work_mode, country=e.country, country_name=crules.get(e.country).name,
+        can_remote=cw.can_be_remote(e.role), severance_estimate=team.severance(e.regime, e.salary, tenure),
         lawsuit_risk_pct=round(team.lawsuit_probability(e.regime, e.hours_week, e.schedule, tenure, e.lawsuit_history) * 100, 1),
         lawsuit_history=e.lawsuit_history,
         hours_week=e.hours_week, productivity=e.productivity, status=e.status, hired_on=e.hired_on, terminated_on=e.terminated_on)
@@ -84,7 +91,8 @@ def _candidate_out(x: team.Candidate, seg: rules.Segment) -> s.CandidateOut:
         education_label=team.EDUCATION_LABEL[x.education], experience_years=x.experience_years, level=x.level,
         level_label=team.LEVEL_LABEL[x.level], productivity=x.productivity, asking_salary=x.asking_salary, hours_week=x.hours_week,
         schedule=x.schedule, monthly_cost_at_asking=rules.payroll_cost(x.asking_salary, x.regime),
-        lawsuit_history=x.lawsuit_history)
+        lawsuit_history=x.lawsuit_history, can_remote=cw.can_be_remote(x.role),
+        remote_effect_pct=round((cw.REMOTE_FACTOR.get(x.role, 1.0) - 1) * 100, 1))
 
 
 def _contract_out(c: Company, seg: rules.Segment, x: CompanySupplier, ref) -> s.SupplierContractOut:
@@ -245,8 +253,15 @@ def catalog(user: CurrentUser):
 
 
 @router.post("/quote", response_model=s.QuoteOut)
-def quote(body: s.QuoteIn, user: CurrentUser):
+def quote(body: s.QuoteIn, user: CurrentUser, db: DbSession):
     seg = rules.SEGMENTS[body.segment]
+    try:
+        cc = crules.get(body.country)
+    except ValueError as e:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e)) from None
+    month = bs.ensure_setup(db, user.id)
+    rate = wsvc.fx(db, user.id, cc.code, month.ref_month)
+    fz = Decimal(str(round(cc.cost_index * float(rate) / cc.fx0, 6))) if cc.code != "BR" else Decimal(1)
     channel = body.channel or (rules.PHYSICAL if rules.PHYSICAL in seg.channels else seg.channels[0])
     try:
         location, site_mode = rules.validate_site(seg, channel, body.location, body.site_mode)
@@ -255,23 +270,44 @@ def quote(body: s.QuoteIn, user: CurrentUser):
     stock = rules.first_purchase_reserve(seg, location, body.size)
     mandatory = rules.mandatory_roles(channel)
     payroll = rules.mandatory_monthly_payroll(seg, channel, body.size)
-    minimum = rules.minimum_capital(seg, location, body.size, channel, site_mode)
+    minimum = quantize_money(rules.minimum_capital(seg, location, body.size, channel, site_mode) * fz)
     owner_cost = quantize_money(minimum * body.owner_share_pct / 100)
     extra = quantize_money(body.extra_capital)
     return s.QuoteOut(
         channel=channel, site_mode=site_mode, location=location, owner_share_pct=body.owner_share_pct,
         minimum_capital=minimum, owner_cost=owner_cost, extra_capital=extra, total_owner_cost=quantize_money(owner_cost + extra),
-        setup_cost=rules.setup_cost(seg, body.size, channel), initial_stock=quantize_money(stock),
-        first_purchase_reserve=quantize_money(stock), supply_categories=[_cat_out(x) for x in seg.supply_categories],
-        land_cost=rules.land_value(seg, channel, site_mode, location, body.size),
-        monthly_fixed=rules.monthly_fixed(seg, location, body.size, channel=channel, site_mode=site_mode),
-        monthly_rent=rules.monthly_rent(seg, location, body.size, channel=channel, site_mode=site_mode),
+        setup_cost=quantize_money(rules.setup_cost(seg, body.size, channel) * fz), initial_stock=quantize_money(stock * fz),
+        first_purchase_reserve=quantize_money(stock * fz), supply_categories=[_cat_out(x) for x in seg.supply_categories],
+        land_cost=quantize_money(rules.land_value(seg, channel, site_mode, location, body.size) * fz),
+        monthly_fixed=quantize_money(rules.monthly_fixed(seg, location, body.size, channel=channel, site_mode=site_mode) * fz),
+        monthly_rent=quantize_money(rules.monthly_rent(seg, location, body.size, channel=channel, site_mode=site_mode) * fz),
+        country=cc.code, country_name=cc.name, currency=cc.currency, rate=rate, country_factor=fz, income_tax=cc.income_tax, vat=cc.vat,
+        corp_tax=cc.corp_tax, open_months=rules.opening_months(body.size, site_mode) + (cw.FOREIGN_OPEN_EXTRA_MONTHS if cc.code != "BR" else 0),
         tax=_tax_info(body.segment.value),
         monthly_payroll=quantize_money(payroll), mandatory_cost=rules.mandatory_setup_cost(seg, channel, body.size),
         mandatory_roles=[seg.role(r).label for r in mandatory], expected_units=round(rules.expected_units(seg, location, body.size), 1),
         first_month_units=round(rules.expected_units(seg, location, body.size) * rules.relevance_factor(0), 1),
         operating_reserve=rules.operating_reserve(seg, location, body.size, channel, site_mode), reserve_months=int(rules.RESERVE_MONTHS),
         max_staff=rules.SIZES[body.size].max_staff)
+
+
+@router.get("/acquisitions")
+def acquisitions(user: CurrentUser, db: DbSession):
+    """Empresas à venda no mês (todos os portes e países) e as suas negociações."""
+    def go():
+        m = bs.ensure_setup(db, user.id)
+        return acq.view(db, user.id, m.ref_month)
+    return _run(db, go)
+
+
+@router.post("/acquisitions/negotiate")
+def acquisition_negotiate(body: s.AcquisitionOfferIn, user: CurrentUser, db: DbSession):
+    """Faz uma oferta pela empresa: o dono aceita, contrapropõe, recusa ou desiste. MERGE incorpora; KEEP cria empresa separada."""
+    def go():
+        m = bs.ensure_setup(db, user.id)
+        res = acq.negotiate(db, user.id, m, body.target_key, body.offer, body.mode, body.buyer_company_id, body.name)
+        return {**res, **acq.view(db, user.id, m.ref_month)}
+    return _run(db, go)
 
 
 @router.get("/overview", response_model=s.OverviewOut)
@@ -308,7 +344,7 @@ def create(body: s.CompanyCreate, user: CurrentUser, db: DbSession):
         channel = body.channel or (rules.PHYSICAL if rules.PHYSICAL in seg.channels else seg.channels[0])
         c = cs.create_company(db, user.id, month, name=body.name, segment=body.segment, channel=channel, location=body.location,
                               site_mode=body.site_mode, size=body.size, extra_capital=body.extra_capital,
-                              owner_share_pct=body.owner_share_pct, partner_invite_ids=body.partner_invite_ids)
+                              owner_share_pct=body.owner_share_pct, partner_invite_ids=body.partner_invite_ids, country=body.country)
         return _detail(db, c)
     return _run(db, go)
 
@@ -350,7 +386,7 @@ def candidates(company_id: int, body: s.CandidatesIn, user: CurrentUser, db: DbS
         month = bs.ensure_setup(db, user.id)
         c = cs.get_company(db, user.id, company_id)
         seg = rules.SEGMENTS[c.segment]
-        rows = cs.list_candidates(db, user.id, month, company_id, body.role, body.regime)
+        rows = cs.list_candidates(db, user.id, month, company_id, body.role, body.regime, body.country)
         return s.CandidatesOut(role=body.role, regime=body.regime, month=month.ref_month, candidates=[_candidate_out(x, seg) for x in rows])
     return _run(db, go)
 
@@ -361,7 +397,8 @@ def hire(company_id: int, body: s.HireIn, user: CurrentUser, db: DbSession):
     def go():
         month = bs.ensure_setup(db, user.id)
         res = cs.hire(db, user.id, month, company_id, candidate_id=body.candidate_id, salary=body.salary, hours_week=body.hours_week,
-                      schedule=body.schedule, regime=body.regime, confirm_risk=body.confirm_risk, idempotency_key=body.idempotency_key)
+                      schedule=body.schedule, regime=body.regime, confirm_risk=body.confirm_risk, idempotency_key=body.idempotency_key,
+                      work_mode=body.work_mode, country=body.country)
         return s.HireOut(accepted=res.accepted, status=res.status, message=res.message, counter_offer=res.counter_offer,
                          company=_detail(db, cs.get_company(db, user.id, company_id)))
     return _run(db, go)

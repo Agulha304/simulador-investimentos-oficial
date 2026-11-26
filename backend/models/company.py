@@ -62,6 +62,8 @@ class Company(Base):
     founded_on: Mapped[date] = mapped_column(Date)
     last_processed_month: Mapped[date | None] = mapped_column(Date)
     opens_month: Mapped[date | None] = mapped_column(Date)                 # em abertura/obra: sem vendas até este mês (inclusive já opera)
+    country: Mapped[str] = mapped_column(String(2), default="BR", server_default="BR")   # país da empresa (preços, custos, tributos e câmbio)
+    acquired_from: Mapped[str | None] = mapped_column(String(80))           # nome da empresa comprada que deu origem a esta
     franchise_appeal: Mapped[Decimal] = mapped_column(Numeric(5, 2), default=Decimal("0"), server_default="0")   # 0..100: atratividade da franquia (publicidade)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
@@ -88,6 +90,8 @@ class Employee(Base):
     education: Mapped[EmployeeEducation] = mapped_column(StrEnumType(EmployeeEducation, "employee_education"),
                                                          default=EmployeeEducation.MEDIO, server_default="MEDIO")
     experience_years: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    work_mode: Mapped[str] = mapped_column(String(6), default="ONSITE", server_default="ONSITE")   # ONSITE | REMOTE
+    country: Mapped[str] = mapped_column(String(2), default="BR", server_default="BR")             # país onde mora/recebe (salário na moeda dele)
     lawsuit_history: Mapped[int] = mapped_column(Integer, default=0, server_default="0")    # nº de processos trabalhistas anteriores (0..3)
 
 

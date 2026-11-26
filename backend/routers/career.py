@@ -21,6 +21,7 @@ router = APIRouter(prefix="/career", tags=["career"])
 class ApplyIn(BaseModel):
     field: str
     offer_key: str
+    country: str = "BR"
 
 
 class AcceptIn(BaseModel):
@@ -100,19 +101,19 @@ def overview(user: CurrentUser, db: DbSession):
 
 
 @router.get("/offers")
-def offers(field: str, user: CurrentUser, db: DbSession):
+def offers(field: str, user: CurrentUser, db: DbSession, country: str = "BR"):
     def go():
         m = bs.ensure_setup(db, user.id)
         applied = {a.offer_key: a.status for a in ch._apps(db, user.id, m.ref_month)}
-        return {"field": field, "score": ch.resume_score(db, user.id, field, m.ref_month)[0],
-                "offers": [{**o, "applied": applied.get(o["key"])} for o in ch.offers(db, user.id, m, field)]}
+        return {"field": field, "country": country.upper(), "score": ch.resume_score(db, user.id, field, m.ref_month)[0],
+                "offers": [{**o, "applied": applied.get(o["key"])} for o in ch.offers(db, user.id, m, field, country)]}
     return _run(db, go)
 
 
 @router.post("/apply")
 def apply(body: ApplyIn, user: CurrentUser, db: DbSession):
     def go():
-        a = ch.apply(db, user.id, bs.ensure_setup(db, user.id), body.field, body.offer_key)
+        a = ch.apply(db, user.id, bs.ensure_setup(db, user.id), body.field, body.offer_key, body.country)
         return {**_overview(db, user.id), "result": {"status": a.status, "chance": a.chance, "title": a.offer["title"], "employer": a.offer["employer"], "app_id": a.id}}
     return _run(db, go)
 

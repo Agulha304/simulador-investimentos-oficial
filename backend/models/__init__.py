@@ -10,6 +10,7 @@ from backend.models.company import (
     Company, CompanyCost, CompanyEvent, CompanyLease, CompanySupplier, CompanyLoan, CompanyLoanInstallment, CompanyMonth, Employee,
     InventoryItem, CandidateBlock, CompanyUnit, CompanyExpansion, CompanyRecruiter, CompanyRecruiterRun, CompanyAide, CompanyFranchise, CompanyListing,
 )
+from backend.models.world import Exchange, AcquisitionDeal
 from backend.models.distribution import Dividend, DividendEligibility, DividendPayment
 from backend.models.enums import (
     AccountKind, AmortizationSystem, CompanyChannel, SiteMode, CompanyCostKind, CompanyEventType, CompanySegment, CompanySize, CompanyStatus,
@@ -42,7 +43,7 @@ __all__ = [
     "Child", "LifeLog", "LifeProfile", "Person", "Relationship",
     "Company", "CompanyChannel", "SiteMode", "CompanyCost", "CompanyCostKind", "CompanyEvent", "CompanyEventType", "CompanyLease", "CompanySupplier", "CompanyLoan",
     "CompanyLoanInstallment", "CompanyMonth", "CompanySegment", "CompanySize", "CompanyStatus", "Employee", "EmployeeLevel",
-    "EmployeeStatus", "EmployeeRegime", "WorkSchedule", "EmployeeEducation", "CandidateBlock", "CompanyUnit", "CompanyExpansion", "CompanyRecruiter", "CompanyRecruiterRun", "CompanyAide", "CompanyFranchise", "CompanyListing", "InventoryItem", "LeaseKind",
+    "EmployeeStatus", "EmployeeRegime", "WorkSchedule", "EmployeeEducation", "CandidateBlock", "CompanyUnit", "CompanyExpansion", "CompanyRecruiter", "CompanyRecruiterRun", "CompanyAide", "Exchange", "AcquisitionDeal", "CompanyFranchise", "CompanyListing", "InventoryItem", "LeaseKind",
     "AmortizationSystem", "Condition", "CostKind", "Good", "GoodCategory", "GoodCost", "GoodEvent", "GoodEventType",
     "GoodStatus", "GoodValue", "InstallmentStatus", "Loan", "LoanInstallment", "LoanStatus", "Occupancy", "REAL_ESTATE",
     "RealEstateDetails", "ValuationRule", "ValueSource", "VehicleDetails",

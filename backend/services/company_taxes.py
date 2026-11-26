@@ -31,7 +31,7 @@ ZERO = D("0")
 MEI = "MEI"
 SIMPLES = "SIMPLES"
 LUCRO_PRESUMIDO = "LUCRO_PRESUMIDO"
-REGIME_LABELS = {MEI: "MEI (DAS-MEI)", SIMPLES: "Simples Nacional (DAS)", LUCRO_PRESUMIDO: "Lucro Presumido"}
+REGIME_LABELS = {MEI: "MEI (DAS-MEI)", SIMPLES: "Simples Nacional (DAS)", LUCRO_PRESUMIDO: "Lucro Presumido", "EXT": "Tributos do exterior (IVA + imposto sobre o lucro)"}
 
 # ---------------------------------------------------------------- parâmetros gerais (2026)
 SALARIO_MINIMO = D("1621.00")                 # [SECUNDÁRIA]

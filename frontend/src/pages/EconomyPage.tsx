@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { CartesianGrid, Legend, Line, LineChart, ReferenceArea, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { StatCard } from "../components/StatCard";
 import { fmtMonth } from "../lib/format";
-import { sim, type Crisis, type EcoEvent, type Economy } from "../services/sim";
+import { sim, type CountryRow, type Crisis, type EcoEvent, type Economy } from "../services/sim";
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : "Erro inesperado");
 const SCOPE: Record<string, string> = { WORLD: "todo o mundo", SECTOR: "um setor", USER: "você", COMPANY: "uma empresa sua" };
@@ -19,7 +19,7 @@ const CRISIS_HELP: Record<string, string> = {
   CURRENCY: "O real perde valor e o que vem de fora fica caro.", RECESSION: "A economia encolhe: menos vendas e mais desemprego.", GLOBAL: "Uma crise mundial que atinge todo mundo.",
 };
 const COLORS = ["#ffd23f", "#3ee59a", "#ff6482", "#4cc9f0", "#c13cff", "#ff9f1c"];
-type Tab = "now" | "charts" | "crises" | "prices";
+type Tab = "now" | "charts" | "crises" | "prices" | "countries";
 
 export function EconomyPage() {
   const [eco, setEco] = useState<Economy | null>(null);
@@ -40,13 +40,14 @@ export function EconomyPage() {
       {error && <div className="alert">{error}</div>}
       {note && <div className="card small">Resultado: {note}</div>}
       <div className="seg compact tabs">
-        {([["now", "Hoje"], ["charts", "Gráficos"], ["crises", `Crises e eventos (${eco.crises.length})`], ["prices", "Preços"]] as [Tab, string][]).map(([k, l]) => <button key={k} className={tab === k ? "on" : ""} onClick={() => setTab(k)}>{l}</button>)}
+        {([["now", "Hoje"], ["charts", "Gráficos"], ["crises", `Crises e eventos (${eco.crises.length})`], ["prices", "Preços"], ["countries", "🌐 Países e câmbio"]] as [Tab, string][]).map(([k, l]) => <button key={k} className={tab === k ? "on" : ""} onClick={() => setTab(k)}>{l}</button>)}
       </div>
       {tab === "now" && st && <Now eco={eco} decide={decide} />}
       {tab === "now" && !st && <div className="card muted">Sem dados ainda.</div>}
       {tab === "charts" && <Charts eco={eco} />}
       {tab === "crises" && <Crises eco={eco} />}
       {tab === "prices" && st && <Prices eco={eco} />}
+      {tab === "countries" && <Countries />}
     </div>
   );
 }
@@ -154,6 +155,52 @@ function EventList({ title, events }: { title: string; events: EcoEvent[] }) {
       {events.length === 0 ? <p className="muted small">Nenhum.</p> : <ul className="list-plain">{events.map((e) => (
         <li key={e.id}><span><b>{e.name}</b> <span className={`chip ${e.positive ? "up" : "down"}`}>{e.positive ? "favorável" : "adverso"}</span> <span className="chip">{CAT[e.category]} · afeta {SCOPE[e.scope]}</span><br /><span className="muted small">{e.outcome ?? e.description}</span></span>
           <span className="muted small">{fmtMonth(e.start_month)} → {fmtMonth(e.end_month)}</span></li>))}</ul>}
+    </section>
+  );
+}
+
+function Spark({ rows }: { rows: { rate: string }[] }) {
+  if (rows.length < 2) return null;
+  const v = rows.map((r) => Number(r.rate)), lo = Math.min(...v), hi = Math.max(...v), w = 120, h = 28;
+  const pts = v.map((x, i) => `${(i / (v.length - 1)) * w},${h - ((x - lo) / (hi - lo || 1)) * (h - 4) - 2}`).join(" ");
+  return <svg viewBox={`0 0 ${w} ${h}`} width={w} height={h} role="img" aria-label="Câmbio dos últimos 24 meses"><polyline points={pts} fill="none" stroke="currentColor" strokeWidth="1.6" /></svg>;
+}
+
+/** Economia de todos os países do jogo: quanto vale a moeda em reais, inflação, impostos e custo de vida. */
+function Countries() {
+  const [rows, setRows] = useState<CountryRow[] | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [open, setOpen] = useState<string | null>(null);
+  useEffect(() => { sim.economyCountries().then((r) => setRows(r.countries)).catch((e) => setErr(errMsg(e))); }, []);
+  if (err) return <div className="alert">{err}</div>;
+  if (!rows) return <div className="muted">Carregando países…</div>;
+  const money = (v: string, d = 4) => `R$ ${Number(v).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: d })}`;
+  return (
+    <section className="card stack">
+      <h2>🌐 Economia dos países</h2>
+      <p className="muted small" style={{ margin: 0 }}>Quanto vale 1 unidade da moeda de cada país em reais. O câmbio acompanha a inflação de cada país e oscila todo mês. Clique em uma linha para ver impostos e custo de vida.</p>
+      <div className="table-wrap"><table>
+        <thead><tr><th>País</th><th>Moeda</th><th className="r">Cotação (R$)</th><th className="r">12 meses</th><th>Histórico</th><th className="r">Inflação a.a.</th><th className="r">Custo de vida/mês</th></tr></thead>
+        <tbody>{rows.map((c) => (
+          <Fragment key={c.code}>
+            <tr onClick={() => setOpen(open === c.code ? null : c.code)} style={{ cursor: "pointer" }}>
+              <td>{c.flag} {c.name}</td><td>{c.currency}</td><td className="r num">{c.code === "BR" ? "—" : money(c.rate)}</td>
+              <td className={`r num ${c.change_12m_pct > 0 ? "tone-down" : c.change_12m_pct < 0 ? "tone-up" : ""}`}>{c.code === "BR" ? "—" : `${c.change_12m_pct > 0 ? "+" : ""}${c.change_12m_pct.toFixed(1)}%`}</td>
+              <td><Spark rows={c.history} /></td><td className="r num">{c.inflation.toFixed(1)}%</td><td className="r num">{money(c.living_brl, 0)}</td>
+            </tr>
+            {open === c.code && <tr key={`${c.code}-d`}><td colSpan={7}>
+              <div className="stats-grid">
+                <div className="card"><span className="muted small">Imposto de renda (efetivo)</span><b className="num">{c.income_tax}%</b></div>
+                <div className="card"><span className="muted small">Imposto sobre lucro de empresas</span><b className="num">{c.corp_tax}%</b></div>
+                <div className="card"><span className="muted small">IVA / imposto sobre vendas</span><b className="num">{c.vat}%</b></div>
+                <div className="card"><span className="muted small">Encargos patronais</span><b className="num">{((c.burden - 1) * 100).toFixed(0)}%</b></div>
+                <div className="card"><span className="muted small">Preços vs. Brasil</span><b className="num">{c.cost_index.toFixed(1)}x</b></div>
+                <div className="card"><span className="muted small">Salários vs. Brasil</span><b className="num">{c.wage_index.toFixed(1)}x</b></div>
+              </div>
+              <p className="small muted" style={{ margin: "8px 0 0" }}>Vida em {c.name} (moeda local, por mês): aluguel {c.living_local.rent?.toLocaleString("pt-BR")}, comida {c.living_local.food?.toLocaleString("pt-BR")}, contas {c.living_local.utilities?.toLocaleString("pt-BR")}, transporte {c.living_local.transport?.toLocaleString("pt-BR")}, saúde {c.living_local.health?.toLocaleString("pt-BR")} · idioma: {c.language}.</p>
+            </td></tr>}
+          </Fragment>))}</tbody>
+      </table></div>
     </section>
   );
 }

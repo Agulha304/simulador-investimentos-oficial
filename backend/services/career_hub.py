@@ -18,6 +18,10 @@ from backend.models import (
 from backend.services import budget_service, career_rules, finance_ledger, item_sync
 from backend.services import career_hub_rules as H
 from backend.services import life_service as ls
+from backend.services import university_rules as uni_rules
+from backend.services import country_rules as cr
+from backend.services import exchange_rules as xr
+from backend.services import world_service as ws
 from backend.services.finance_ledger import ConflictError, FinanceError, NotFoundError
 from backend.services.life_rules import hash01
 
@@ -140,7 +144,8 @@ def resume_score(db: Session, user_id: int, field: str, ref: date) -> tuple[floa
     items, s = [], 0.0
     for e in db.scalars(select(Education).where(Education.user_id == user_id, Education.status == "DONE", Education.in_resume.is_(True))):
         if e.kind == "DEGREE":
-            pts = H.DEGREE_POINTS if e.field == field else H.OTHER_DEGREE_POINTS
+            base = float(e.points or H.DEGREE_POINTS)            # diploma de faculdade forte vale mais (peso da instituição)
+            pts = base if e.field == field else H.OTHER_DEGREE_POINTS * base / H.DEGREE_POINTS
         else:
             pts = float(e.points) if e.field == field else (e.points * 0.5 if e.field == "geral" else 0.0)
         if pts:
@@ -171,20 +176,41 @@ def _clt_pack(net: int, level: int) -> dict:
             "thirteenth": net, "vacation_bonus": round(net / 3, 2)}
 
 
-def offers(db: Session, user_id: int, month: SimMonth, field: str) -> list[dict]:
+def offers(db: Session, user_id: int, month: SimMonth, field: str, country: str = "BR") -> list[dict]:
+    """Vagas da área no país escolhido. Cada vaga é PRESENCIAL ou REMOTA (sorteio por área). Quem não mora no país só consegue vagas remotas
+    (as presenciais aparecem, mas exigem morar lá). Vagas no exterior pagam na moeda do país (convertida pelo câmbio do mês), com o imposto
+    de renda daquele país, e são mais difíceis de conseguir."""
     f = _field(field)
+    country = country.upper()
+    try:
+        c = cr.get(country)
+    except ValueError:
+        raise FinanceError("país desconhecido") from None
     ref = month.ref_month
+    p = ls.get_profile(db, user_id)
+    resident = p.country if p is not None else "BR"
     score, _ = resume_score(db, user_id, field, ref)
-    n = 1 + int(hash01("vagas", user_id, ref.isoformat(), field) * 3)               # difícil de achar: 1 a 3 vagas por área no mês
+    n = 1 + int(hash01("vagas", user_id, ref.isoformat(), field, *([] if country == "BR" else [country])) * 3)   # difícil de achar: 1 a 3 vagas por área no mês
     out = []
     for i in range(n):
-        key = f"{field}:{ref:%Y-%m}:{i}"
+        key = f"{field}:{ref:%Y-%m}:{i}" if country == "BR" else f"{field}:{country}:{ref:%Y-%m}:{i}"
         level = [0, 0, 1, 1, 2, 3][int(hash01("lvl", user_id, key) * 6)]
         net = H.offer_net(f["start"], level, user_id, key)
         titles = H.LADDER[field][level]
-        out.append({"key": key, "field": field, "field_label": f["label"], "level": level, "level_name": H.LEVEL_NAME[level], "need": H.LEVEL_NEED[level],
-                    "title": titles[int(hash01("title", user_id, key) * len(titles))], "employer": H.EMPLOYERS[int(hash01("emp", user_id, key) * len(H.EMPLOYERS))],
-                    "clt": _clt_pack(net, level), "pj": {"net": H.pj_net(net)}, "chance": H.approval_chance(score, level)})
+        remote = hash01("remote", user_id, key) < xr.REMOTE_SHARE.get(field, 0.0)
+        needs_move = (not remote) and country != resident
+        hard = (xr.ABROAD_HARD if country != "BR" else 0.0) + (xr.REMOTE_HARD if remote else 0.0)
+        o = {"key": key, "field": field, "field_label": f["label"], "level": level, "level_name": H.LEVEL_NAME[level], "need": H.LEVEL_NEED[level],
+             "title": titles[int(hash01("title", user_id, key) * len(titles))], "employer": H.EMPLOYERS[int(hash01("emp", user_id, key) * len(H.EMPLOYERS))],
+             "clt": _clt_pack(net, level), "pj": {"net": H.pj_net(net)}, "chance": H.approval_chance(score, level, hard),
+             "country": country, "country_name": c.name, "flag": c.flag, "work_mode": "REMOTE" if remote else "ONSITE", "needs_move": needs_move}
+        if country != "BR":
+            brl_eq = net * c.wage_index * (1 - c.income_tax / 100) / (1 - 0.12)      # mesmo cargo, salário do país já líquido do imposto de lá
+            local = round(brl_eq / c.fx0, 2)
+            now = ws.convert(db, user_id, country, local, ref)
+            o["intl"] = {"currency": c.currency, "symbol": c.symbol, "net_local": local, "net_brl": str(now), "income_tax": c.income_tax,
+                         "rate": str(ws.fx(db, user_id, country, ref))}
+        out.append(o)
     return out
 
 
@@ -192,13 +218,15 @@ def _apps(db: Session, user_id: int, ref: date) -> list[JobApplication]:
     return list(db.scalars(select(JobApplication).where(JobApplication.user_id == user_id, JobApplication.ref_month == ref).order_by(JobApplication.id)))
 
 
-def apply(db: Session, user_id: int, month: SimMonth, field: str, offer_key: str) -> JobApplication:
+def apply(db: Session, user_id: int, month: SimMonth, field: str, offer_key: str, country: str = "BR") -> JobApplication:
     budget_service.require_open(month)
     ensure_jobs(db, user_id, month)
     p = _profile(db, user_id)
-    offer = next((o for o in offers(db, user_id, month, field) if o["key"] == offer_key), None)
+    offer = next((o for o in offers(db, user_id, month, field, country) if o["key"] == offer_key), None)
     if offer is None:
         raise NotFoundError("essa vaga não existe mais")
+    if offer["needs_move"]:
+        raise ConflictError(f"vaga presencial em {offer['country_name']}: você precisa morar lá (mude-se na aba Intercâmbio e mundo) ou procure vagas remotas")
     if db.scalar(select(JobApplication.id).where(JobApplication.user_id == user_id, JobApplication.offer_key == offer_key)):
         raise ConflictError("você já se candidatou a essa vaga")
     if len(_apps(db, user_id, month.ref_month)) >= H.MAX_APPLICATIONS:
@@ -218,7 +246,7 @@ def apply(db: Session, user_id: int, month: SimMonth, field: str, offer_key: str
 def accept(db: Session, user_id: int, month: SimMonth, app_id: int, kind: str, replace_job_id: int | None = None) -> CareerJob:
     budget_service.require_open(month)
     ensure_jobs(db, user_id, month)
-    if kind not in ("CLT", "PJ"):
+    if kind not in ("CLT", "PJ", "INT"):
         raise FinanceError("escolha CLT ou PJ")
     app = db.get(JobApplication, app_id)
     if app is None or app.user_id != user_id:
@@ -228,6 +256,13 @@ def accept(db: Session, user_id: int, month: SimMonth, app_id: int, kind: str, r
         raise ConflictError("só dá para aceitar uma vaga aprovada neste mesmo mês")
     p = _profile(db, user_id)
     o = app.offer
+    foreign = o.get("country", "BR") != "BR"
+    if foreign:
+        kind = "INT"                                  # contrato internacional: sem 13º/férias/FGTS do Brasil
+    elif kind == "INT":
+        raise FinanceError("escolha CLT ou PJ")
+    if o.get("work_mode") == "ONSITE" and o.get("country", "BR") != p.country:
+        raise ConflictError("vaga presencial em outro país: você precisa morar lá para aceitar")
     start = budget_service.shift_month(ref, 1)
     current = [j for j in jobs(db, user_id) if j.end_month is None]
     replace = db.get(CareerJob, replace_job_id) if replace_job_id else None
@@ -240,7 +275,7 @@ def accept(db: Session, user_id: int, month: SimMonth, app_id: int, kind: str, r
     hours = H.PJ_EXTRA_HOURS if (kind == "PJ" and extra) else 0
     if hours and ls.free_hours(p) < hours:
         raise ConflictError(f"um trabalho PJ extra consome {hours}h livres por mês e você só tem {ls.free_hours(p)}h")
-    net = Decimal(str(o["clt"]["net"] if kind == "CLT" else o["pj"]["net"]))
+    net = Decimal(str(o["intl"]["net_brl"] if kind == "INT" else o["clt"]["net"] if kind == "CLT" else o["pj"]["net"]))
     if replace:
         _end_job(db, replace, ref, "REPLACED")
     cat = item_sync.category(db, user_id, FlowKind.INCOME, "Salário")
@@ -251,8 +286,9 @@ def accept(db: Session, user_id: int, month: SimMonth, app_id: int, kind: str, r
     db.add(RecurringItemVersion(item_id=r.id, amount=quantize_money(net), effective_from=start))
     clt = kind == "CLT"
     job = CareerJob(user_id=user_id, title=o["title"], employer=o["employer"], field=o["field"], kind=kind, level=o["level"], net=quantize_money(net),
-                    vr=D(str(o["clt"]["vr"])) if clt else ZERO, health_plan=bool(o["clt"]["health_plan"]) if clt else False, hours=hours,
-                    start_month=start, recurring_item_id=r.id, in_resume=True)
+                    vr=D(str(o["clt"]["vr"])) if clt else ZERO, health_plan=bool(o["clt"]["health_plan"]) if clt else foreign, hours=hours,
+                    start_month=start, recurring_item_id=r.id, in_resume=True, country=o.get("country", "BR"), work_mode=o.get("work_mode", "ONSITE"),
+                    net_local=D(str(o["intl"]["net_local"])) if foreign else None)
     db.add(job)
     app.status = "ACCEPTED"
     p.career_field, p.career_since = o["field"], start
@@ -261,6 +297,25 @@ def accept(db: Session, user_id: int, month: SimMonth, app_id: int, kind: str, r
     recalc_hours(db, user_id)
     ls.sync_month(db, user_id, month)
     return job
+
+
+def reprice_foreign_jobs(db: Session, user_id: int, ref: date) -> int:
+    """Abertura do mês: o salário de vagas no exterior é em moeda local; reajusta o contrato pelo câmbio do mês (nova versão do salário)."""
+    n = 0
+    for j in active_jobs(db, user_id, ref):
+        if j.country == "BR" or not j.net_local or not j.recurring_item_id:
+            continue
+        new = ws.convert(db, user_id, j.country, j.net_local, ref)
+        cur = budget_service.version_amount(db, j.recurring_item_id, ref) or ZERO
+        if cur and abs(new - cur) / cur > D("0.005"):
+            ex = db.scalar(select(RecurringItemVersion).where(RecurringItemVersion.item_id == j.recurring_item_id, RecurringItemVersion.effective_from == ref))
+            if ex is not None:
+                ex.amount = new
+            else:
+                db.add(RecurringItemVersion(item_id=j.recurring_item_id, amount=new, effective_from=ref))
+            n += 1
+    db.flush()
+    return n
 
 
 # ------------------------------------------------------------------ freelas
@@ -313,19 +368,25 @@ def ensure_degree_rows(db: Session, user_id: int, ref: date) -> None:
     for fld in p.degrees or []:
         if _degree_row(db, user_id, fld, "DONE") is None:
             fr = career_rules.FIELDS[fld]
-            db.add(Education(user_id=user_id, key=fld, name=fr["degree"], field=fld, kind="DEGREE", months_total=fr["months"], progress=fr["months"], cost_month=D(fr["cost"]),
-                             hours=0, points=H.DEGREE_POINTS, status="DONE", start_month=ref, end_month=ref))
+            u = uni_rules.get((p.degree_unis or {}).get(fld, uni_rules.OPEN_KEY))
+            db.add(Education(user_id=user_id, key=fld, name=fr["degree"] + (f" — {u.short}" if u.key != uni_rules.OPEN_KEY else ""), field=fld, kind="DEGREE",
+                             months_total=fr["months"], progress=fr["months"], cost_month=D(fr["cost"]), hours=0, points=uni_rules.points_for(u, H.DEGREE_POINTS),
+                             status="DONE", start_month=ref, end_month=ref))
     if p.degree_field and _degree_row(db, user_id, p.degree_field, "ACTIVE") is None:
         fr = career_rules.FIELDS[p.degree_field]
-        db.add(Education(user_id=user_id, key=p.degree_field, name=fr["degree"], field=p.degree_field, kind="DEGREE", months_total=p.degree_total or fr["months"],
-                         progress=p.degree_progress, cost_month=D(fr["cost"]), hours=0, points=H.DEGREE_POINTS, status="ACTIVE", start_month=ref))
+        u = uni_rules.get(p.degree_uni or uni_rules.OPEN_KEY)
+        db.add(Education(user_id=user_id, key=p.degree_field, name=fr["degree"] + (f" — {u.short}" if u.key != uni_rules.OPEN_KEY else ""), field=p.degree_field, kind="DEGREE",
+                         months_total=p.degree_total or fr["months"], progress=p.degree_progress, cost_month=D(uni_rules.monthly_cost(u, p.degree_field, fr["cost"])),
+                         hours=0, points=uni_rules.points_for(u, H.DEGREE_POINTS), status="ACTIVE", start_month=ref))
     db.flush()
 
 
 def on_degree_start(db: Session, p: LifeProfile, field: str, ref: date) -> None:
     fr = career_rules.FIELDS[field]
-    db.add(Education(user_id=p.user_id, key=field, name=fr["degree"], field=field, kind="DEGREE", months_total=fr["months"], cost_month=D(fr["cost"]), hours=0,
-                     points=H.DEGREE_POINTS, status="ACTIVE", start_month=ref))
+    u = uni_rules.get(p.degree_uni or uni_rules.OPEN_KEY)
+    db.add(Education(user_id=p.user_id, key=field, name=fr["degree"] + (f" — {u.short}" if u.key != uni_rules.OPEN_KEY else ""), field=field, kind="DEGREE",
+                     months_total=p.degree_total or fr["months"], cost_month=D(uni_rules.monthly_cost(u, field, fr["cost"])), hours=0,
+                     points=uni_rules.points_for(u, H.DEGREE_POINTS), status="ACTIVE", start_month=ref))
     db.flush()
 
 

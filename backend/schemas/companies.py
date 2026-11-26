@@ -24,6 +24,7 @@ class CompanyCreate(BaseModel):
     extra_capital: Decimal = Field(Decimal("0"), ge=0, max_digits=20, decimal_places=2)   # além do mínimo para abrir
     owner_share_pct: Decimal = Field(Decimal("100"), gt=0, le=100, max_digits=5, decimal_places=2)
     partner_invite_ids: list[int] = []
+    country: str = "BR"                                # país da empresa: preços, câmbio, impostos e salários locais
 
 
 class PartnerInviteIn(BaseModel):
@@ -40,6 +41,7 @@ class QuoteIn(BaseModel):
     size: CompanySize = CompanySize.SMALL
     extra_capital: Decimal = Field(Decimal("0"), ge=0, max_digits=20, decimal_places=2)
     owner_share_pct: Decimal = Field(Decimal("100"), gt=0, le=100, max_digits=5, decimal_places=2)
+    country: str = "BR"
 
 
 class MoneyIn(BaseModel):
@@ -56,6 +58,7 @@ class SettingsIn(BaseModel):
 class CandidatesIn(BaseModel):
     role: str
     regime: EmployeeRegime = EmployeeRegime.CLT
+    country: str | None = None                          # país do candidato (padrão: o da empresa); outro país = só remoto
 
 
 class HireIn(BaseModel):
@@ -67,6 +70,8 @@ class HireIn(BaseModel):
     regime: EmployeeRegime
     confirm_risk: bool = False
     idempotency_key: str = Field(min_length=8, max_length=100)
+    work_mode: str = "ONSITE"                           # ONSITE | REMOTE (nem todo cargo pode ser remoto)
+    country: str | None = None                          # país onde o funcionário mora (recebe na moeda dele); padrão: o da empresa
 
 
 class RecruiterHireIn(BaseModel):
@@ -87,6 +92,14 @@ class CompanyBuildIn(BaseModel):
     plan_key: str
     city_key: str
     idempotency_key: str = Field(min_length=8, max_length=100)
+
+
+class AcquisitionOfferIn(BaseModel):
+    target_key: str = Field(min_length=3, max_length=60)
+    offer: Decimal = Pos
+    mode: str = "KEEP"                                  # MERGE (incorpora à sua empresa) | KEEP (empresa separada)
+    buyer_company_id: int | None = None                 # MERGE: qual das suas empresas incorpora (e paga)
+    name: str | None = Field(default=None, max_length=80)
 
 
 class FranchiseAdIn(BaseModel):
@@ -311,6 +324,15 @@ class QuoteOut(BaseModel):
     mandatory_cost: Decimal            # folha de 1 mês + custo de contratação dos obrigatórios (já dentro do capital mínimo)
     mandatory_roles: list[str]         # nomes dos cargos obrigatórios
     expected_units: float              # demanda do mercado MADURO (relevância 100); no início a empresa vende uma fração
+    country: str = "BR"
+    country_name: str = "Brasil"
+    currency: str = "BRL"
+    rate: Decimal = Decimal("1")       # reais por 1 unidade da moeda local
+    country_factor: Decimal = Decimal("1")   # preços/custos do país em reais (já aplicados nos valores deste orçamento)
+    income_tax: float = 0              # IVA e imposto sobre o lucro do país
+    vat: float = 0
+    corp_tax: float = 0
+    open_months: int = 1               # prazo para abrir
     first_month_units: float = 0       # demanda esperada no 1º mês (relevância 0, antes do sorteio de mês sem vendas)
     operating_reserve: Decimal = Decimal("0")   # parte do capital mínimo que é reserva de operação (meses de custos fixos + folha)
     reserve_months: int = 0
@@ -353,6 +375,11 @@ class CompanyOut(BaseModel):
     last_net_result: Decimal | None
     supplier_budget: Decimal = Decimal("0")     # gasto PREVISTO do mês com fornecedores (demanda esperada x consumo x preço contratado)
     supply_ready: bool = True                   # todas as categorias têm contrato ativo (true também sem categorias)
+    country: str = "BR"
+    country_name: str = "Brasil"
+    currency: str = "BRL"
+    country_factor: Decimal = Decimal("1")      # fator de preços/custos em reais do país no mês
+    opens_month: date | None = None
 
 
 class EmployeeOut(BaseModel):
@@ -376,6 +403,10 @@ class EmployeeOut(BaseModel):
     status: EmployeeStatus
     hired_on: date
     terminated_on: date | None
+    work_mode: str = "ONSITE"
+    country: str = "BR"
+    country_name: str = "Brasil"
+    can_remote: bool = False
 
 
 class InventoryOut(BaseModel):
@@ -611,6 +642,8 @@ class CandidateOut(BaseModel):
     schedule: WorkSchedule             # escala preferida
     monthly_cost_at_asking: Decimal    # custo real mensal se pagar a pretensão (CLT 2x / PJ 1x)
     lawsuit_history: int = 0           # processos trabalhistas anteriores (0..3)
+    can_remote: bool = False           # o cargo aceita trabalho remoto
+    remote_effect_pct: float = 0.0     # efeito do remoto na capacidade (%)
 
 
 class CandidatesOut(BaseModel):

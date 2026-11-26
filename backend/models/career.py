@@ -1,7 +1,7 @@
 """Carreira: empregos (CLT/PJ), educação (cursos e faculdades), currículo, candidaturas e freelas."""
 from datetime import date
 
-from sqlalchemy import JSON, Boolean, Date, ForeignKey, Index, Integer, String, UniqueConstraint
+from sqlalchemy import JSON, Boolean, Date, ForeignKey, Index, Integer, Numeric, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 from decimal import Decimal
 
@@ -30,6 +30,9 @@ class CareerJob(Base):
     recurring_item_id: Mapped[int | None] = mapped_column(Integer)
     legacy: Mapped[bool] = mapped_column(Boolean, default=False)
     in_resume: Mapped[bool] = mapped_column(Boolean, default=True)
+    country: Mapped[str] = mapped_column(String(2), default="BR", server_default="BR")          # país do empregador/vaga
+    work_mode: Mapped[str] = mapped_column(String(6), default="ONSITE", server_default="ONSITE")  # ONSITE | REMOTE
+    net_local: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))           # salário líquido na MOEDA do país (vagas no exterior)
     raise_asked_month: Mapped[date | None] = mapped_column(Date)                # último pedido de aumento NESTE emprego (intervalo de 6 meses por emprego)
 
 

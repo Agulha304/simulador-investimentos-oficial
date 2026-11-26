@@ -169,6 +169,7 @@ export function CompanyPage() {
         </section>)}
       <RecruiterCard d={d} act={act} onReport={runReport} onTeam={() => setModal("team")} />
       {d.opens_month && d.months.reduce((m, x) => (x.ref_month > m ? x.ref_month : m), "") < d.opens_month && <div className="alert">Empresa em abertura: começa a vender em {d.opens_month.slice(0, 7)}. Enquanto isso, só os custos correm.</div>}
+      {d.company.country && d.company.country !== "BR" && <div className="notice">🌍 Empresa em {d.company.country_name} ({d.company.currency}): receitas, custos e salários seguem os preços e o câmbio do país (fator atual ×{Number(d.company.country_factor).toFixed(2)} sobre o Brasil) e os tributos são os de lá.</div>}
       <AidesCard d={d} act={act} />
       <FranchiseCard d={d} act={act} />
       <IpoCard d={d} act={act} />
@@ -239,7 +240,7 @@ export function CompanyPage() {
             <tbody>{d.employees.map((e) => (
               <tr key={e.id} className={e.status === "ACTIVE" ? "" : "muted"}>
                 <td><b>{e.name || e.role_label}</b><br /><span className="muted small">{e.role_label} · {e.experience_years} ano(s) exp.{(e.lawsuit_history ?? 0) > 0 ? ` · histórico: ${e.lawsuit_history} processo${(e.lawsuit_history ?? 0) > 1 ? "s" : ""} anterior${(e.lawsuit_history ?? 0) > 1 ? "es" : ""}` : ""}</span></td>
-                <td><span className={`chip ${e.regime === "CLT" ? "up" : "down"}`}>{e.regime}</span></td>
+                <td><span className={`chip ${e.regime === "CLT" ? "up" : "down"}`}>{e.regime}</span>{e.work_mode === "REMOTE" && <span className="chip"> 🏠 remoto</span>}{e.country && e.country !== "BR" && <span className="chip"> {e.country_name}</span>}</td>
                 <td>{e.schedule} <span className="muted small">{e.hours_week} h</span></td><td>{EDUCATION_LABEL[e.education] ?? e.education_label}</td><td>{LEVEL_LABEL[e.level]}</td>
                 <td className="r num">{fmtBRL(e.salary)}</td><td className="r num">{fmtBRL(e.total_cost)}<br /><span className="muted small">{e.regime === "CLT" ? "2× o salário" : "1× o salário"}</span></td>
                 <td>{e.status === "ACTIVE" ? `desde ${fmtMonth(e.hired_on)}` : `desligado em ${e.terminated_on ? fmtMonth(e.terminated_on) : ""}`}</td>

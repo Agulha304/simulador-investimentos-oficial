@@ -43,6 +43,12 @@ class LifeProfile(Base):
     degree_progress: Mapped[int] = mapped_column(Integer, default=0)
     degree_total: Mapped[int] = mapped_column(Integer, default=0)
     degrees: Mapped[list] = mapped_column(JSON, default=list)                  # áreas em que já se formou
+    degree_uni: Mapped[str | None] = mapped_column(String(24))                 # faculdade da graduação em andamento
+    degree_unis: Mapped[dict] = mapped_column(JSON, default=dict)              # área -> faculdade em que se formou
+    uni_attempts: Mapped[dict] = mapped_column(JSON, default=dict)             # "faculdade:área" -> último mês reprovado (vestibular anual)
+    country: Mapped[str] = mapped_column(String(2), default="BR", server_default="BR")   # país onde o personagem mora
+    abroad_since: Mapped[date | None] = mapped_column(Date)
+    one_offs: Mapped[dict] = mapped_column(JSON, default=dict)                # despesas pontuais agendadas: chave -> {name, amount, cat, month}
     pending_career: Mapped[dict | None] = mapped_column(JSON)                 # mudança de área combinada para o mês seguinte
     stress: Mapped[int] = mapped_column(Integer, default=0, server_default="0")                  # sobrecarga acumulada (0..100)
     conditions: Mapped[list] = mapped_column(JSON, default=list)                                  # doenças físicas e mentais em curso

@@ -96,14 +96,19 @@ function Search({ c, busy, act }: P) {
   const [data, setData] = useState<{ score: number; offers: JobOffer[] } | null>(null);
   const [pick, setPick] = useState<HubApplication | null>(null);
   const [kind, setKind] = useState<"CLT" | "PJ">("CLT");
-  const load = useCallback(() => { sim.careerOffers(field).then(setData).catch(() => setData(null)); }, [field]);
+  const [country, setCountry] = useState("BR");
+  const [countries, setCountries] = useState<{ code: string; name: string; flag: string }[]>([{ code: "BR", name: "Brasil", flag: "🇧🇷" }]);
+  useEffect(() => { sim.lifeAbroad().then((a) => setCountries([{ code: "BR", name: "Brasil", flag: "🇧🇷" }, ...a.countries])).catch(() => undefined); }, []);
+  const load = useCallback(() => { sim.careerOffers(field, country).then(setData).catch(() => setData(null)); }, [field, country]);
   useEffect(() => { load(); }, [load, c.applications.length]);
-  const apply = (o: JobOffer) => act(() => sim.careerApply(field, o.key), (r) => r.result?.status === "APPROVED" ? `🎉 Aprovado(a) para ${r.result.title}! Aceite a vaga abaixo.` : `Não foi dessa vez: ${r.result?.title} escolheu outro candidato.`);
+  const apply = (o: JobOffer) => act(() => sim.careerApply(field, o.key, o.country ?? country), (r) => r.result?.status === "APPROVED" ? `🎉 Aprovado(a) para ${r.result.title}! Aceite a vaga abaixo.` : `Não foi dessa vez: ${r.result?.title} escolheu outro candidato.`);
   return (
     <>
       <section className="card stack">
         <div className="row"><label className="row">Área em que quero trabalhar
           <select value={field} onChange={(e) => setField(e.target.value)}>{c.fields.map((f) => <option key={f.key} value={f.key}>{f.emoji} {f.label}</option>)}</select></label>
+          <label className="row">País da vaga
+            <select value={country} onChange={(e) => setCountry(e.target.value)} aria-label="País da vaga">{countries.map((x) => <option key={x.code} value={x.code}>{x.flag} {x.name}</option>)}</select></label>
           <span className="chip">Seu currículo nessa área: <b>{data?.score ?? 0}</b> pontos</span><span className="muted small">Candidaturas restantes no mês: {c.applications_left} (cada uma usa {c.rules.apply_hours}h)</span></div>
         <p className="muted small" style={{ margin: 0 }}>Vagas são raras (poucas por mês em cada área) e mudam todo mês. Quanto mais cursos, faculdade e experiência <b>na área</b> estiverem no seu currículo, maior a chance de ser aprovado.</p>
       </section>
@@ -111,10 +116,13 @@ function Search({ c, busy, act }: P) {
         <div key={o.key} className="card stack">
           <div className="row between"><b>{o.title}</b><span className="chip">{o.level_name}</span></div>
           <span className="muted small">{o.employer} · {o.field_label} · pede ~{o.need} pontos de currículo</span>
-          <span className="small">CLT: <b>{fmtBRL(String(o.clt.net))}</b> líquido (+13º, férias, FGTS{o.clt.vr ? `, VR ${fmtBRL(String(o.clt.vr))}` : ""}{o.clt.health_plan ? ", plano de saúde" : ""})<br />PJ: <b>{fmtBRL(String(o.pj.net))}</b> no bolso, sem benefícios</span>
+          <div className="row-gap"><span className="chip">{o.flag ?? "🇧🇷"} {o.country_name ?? "Brasil"}</span><span className="chip">{o.work_mode === "REMOTE" ? "🏠 Remoto" : "🏢 Presencial"}</span></div>
+          {o.needs_move && <span className="small" style={{ color: "#ffd23f" }}>Vaga presencial: exige morar em {o.country_name} (veja a aba Mundo). Remotas não exigem mudança.</span>}
+          {o.intl ? <span className="small">Salário: <b>{o.intl.symbol} {o.intl.net_local.toLocaleString("pt-BR")}</b>/mês já descontado o imposto de lá ({o.intl.income_tax}%) ≈ <b>{fmtBRL(o.intl.net_brl)}</b> hoje (câmbio R$ {Number(o.intl.rate).toFixed(4)}) — varia com o câmbio todo mês.</span>
+            : <span className="small">CLT: <b>{fmtBRL(String(o.clt.net))}</b> líquido (+13º, férias, FGTS{o.clt.vr ? `, VR ${fmtBRL(String(o.clt.vr))}` : ""}{o.clt.health_plan ? ", plano de saúde" : ""})<br />PJ: <b>{fmtBRL(String(o.pj.net))}</b> no bolso, sem benefícios</span>}
           <div className="meter-bar"><i style={{ width: `${o.chance}%`, background: o.chance >= 60 ? "#3ee59a" : o.chance >= 30 ? "#ffd23f" : "#ff6482" }} /></div>
           <span className="small">Chance de aprovação: <b>{o.chance}%</b></span>
-          <div><button className="btn primary small" disabled={busy || !!o.applied || c.applications_left <= 0} onClick={() => void apply(o)}>{o.applied ? (o.applied === "REJECTED" ? "Reprovado(a)" : "Candidatura feita") : "Candidatar-me"}</button></div>
+          <div><button className="btn primary small" disabled={busy || !!o.applied || c.applications_left <= 0 || !!o.needs_move} onClick={() => void apply(o)}>{o.applied ? (o.applied === "REJECTED" ? "Reprovado(a)" : "Candidatura feita") : "Candidatar-me"}</button></div>
         </div>))}
         {data && data.offers.length === 0 && <p className="muted">Nenhuma vaga aberta nessa área neste mês. Tente outra área ou volte no mês que vem.</p>}
       </div>
@@ -128,9 +136,10 @@ function Search({ c, busy, act }: P) {
           <div className="card modal">
             <div className="row between"><h2>Aceitar: {pick.title}</h2><button className="link-btn" onClick={() => setPick(null)}>fechar ✕</button></div>
             <p className="muted">{pick.offer.employer}. Escolha como você será contratado(a):</p>
-            <div className="seg"><button className={kind === "CLT" ? "on" : ""} onClick={() => setKind("CLT")}>CLT — {fmtBRL(String(pick.offer.clt.net))}</button><button className={kind === "PJ" ? "on" : ""} onClick={() => setKind("PJ")}>PJ — {fmtBRL(String(pick.offer.pj.net))}</button></div>
-            <p className="small">{kind === "CLT" ? "CLT: 13º salário, férias + 1/3, FGTS e benefícios. Só um emprego CLT por vez: este substitui o atual." : `PJ: ganha cerca de ${c.rules.pj_premium_pct}% a mais no bolso, sem 13º, férias, FGTS ou benefícios. Você pode manter outro emprego (um PJ extra consome ${c.rules.pj_extra_hours}h livres por mês).`}</p>
-            <button className="btn primary" disabled={busy} onClick={() => { const id = pick.id; setPick(null); void act(() => sim.careerAccept(id, kind), () => "Contratado(a)! O novo salário começa no mês que vem."); }}>Aceitar a vaga</button>
+            {pick.offer.intl ? <p className="small">Contrato internacional ({pick.offer.country_name}, {pick.offer.work_mode === "REMOTE" ? "remoto" : "presencial"}): <b>{pick.offer.intl.symbol} {pick.offer.intl.net_local.toLocaleString("pt-BR")}</b>/mês, ≈ {fmtBRL(pick.offer.intl.net_brl)} hoje. Sem 13º, férias ou FGTS do Brasil; o valor em reais muda com o câmbio.</p> : null}
+            {!pick.offer.intl && <div className="seg"><button className={kind === "CLT" ? "on" : ""} onClick={() => setKind("CLT")}>CLT — {fmtBRL(String(pick.offer.clt.net))}</button><button className={kind === "PJ" ? "on" : ""} onClick={() => setKind("PJ")}>PJ — {fmtBRL(String(pick.offer.pj.net))}</button></div>}
+            {!pick.offer.intl && <p className="small">{kind === "CLT" ? "CLT: 13º salário, férias + 1/3, FGTS e benefícios. Só um emprego CLT por vez: este substitui o atual." : `PJ: ganha cerca de ${c.rules.pj_premium_pct}% a mais no bolso, sem 13º, férias, FGTS ou benefícios. Você pode manter outro emprego (um PJ extra consome ${c.rules.pj_extra_hours}h livres por mês).`}</p>}
+            <button className="btn primary" disabled={busy} onClick={() => { const id = pick.id; setPick(null); void act(() => sim.careerAccept(id, pick.offer.intl ? "INT" : kind), () => "Contratado(a)! O novo salário começa no mês que vem."); }}>Aceitar a vaga</button>
           </div>
         </div>)}
     </>

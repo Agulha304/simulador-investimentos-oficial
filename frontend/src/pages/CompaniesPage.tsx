@@ -1,13 +1,13 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { StatCard } from "../components/StatCard";
-import { type Life, type Rel } from "../services/sim";
+import { sim, type Life, type Rel } from "../services/sim";
 import { useApi } from "../services/dataCache";
-import { api, type CoCatalog, type CoChannel, type CoOverview, type CoQuote, type CoSegment, type CoSiteMode, type Company } from "../services/api";
+import { api, type CoAcqTarget, type CoAcquisitions, type CoCatalog, type CoChannel, type CoOverview, type CoQuote, type CoSegment, type CoSiteMode, type Company } from "../services/api";
 import { fmtBRL, parseMoneyInput, trend } from "../lib/format";
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : "Erro inesperado");
-type Tab = "overview" | "mine" | "market";
+type Tab = "overview" | "mine" | "market" | "buy";
 
 export function CompaniesPage() {
   const nav = useNavigate();
@@ -31,6 +31,7 @@ export function CompaniesPage() {
         <button className={tab === "overview" ? "on" : ""} onClick={() => setTab("overview")}>Visão geral</button>
         <button className={tab === "mine" ? "on" : ""} onClick={() => setTab("mine")}>Minhas empresas ({ov.count})</button>
         <button className={tab === "market" ? "on" : ""} onClick={() => setTab("market")}>Mercado de negócios</button>
+        <button className={tab === "buy" ? "on" : ""} onClick={() => setTab("buy")}>🤝 Comprar empresas</button>
       </div>
 
       {tab === "overview" && (
@@ -65,6 +66,7 @@ export function CompaniesPage() {
           ))}</div>
         </section>
       )}
+      {tab === "buy" && <BuyCompanies mine={ov.companies} onDone={(id) => nav(`/empresas/${id}`)} />}
       {creating && <CreateModal segment={creating} catalog={catalog} onClose={() => setCreating(null)} onCreated={(id) => nav(`/empresas/${id}`)} />}
     </div>
   );
@@ -103,6 +105,9 @@ function CreateModal({ segment, catalog, onClose, onCreated }: { segment: CoSegm
   const [extra, setExtra] = useState("0");
   const [share, setShare] = useState("100");
   const [quote, setQuote] = useState<CoQuote | null>(null);
+  const [country, setCountry] = useState("BR");
+  const [countries, setCountries] = useState<{ code: string; name: string; flag: string; currency: string }[]>([{ code: "BR", name: "Brasil", flag: "🇧🇷", currency: "BRL" }]);
+  useEffect(() => { sim.economyCountries().then((r) => setCountries(r.countries)).catch(() => undefined); }, []);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [friends, setFriends] = useState<Rel[]>([]);
@@ -126,16 +131,16 @@ function CreateModal({ segment, catalog, onClose, onCreated }: { segment: CoSegm
 
   useEffect(() => {
     let live = true;
-    api.coQuote({ segment: segment.key, channel, site_mode: physical ? siteMode : undefined, location: physical ? location : undefined, size, extra_capital: extraValue, owner_share_pct: ownerShare })
+    api.coQuote({ segment: segment.key, channel, site_mode: physical ? siteMode : undefined, location: physical ? location : undefined, size, extra_capital: extraValue, owner_share_pct: ownerShare, country })
       .then((q) => { if (live) { setQuote(q); setMsg(null); } }).catch((e) => { if (live) setMsg(errMsg(e)); });
     return () => { live = false; };
-  }, [segment.key, channel, siteMode, location, size, extraValue, ownerShare, physical]);
+  }, [segment.key, channel, siteMode, location, size, extraValue, ownerShare, physical, country]);
 
   async function submit(e: FormEvent) {
     e.preventDefault();
     setBusy(true); setMsg(null);
     try {
-      const d = await api.coCreate({ name, segment: segment.key, channel, site_mode: physical ? siteMode : undefined, location: physical ? location : undefined, size, extra_capital: extraValue, owner_share_pct: accepted.length ? "100" : (share || "100"), partner_invite_ids: accepted.map((i) => i.id) });
+      const d = await api.coCreate({ country, name, segment: segment.key, channel, site_mode: physical ? siteMode : undefined, location: physical ? location : undefined, size, extra_capital: extraValue, owner_share_pct: accepted.length ? "100" : (share || "100"), partner_invite_ids: accepted.map((i) => i.id) });
       onCreated(d.company.id);
     } catch (err) { setMsg(errMsg(err)); setBusy(false); }
   }
@@ -145,6 +150,8 @@ function CreateModal({ segment, catalog, onClose, onCreated }: { segment: CoSegm
       <form className="card modal" onMouseDown={(e) => e.stopPropagation()} onSubmit={submit}>
         <div className="row"><h2>Abrir {segment.label.toLowerCase()}</h2><button type="button" className="link-btn" onClick={onClose}>fechar ✕</button></div>
         <label>Nome da empresa<input value={name} onChange={(e) => setName(e.target.value)} maxLength={80} required /></label>
+        <label>País da empresa<select value={country} onChange={(e) => setCountry(e.target.value)}>{countries.map((c) => <option key={c.code} value={c.code}>{c.flag} {c.name} ({c.currency})</option>)}</select></label>
+        {quote && quote.country && quote.country !== "BR" && <p className="muted small" style={{ margin: 0 }}>Empresa em {quote.country_name}: preços, aluguel e salários seguem o país e a moeda ({quote.currency}: R$ {Number(quote.rate).toFixed(4)}); tributos locais: IVA {quote.vat}% e imposto sobre o lucro {quote.corp_tax}%. Abrir leva {quote.open_months} meses.</p>}
         {segment.channels.length > 1 ? (
           <label>Canal de venda<select value={channel} onChange={(e) => setChannel(e.target.value as CoChannel)}>
             <option value="PHYSICAL">Física (ponto comercial)</option><option value="ONLINE">Online</option></select></label>
@@ -212,5 +219,67 @@ function CreateModal({ segment, catalog, onClose, onCreated }: { segment: CoSegm
         <button className="btn primary" disabled={busy}>{busy ? "Abrindo…" : "Abrir empresa"}</button>
       </form>
     </div>
+  );
+}
+
+/** Compra de empresas: ofertas de todos os portes e países, com negociação em rodadas. */
+function BuyCompanies({ mine, onDone }: { mine: Company[]; onDone: (id: number) => void }) {
+  const [data, setData] = useState<CoAcquisitions | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [pick, setPick] = useState<CoAcqTarget | null>(null);
+  const [offer, setOffer] = useState("");
+  const [mode, setMode] = useState<"MERGE" | "KEEP">("KEEP");
+  const [buyer, setBuyer] = useState<number | "">("");
+  const [busy, setBusy] = useState(false);
+  const load = () => { api.coAcquisitions().then(setData).catch((e) => setErr(errMsg(e))); };
+  useEffect(load, []);
+  if (!data) return err ? <div className="alert">{err}</div> : <div className="muted">Carregando empresas à venda…</div>;
+  const mergeable = (t: CoAcqTarget) => mine.filter((c) => c.segment === t.segment && (c.country ?? "BR") === t.country && c.status === "ACTIVE");
+  async function send() {
+    if (!pick) return;
+    setBusy(true); setErr(null);
+    try {
+      const r = await api.coAcquisitionOffer({ target_key: pick.key, offer: parseMoneyInput(offer), mode, buyer_company_id: mode === "MERGE" && buyer ? Number(buyer) : undefined });
+      setData(r); setMsg(r.message);
+      if (r.status === "ACCEPTED" && r.company_id) onDone(r.company_id);
+      else { const t = r.listings.find((x) => x.key === pick.key); if (t && t.deal?.status === "OPEN") { setPick(t); setOffer(""); } else setPick(null); }
+    } catch (e) { setErr(errMsg(e)); } finally { setBusy(false); }
+  }
+  return (
+    <section className="card stack">
+      <h2>🤝 Empresas à venda</h2>
+      <p className="muted small">Todo mês aparecem negócios de todos os portes, no Brasil e no exterior. Você faz ofertas e o dono aceita, contrapropõe ou recusa conforme o valor (até {data.max_rounds} rodadas; oferta ofensiva ou outro comprador encerram a conversa).
+        <b> Incorporar</b> (mesmo segmento e país): vira filiais da sua empresa. <b>Manter separada</b>: nasce uma empresa nova sua, com a equipe e a marca da compra.</p>
+      {err && <div className="alert">{err}</div>}
+      {msg && <div className="notice">{msg}</div>}
+      <div className="goods-grid">{data.listings.map((t) => (
+        <div key={t.key} className="card good-card">
+          <div className="row between"><b>{t.name}</b><span className="chip">{t.size_label}</span></div>
+          <span className="muted small">{t.flag} {t.country_name} · {t.segment_label} · {t.employees} funcionários · relevância {t.relevance}</span>
+          <span className="small">Faturamento {fmtBRL(String(t.monthly_revenue))}/mês · margem {t.margin_pct}% · patrimônio {fmtBRL(String(t.assets))}</span>
+          <span className="small">Avaliação: <b>{fmtBRL(String(t.valuation))}</b> · pedem <b>{fmtBRL(t.ask_now)}</b></span>
+          {t.deal?.status === "DONE" && <span className="chip up">Comprada</span>}
+          {t.deal?.status === "WALKED" && <span className="chip down">Negociação encerrada</span>}
+          {(!t.deal || t.deal.status === "OPEN") && <button className="btn small primary" onClick={() => { setPick(t); setOffer(""); setMsg(null); setMode(mergeable(t).length ? "MERGE" : "KEEP"); setBuyer(mergeable(t)[0]?.id ?? ""); }}>{t.deal ? `Continuar negociando (${t.deal.rounds}/${data.max_rounds})` : "Negociar"}</button>}
+        </div>))}</div>
+      {data.done.length > 0 && <><h3>Compras feitas</h3><ul className="list-plain">{data.done.map((d, i) => <li key={i}><span>{d.name}</span><b className="num">{fmtBRL(d.price)}</b></li>)}</ul></>}
+      {pick && (
+        <div className="modal-back" role="dialog" aria-modal="true" aria-label="Negociar compra">
+          <div className="card modal">
+            <div className="row between"><h2>Negociar: {pick.name}</h2><button className="link-btn" onClick={() => setPick(null)}>fechar ✕</button></div>
+            <p className="small">{pick.flag} {pick.country_name} · avaliação {fmtBRL(String(pick.valuation))} · o dono pede agora <b>{fmtBRL(pick.deal?.ask ?? String(pick.ask))}</b>{pick.deal ? ` · rodada ${pick.deal.rounds + 1} de ${data.max_rounds}` : ""}</p>
+            {pick.deal?.log.map((l, i) => <p key={i} className="muted small" style={{ margin: 0 }}>Você ofereceu {fmtBRL(l.offer)} → {l.message ?? "aceito"}</p>)}
+            <div className="seg">
+              <button className={mode === "KEEP" ? "on" : ""} onClick={() => setMode("KEEP")}>Manter separada</button>
+              <button className={mode === "MERGE" ? "on" : ""} disabled={mergeable(pick).length === 0} title={mergeable(pick).length === 0 ? "Você não tem empresa do mesmo segmento e país" : ""} onClick={() => setMode("MERGE")}>Incorporar</button>
+            </div>
+            {mode === "MERGE" && <label>Empresa que incorpora e paga<select value={buyer} onChange={(e) => setBuyer(Number(e.target.value))}>{mergeable(pick).map((c) => <option key={c.id} value={c.id}>{c.name} — caixa {fmtBRL(c.cash)}</option>)}</select></label>}
+            {mode === "KEEP" && <p className="muted small">O valor sai do seu dinheiro pessoal, mais o capital de abertura da nova empresa.</p>}
+            <label>Sua oferta (R$)<input inputMode="decimal" value={offer} onChange={(e) => setOffer(e.target.value)} placeholder={fmtBRL(pick.deal?.ask ?? String(pick.ask))} /></label>
+            <button className="btn primary" disabled={busy || !offer.trim()} onClick={() => void send()}>Fazer oferta</button>
+          </div>
+        </div>)}
+    </section>
   );
 }

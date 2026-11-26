@@ -24,6 +24,7 @@ from backend.models import (
 )
 from backend.services import budget_service, career_rules, finance_ledger, housing_service, item_sync, pricing
 from backend.services import life_rules as R
+from backend.services import university_rules as uni_rules
 from backend.services.finance_ledger import ConflictError, FinanceError, NotFoundError
 
 ZERO = Decimal("0.00")
@@ -106,7 +107,7 @@ def free_hours(p: LifeProfile) -> int:
 
 def raw_free_hours(p: LifeProfile) -> int:
     """Horas livres do mês SEM cortar em zero: negativo = você assumiu mais compromissos do que o seu tempo permite."""
-    studying = career_rules.FIELDS[p.degree_field]["hours"] if p.degree_field else 0
+    studying = int(round(career_rules.FIELDS[p.degree_field]["hours"] * uni_rules.get(p.degree_uni or uni_rules.OPEN_KEY).load)) if p.degree_field else 0
     return R.FREE_HOURS[p.work_level] - R.FAMILY_TIME_HOURS[p.family_time] - studying - p.hours_committed - (p.career_hours or 0)
 
 
@@ -930,7 +931,8 @@ def change_career(db: Session, user_id: int, month: SimMonth, field: str) -> Lif
     old = career_rules.FIELDS.get(p.career_field or career_rules.DEFAULT_FIELD)
     ratio = new["start"] / old["start"]
     degree = field in (p.degrees or [])
-    factor = ratio * ((1 + new["premium"] / 100) if degree else career_rules.NO_DEGREE_SWITCH)
+    uni = uni_rules.get((p.degree_unis or {}).get(field, uni_rules.OPEN_KEY)) if degree else None
+    factor = ratio * ((1 + new["premium"] / 100 * uni_rules.premium_factor(uni)) if degree else career_rules.NO_DEGREE_SWITCH)
     p.pending_career = {"field": field, "factor": round(factor, 4), "degree": degree}
     log(db, user_id, month.ref_month, "CAREER_PLANNED",
         f"Você vai mudar para {new['label']} no mês que vem ({'com diploma' if degree else 'sem diploma: recomeço por baixo'}, salário {'+' if factor >= 1 else ''}{(factor - 1) * 100:.0f}%)")
@@ -938,20 +940,50 @@ def change_career(db: Session, user_id: int, month: SimMonth, field: str) -> Lif
     return p
 
 
-def enroll_degree(db: Session, user_id: int, month: SimMonth, field: str) -> LifeProfile:
+def enroll_degree(db: Session, user_id: int, month: SimMonth, field: str, uni_key: str = uni_rules.OPEN_KEY) -> LifeProfile:
+    """Matricula na graduação de `field` na faculdade `uni_key`. Faculdades concorridas têm vestibular: a chance depende da concorrência e do
+    seu currículo; reprovado, só dá para tentar a mesma faculdade/área daqui a 12 meses (o resultado fica em `p.admission`, sem erro)."""
     budget_service.require_open(month)
     f = _field(field)
+    try:
+        uni = uni_rules.get(uni_key)
+    except ValueError as e:
+        raise FinanceError(str(e)) from None
+    if not uni_rules.offers_field(uni, field):
+        raise FinanceError(f"a {uni.short} não oferece graduação em {f['degree']}")
     p = get_profile(db, user_id, lock=True)
+    p.admission = None
     if p.degree_field:
         raise ConflictError("você já está cursando uma faculdade")
     if field in (p.degrees or []):
         raise ConflictError("você já se formou nessa área")
     if len(p.degrees or []) >= career_rules.MAX_DEGREES:
         raise ConflictError("limite de formações atingido")
-    p.degree_field, p.degree_progress, p.degree_total = field, 0, f["months"]
+    if p.country != "BR":
+        raise ConflictError("as faculdades brasileiras exigem que você more no Brasil (volte, ou faça um intercâmbio)")
+    ref = month.ref_month
+    attempts = dict(p.uni_attempts or {})
+    akey = f"{uni.key}:{field}"
+    last = attempts.get(akey)
+    if last and budget_service.months_between(date.fromisoformat(last), ref) < uni_rules.REAPPLY_MONTHS:
+        wait = uni_rules.REAPPLY_MONTHS - budget_service.months_between(date.fromisoformat(last), ref)
+        raise ConflictError(f"você foi reprovado(a) no vestibular da {uni.short}: nova tentativa em {wait} {'mês' if wait == 1 else 'meses'}")
     from backend.services import career_hub
-    career_hub.on_degree_start(db, p, field, month.ref_month)
-    log(db, user_id, month.ref_month, "DEGREE_START", f"Você começou a faculdade de {f['degree']} ({f['months']} meses)")
+    prep, _ = career_hub.resume_score(db, user_id, field, ref)
+    chance = uni_rules.admission_chance(uni, prep)
+    if R.hash01("vestibular", user_id, uni.key, field, ref.isoformat()) >= chance:
+        attempts[akey] = ref.isoformat()
+        p.uni_attempts = attempts
+        p.satisfaction = _clamp(p.satisfaction - 3)
+        p.admission = {"admitted": False, "chance": chance, "uni": uni.key}
+        log(db, user_id, ref, "VESTIBULAR_FAIL", f"Você prestou o vestibular da {uni.short} para {f['degree']} (chance {chance * 100:.0f}%) e não passou. Nova tentativa em 12 meses.")
+        db.flush()
+        return p
+    months = uni_rules.months_for(uni, field, f["months"])
+    p.degree_field, p.degree_uni, p.degree_progress, p.degree_total = field, uni.key, 0, months
+    career_hub.on_degree_start(db, p, field, ref)
+    p.admission = {"admitted": True, "chance": chance, "uni": uni.key}
+    log(db, user_id, ref, "DEGREE_START", f"Você passou na {uni.short} e começou a faculdade de {f['degree']} ({months} meses)")
     db.flush()
     sync_month(db, user_id, month)
     return p
@@ -965,7 +997,7 @@ def drop_degree(db: Session, user_id: int, month: SimMonth) -> LifeProfile:
     from backend.services import career_hub
     career_hub.on_degree_end(db, p, p.degree_field, month.ref_month, False)
     log(db, user_id, month.ref_month, "DEGREE_DROP", f"Você trancou a faculdade de {career_rules.FIELDS[p.degree_field]['degree']}")
-    p.degree_field, p.degree_progress, p.degree_total = None, 0, 0
+    p.degree_field, p.degree_uni, p.degree_progress, p.degree_total = None, None, 0, 0
     db.flush()
     sync_month(db, user_id, month)
     return p
@@ -1014,6 +1046,7 @@ def apply_career_changes(db: Session, user_id: int, new_month: SimMonth) -> None
     if factor != 1.0:
         _apply_salary_factor(db, user_id, ref, factor)
     from backend.services import career_hub
+    career_hub.reprice_foreign_jobs(db, user_id, ref)
     career_hub.merit_raise_on_open(db, user_id, new_month)
 
 
@@ -1116,6 +1149,8 @@ def sync_month(db: Session, user_id: int, month: SimMonth) -> None:
     from backend.services import career_hub
     career_hub.ensure_jobs(db, user_id, month)
     career_hub.desired_items(db, user_id, ref, want)
+    from backend.services import abroad_service
+    abroad_service.desired_items(db, user_id, ref, want)
 
     shared_total = ZERO
     if p.housing_kind != "EXISTING" and p.housing_cost > 0:
@@ -1141,8 +1176,9 @@ def sync_month(db: Session, user_id: int, month: SimMonth) -> None:
                 want(f"life:inherit:{per.id}", f"Herança de {per.name.split()[0]}", FlowKind.INCOME, "Renda extra", share)
                 want(f"life:itcmd:{per.id}", f"ITCMD (imposto sobre herança, 4%) — {per.name.split()[0]}", FlowKind.EXPENSE, "Impostos", share * Decimal("0.04"))
     if p.degree_field:
-        want("life:tuition", f"Mensalidade — {career_rules.FIELDS[p.degree_field]['degree']}", FlowKind.EXPENSE, "Educação",
-             scale("educacao", career_rules.FIELDS[p.degree_field]["cost"]))
+        u = uni_rules.get(p.degree_uni or uni_rules.OPEN_KEY)
+        want("life:tuition", f"Mensalidade — {career_rules.FIELDS[p.degree_field]['degree']} ({u.short})", FlowKind.EXPENSE, "Educação",
+             scale("educacao", uni_rules.monthly_cost(u, p.degree_field, career_rules.FIELDS[p.degree_field]["cost"])))
     if p.health < 30:
         want(f"life:medical:{ref:%Y-%m}", "Despesa médica (saúde debilitada)", FlowKind.EXPENSE, "Saúde", scale("saude", R.MEDICAL_CRISIS_COST))
 
@@ -1232,12 +1268,14 @@ def process_month(db: Session, user_id: int, month: SimMonth) -> None:
         if p.degree_progress >= p.degree_total:
             f = career_rules.FIELDS[p.degree_field]
             p.degrees = list(p.degrees or []) + [p.degree_field]
+            p.degree_unis = {**(p.degree_unis or {}), p.degree_field: p.degree_uni or uni_rules.OPEN_KEY}
             from backend.services import career_hub
             career_hub.on_degree_end(db, p, p.degree_field, ref, True)
             p.satisfaction = _clamp(p.satisfaction + 8)
-            log(db, user_id, ref, "GRADUATED", f"Você se formou em {f['degree']}! Agora pode mudar de área e ganhar mais.")
-            p.degree_field, p.degree_progress, p.degree_total = None, 0, 0
-    from backend.services import career_hub
+            log(db, user_id, ref, "GRADUATED", f"Você se formou em {f['degree']} ({uni_rules.get(p.degree_uni or uni_rules.OPEN_KEY).short})! Agora pode mudar de área e ganhar mais.")
+            p.degree_field, p.degree_uni, p.degree_progress, p.degree_total = None, None, 0, 0
+    from backend.services import abroad_service, career_hub
+    abroad_service.process_month(db, p, ref)
     career_hub.process_month(db, p, ref)
     _world_mood(db, p, ref)
     if p.degree_field and R.hash01("classmate", p.user_id, ref.isoformat()) < 0.30:           # na faculdade você conhece gente nova

@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { api, type CoCandidate, type CoChannel, type CoExpKind, type CoExpOptions, type CoExpResult, type CoTier, type CoSupplierOffer, type CoCatalog, type CoRegime, type CoRelocateQuote, type CoSchedule, type CoSiteMode, type CompanyDetail, type Good } from "../services/api";
 import { fmtBRL, parseMoneyInput } from "../lib/format";
+import { sim } from "../services/sim";
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : "Erro inesperado");
 
@@ -77,7 +78,8 @@ function CandidateTable({ list, onPick }: { list: CoCandidate[]; onPick: (c: CoC
 }
 
 /** Popup de proposta: salário, horas por semana e escala; mostra o custo mensal REAL e a resposta do candidato. */
-function OfferPopup({ d, cand, onClose, onAccepted, onRefused }: {
+function OfferPopup({ d, cand, onClose, onAccepted, onRefused, workMode = "ONSITE", country }: {
+  workMode?: "ONSITE" | "REMOTE"; country?: string;
   d: CompanyDetail; cand: CoCandidate; onClose: () => void; onAccepted: (d: CompanyDetail, msg: string) => void; onRefused: (id: string, msg: string) => void;
 }) {
   const [salary, setSalary] = useState(String(Math.round(Number(cand.asking_salary))));
@@ -92,7 +94,7 @@ function OfferPopup({ d, cand, onClose, onAccepted, onRefused }: {
   async function send(value: string, confirmRisk: boolean) {
     setBusy(true); setMsg(null);
     try {
-      const r = await api.coHire(d.company.id, { candidate_id: cand.id, salary: parseMoneyInput(value), hours_week: hoursNum, schedule, regime: cand.regime, confirm_risk: confirmRisk });
+      const r = await api.coHire(d.company.id, { candidate_id: cand.id, salary: parseMoneyInput(value), hours_week: hoursNum, schedule, regime: cand.regime, confirm_risk: confirmRisk, work_mode: workMode, country });
       if (r.status === "ACCEPTED" && r.company) onAccepted(r.company, r.message);
       else if (r.status === "COUNTER") { setCounter({ value: r.counter_offer ?? value, text: r.message }); setRisk(null); }
       else { setMsg(r.message); onRefused(cand.id, r.message); }
@@ -144,17 +146,22 @@ export function HireModal({ d, initialRole, onClose, onDone }: {
   const [msg, setMsg] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [offer, setOffer] = useState<CoCandidate | null>(null);
+  const [workMode, setWorkMode] = useState<"ONSITE" | "REMOTE">("ONSITE");
+  const [hireCountry, setHireCountry] = useState(d.company.country ?? "BR");
+  const [worldList, setWorldList] = useState<{ code: string; name: string; flag: string; currency: string }[]>([]);
+  useEffect(() => { sim.economyCountries().then((x) => setWorldList(x.countries)).catch(() => undefined); }, []);
+  const foreign = hireCountry !== (d.company.country ?? "BR");
   const r = d.roles.find((x) => x.key === role);
   const base = Number(r?.salary ?? 0);
   const present = (key: string) => d.compliance?.required.find((q) => q.role === key)?.present;
 
   async function loadList() {
     setBusy(true); setMsg(null);
-    try { setList((await api.coCandidates(d.company.id, role, regime)).candidates); setStep("list"); }
+    try { setList((await api.coCandidates(d.company.id, role, regime, hireCountry)).candidates); setStep("list"); }
     catch (err) { setMsg(errMsg(err)); } finally { setBusy(false); }
   }
   const popup = offer && (
-    <OfferPopup d={d} cand={offer} onClose={() => setOffer(null)} onAccepted={(next, m) => onDone(next, m)} onRefused={(id, m) => { setInfo(m); setList((l) => l.filter((x) => x.id !== id)); }} />
+    <OfferPopup d={d} cand={offer} workMode={foreign ? "REMOTE" : workMode} country={hireCountry} onClose={() => setOffer(null)} onAccepted={(next, m) => onDone(next, m)} onRefused={(id, m) => { setInfo(m); setList((l) => l.filter((x) => x.id !== id)); }} />
   );
   return (
     <>
@@ -167,6 +174,13 @@ export function HireModal({ d, initialRole, onClose, onDone }: {
                 <optgroup label="Cargos obrigatórios">{mandatory.map((x) => <option key={x.key} value={x.key}>{present(x.key) ? "✓" : "✗"} {x.label}</option>)}</optgroup>
                 {optional.length > 0 && <optgroup label="Outros cargos gerais (opcionais)">{optional.map((x) => <option key={x.key} value={x.key}>{x.label}</option>)}</optgroup>}
               </select></label>
+            <div className="row-gap" style={{ flexWrap: "wrap" }}>
+              <label>Onde trabalha<select value={foreign ? "REMOTE" : workMode} disabled={foreign} onChange={(e) => setWorkMode(e.target.value as "ONSITE" | "REMOTE")}>
+                <option value="ONSITE">🏢 Presencial</option><option value="REMOTE">🏠 Remoto</option></select></label>
+              <label>País do funcionário<select value={hireCountry} onChange={(e) => setHireCountry(e.target.value)}>
+                {(worldList.length ? worldList : [{ code: d.company.country ?? "BR", name: d.company.country_name ?? "Brasil", flag: "", currency: d.company.currency ?? "BRL" }]).map((c) => <option key={c.code} value={c.code}>{c.flag} {c.name} ({c.currency})</option>)}</select></label>
+            </div>
+            <p className="muted small" style={{ margin: 0 }}>Remoto só vale para cargos que aceitam (contas, programação, design, atendimento…; garçom, corretor, cozinheiro etc. exigem presença) e muda o rendimento: programadores rendem mais em casa, vendedores menos. Quem mora em outro país só pode ser remoto, pede o salário de mercado de lá e recebe na moeda dele (o custo em reais varia com o câmbio).</p>
             <div className="seg" role="group" aria-label="Regime">
               <button type="button" className={regime === "CLT" ? "on" : ""} onClick={() => setRegime("CLT")}>CLT</button>
               <button type="button" className={regime === "PJ" ? "on" : ""} onClick={() => setRegime("PJ")}>PJ</button>

@@ -20,6 +20,7 @@ const LIFE_NAV = [
   { to: "/vida", icon: "💖", label: "Vida pessoal" },
   { to: "/carreira", icon: "💼", label: "Carreira" },
   { to: "/educacao", icon: "🎓", label: "Educação" },
+  { to: "/mundo", icon: "✈️", label: "Mundo" },
   { to: "/economia", icon: "🌍", label: "Economia" },
   { to: "/desempenho", icon: "🏅", label: "Desempenho" },
   { to: "/resumos", icon: "📊", label: "Resumos" },
