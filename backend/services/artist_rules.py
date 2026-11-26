@@ -7,12 +7,13 @@ from backend.services.goods_rules import hash01
 D = Decimal
 
 # ------------------------------------------------------------------ gerais
-DISCIPLINES = ("music", "acting", "painting", "influencer")
-LABEL = {"music": "Música", "acting": "Atuação", "painting": "Pintura", "influencer": "Influenciador"}
+DISCIPLINES = ("music", "acting", "painting", "influencer", "film", "politics")
+LABEL = {"music": "Música", "acting": "Atuação", "painting": "Pintura", "influencer": "Influenciador", "film": "Cinema", "politics": "Política"}
 MAX_CHANNELS = 3
 TRAIN = {  # disciplina -> (aula, custo/mês em R$, horas/mês, pontos de habilidade)
     "music": ("Aulas de instrumento", 450, 16, 3.0), "acting": ("Oficina de teatro", 380, 14, 3.0),
-    "painting": ("Ateliê de pintura", 350, 14, 3.0), "influencer": ("Curso de roteiro e edição", 300, 12, 2.5)}
+    "painting": ("Ateliê de pintura", 350, 14, 3.0), "influencer": ("Curso de roteiro e edição", 300, 12, 2.5),
+    "film": ("Oficina de direção e roteiro", 420, 14, 3.0), "politics": ("Curso de oratória e articulação política", 380, 12, 3.0)}
 
 
 def clamp(v: float, lo: float = 0.0, hi: float = 100.0) -> float:
@@ -376,4 +377,63 @@ EVENTS = {
                      "options": [_o("denunciar", "Denunciar (R$ 900)", 900, _x(0.6, "As cópias foram retiradas e a notícia ajudou.", fame=2), _x(0.4, "O caso se arrastou.", fame=0)),
                                  _o("ignorar", "Ignorar", 0, _x(1.0, "As cópias circularam.", fame=-1.5))]},
 }
-EVENT_P = 0.30      # chance mensal de surgir uma situação (se houver alguma elegível)
+
+EVENT_P = 0.32      # chance mensal de surgir uma situação (se houver alguma elegível)
+
+# ------------------------------------------------------------------ polêmicas para quem é conhecido (artista, influenciador, empresário) e para políticos
+# fx: relevance (± na relevância pública; a postura com a mídia amplia ou reduz o efeito) e approval (aprovação do mandato)
+EVENTS.update({
+    "pub_declaracao": {"disc": "public", "need": {"rel": 12}, "title": "Uma declaração sua foi tirada de contexto",
+                       "desc": "Um trecho de uma entrevista seu viralizou e virou polêmica nas redes e na imprensa.",
+                       "options": [_o("desculpas", "Pedir desculpas publicamente", 0, _x(0.7, "O pedido de desculpas acalmou os ânimos.", relevance=-1.0), _x(0.3, "As desculpas pareceram forçadas e viraram meme.", relevance=-3.5)),
+                                   _o("defender", "Defender o que disse e explicar o contexto", 0, _x(0.5, "A explicação convenceu muita gente e seu nome cresceu.", relevance=4.0), _x(0.5, "A defesa incendiou ainda mais a polêmica.", relevance=-5.0)),
+                                   _o("atacar", "Atacar quem espalhou o trecho", 0, _x(0.4, "Você virou herói de uma parte do público.", relevance=7.0), _x(0.6, "O ataque queimou a sua imagem.", relevance=-7.0)),
+                                   _o("ignorar", "Ignorar e esperar passar", 0, _x(0.6, "O assunto morreu sozinho.", relevance=-0.5), _x(0.4, "O silêncio foi lido como culpa.", relevance=-4.0))]},
+    "pub_foto_antiga": {"disc": "public", "need": {"rel": 18}, "title": "Uma foto antiga sua vazou",
+                        "desc": "Uma foto de muitos anos atrás está circulando e rendendo comentários.",
+                        "options": [_o("assumir", "Assumir e brincar com o assunto", 0, _x(0.65, "O bom humor desarmou a polêmica e rendeu simpatia.", relevance=3.0), _x(0.35, "A brincadeira foi mal recebida.", relevance=-3.0)),
+                                    _o("advogado", "Acionar advogado para tirar do ar (R$ 1.500)", 1500, _x(0.6, "As publicações saíram do ar.", relevance=-0.5), _x(0.4, "O pedido virou notícia e piorou tudo.", relevance=-4.0)),
+                                    _o("ignorar", "Ignorar", 0, _x(1.0, "A foto perdeu força com o tempo.", relevance=-1.5))]},
+    "pub_tema_polemico": {"disc": "public", "need": {"rel": 15}, "title": "Pedem a sua opinião sobre um tema polêmico",
+                          "desc": "Jornalistas e seguidores querem saber o seu posicionamento sobre um assunto que divide o país.",
+                          "options": [_o("opinar", "Dar uma opinião firme", 0, _x(0.5, "Metade do público adorou e o debate rendeu visibilidade.", relevance=6.0), _x(0.5, "A opinião gerou uma onda de críticas.", relevance=-6.0)),
+                                      _o("neutro", "Responder de forma neutra", 0, _x(1.0, "Você passou pelo assunto sem grandes danos.", relevance=0.5)),
+                                      _o("recusar", "Recusar-se a comentar", 0, _x(0.7, "Respeitaram a sua postura.", relevance=-0.5), _x(0.3, "Disseram que você fugiu do assunto.", relevance=-2.5))]},
+    "pub_boicote": {"disc": "public", "need": {"rel": 25}, "title": "Campanha de boicote contra você e as suas marcas",
+                    "desc": "Um grupo organizou uma campanha pedindo para as pessoas pararem de consumir o que você faz.",
+                    "options": [_o("resposta", "Responder em vídeo e apresentar fatos", 0, _x(0.55, "A resposta virou o jogo.", relevance=3.0), _x(0.45, "A resposta foi vista como arrogante.", relevance=-5.0)),
+                                _o("assessoria", "Contratar assessoria de crise (R$ 6.000)", 6000, _x(0.75, "A assessoria controlou os danos.", relevance=-0.5), _x(0.25, "Mesmo com a assessoria a imagem sofreu.", relevance=-3.0)),
+                                _o("silencio", "Manter silêncio", 0, _x(0.5, "O boicote perdeu força.", relevance=-1.0), _x(0.5, "O boicote cresceu.", relevance=-6.0))]},
+    "pub_acao_solidaria": {"disc": "public", "need": {"rel": 10}, "title": "Convite para uma ação solidária",
+                           "desc": "Uma ONG chama você para uma campanha beneficente que pode viralizar.",
+                           "options": [_o("participar", "Participar (R$ 1.000 de doação)", 1000, _x(0.7, "A ação viralizou e a sua imagem melhorou muito.", relevance=5.0, life={"satisfaction": 4}), _x(0.3, "Disseram que foi só marketing.", relevance=-1.0, life={"satisfaction": 2})),
+                                       _o("nao", "Não participar", 0, _x(1.0, "Você ficou de fora.", relevance=0))]},
+    # ---------------- políticos
+    "pol_fake_news": {"disc": "politics", "need": {"office": True}, "title": "Fake news contra você se espalha",
+                      "desc": "Um áudio falso atribuído a você circula nos grupos de mensagem.",
+                      "options": [_o("desmentir", "Desmentir com provas na imprensa", 0, _x(0.6, "O desmentido funcionou e a notícia virou contra os autores.", relevance=3.0, approval=3), _x(0.4, "O desmentido não alcançou quem recebeu o boato.", relevance=-3.0, approval=-3)),
+                                   _o("justica", "Pedir remoção na justiça (R$ 2.500)", 2500, _x(0.6, "A justiça mandou apagar e puniu os responsáveis.", relevance=2.0, approval=2), _x(0.4, "A decisão demorou e o boato pegou.", relevance=-3.0, approval=-4)),
+                                   _o("ignorar", "Ignorar", 0, _x(0.4, "O boato morreu.", approval=0), _x(0.6, "O boato cresceu.", relevance=-4.0, approval=-5))]},
+    "pol_voto_polemico": {"disc": "politics", "need": {"term": True}, "title": "Votação polêmica no plenário",
+                          "desc": "Um projeto divide a opinião pública e a sua base.",
+                          "options": [_o("favor", "Votar a favor", 0, _x(0.5, "A sua base aplaudiu.", relevance=4.0, approval=4), _x(0.5, "Você foi criticado pela oposição e por parte do eleitorado.", relevance=-4.0, approval=-5)),
+                                      _o("contra", "Votar contra", 0, _x(0.5, "O eleitorado aprovou o seu voto.", relevance=4.0, approval=4), _x(0.5, "Você perdeu apoio na base.", relevance=-4.0, approval=-5)),
+                                      _o("abster", "Abster-se", 0, _x(1.0, "Você se absteve e foi cobrado por indecisão.", relevance=-1.5, approval=-1))]},
+    "pol_gafe": {"disc": "politics", "need": {"office": True}, "title": "Gafe em uma entrevista ao vivo",
+                 "desc": "Um deslize seu em rede nacional virou assunto.",
+                 "options": [_o("assumir", "Assumir o erro e seguir em frente", 0, _x(0.7, "A sinceridade foi bem recebida.", relevance=1.0, approval=1), _x(0.3, "O erro rendeu piadas por semanas.", relevance=-2.5, approval=-2)),
+                             _o("minimizar", "Dizer que foi mal interpretado", 0, _x(0.4, "O assunto passou.", approval=0), _x(0.6, "A desculpa foi desmontada.", relevance=-4.0, approval=-4))]},
+    "pol_crise_local": {"disc": "politics", "need": {"term": True}, "title": "Crise local: chuvas fortes deixam bairros alagados",
+                        "desc": "A população cobra uma resposta imediata do poder público.",
+                        "options": [_o("ir_ao_local", "Ir ao local e comandar o socorro (R$ 3.000)", 3000, _x(0.7, "A presença foi elogiada e a aprovação subiu.", relevance=4.0, approval=6), _x(0.3, "Disseram que foi só para a foto.", relevance=-1.0, approval=-1)),
+                                    _o("nota", "Divulgar nota oficial", 0, _x(1.0, "A nota foi vista como fria.", relevance=-1.0, approval=-3))]},
+    "pol_alianca": {"disc": "politics", "need": {"office": True}, "title": "Proposta de aliança com um adversário",
+                    "desc": "Um grupo rival oferece apoio em troca de espaço no seu mandato.",
+                    "options": [_o("aceitar", "Aceitar a aliança", 0, _x(0.55, "A aliança trouxe força política e votos.", relevance=3.0, approval=2), _x(0.45, "A base chamou você de traidor(a).", relevance=-4.0, approval=-5)),
+                                _o("recusar", "Recusar", 0, _x(1.0, "Você manteve a coerência.", relevance=1.0, approval=1))]},
+    "pol_emenda": {"disc": "politics", "need": {"term": True}, "title": "Emenda parlamentar disponível",
+                   "desc": "Você pode destinar uma verba para uma obra.",
+                   "options": [_o("cidade_natal", "Destinar à sua cidade natal", 0, _x(0.7, "Os eleitores locais gostaram.", approval=4, relevance=1.0), _x(0.3, "Acusaram você de paroquialismo.", approval=-2, relevance=-2.0)),
+                               _o("saude", "Destinar a hospitais", 0, _x(1.0, "A medida foi bem recebida.", approval=5, relevance=1.5)),
+                               _o("educacao", "Destinar a escolas", 0, _x(1.0, "A medida foi bem recebida.", approval=4, relevance=1.0))]},
+})

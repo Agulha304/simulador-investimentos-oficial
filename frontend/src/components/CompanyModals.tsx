@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { api, type CoCandidate, type CoChannel, type CoExpKind, type CoExpOptions, type CoExpResult, type CoTier, type CoSupplierOffer, type CoCatalog, type CoRegime, type CoRelocateQuote, type CoSchedule, type CoSiteMode, type CompanyDetail, type Good } from "../services/api";
 import { fmtBRL, parseMoneyInput } from "../lib/format";
 import { sim } from "../services/sim";
+import { HireStaff, type StaffKind } from "./CompanyStaff";
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : "Erro inesperado");
 
@@ -172,9 +173,11 @@ export function HireModal({ d, initialRole, onClose, onDone }: {
               <select value={role} onChange={(e) => setRole(e.target.value)}>
                 <optgroup label="Cargos do negócio">{business.map((x) => <option key={x.key} value={x.key}>{x.label}</option>)}</optgroup>
                 <optgroup label="Cargos obrigatórios">{mandatory.map((x) => <option key={x.key} value={x.key}>{present(x.key) ? "✓" : "✗"} {x.label}</option>)}</optgroup>
+                <optgroup label="Gestão (contrato mensal)"><option value="mgmt:CEO">CEO</option><option value="mgmt:MARKETER">Marketeiro</option><option value="mgmt:MANAGER">Gerente</option><option value="mgmt:RECRUITER">Contratador (headhunter)</option></optgroup>
                 {optional.length > 0 && <optgroup label="Outros cargos gerais (opcionais)">{optional.map((x) => <option key={x.key} value={x.key}>{x.label}</option>)}</optgroup>}
               </select></label>
-            <div className="row-gap" style={{ flexWrap: "wrap" }}>
+            {role.startsWith("mgmt:") && <HireStaff d={d} kind={role.slice(5) as StaffKind} onDone={onDone} />}
+            {!role.startsWith("mgmt:") && <><div className="row-gap" style={{ flexWrap: "wrap" }}>
               <label>Onde trabalha<select value={foreign ? "REMOTE" : workMode} disabled={foreign} onChange={(e) => setWorkMode(e.target.value as "ONSITE" | "REMOTE")}>
                 <option value="ONSITE">🏢 Presencial</option><option value="REMOTE">🏠 Remoto</option></select></label>
               <label>País do funcionário<select value={hireCountry} onChange={(e) => setHireCountry(e.target.value)}>
@@ -194,7 +197,7 @@ export function HireModal({ d, initialRole, onClose, onDone }: {
             {msg && <div className="alert">{msg}</div>}
             <div className="row-gap" style={{ flexWrap: "wrap" }}>
               <button type="button" className="btn primary" disabled={busy || !role} onClick={() => void loadList()}>{busy ? "Buscando…" : "Ver candidatos"}</button>
-            </div>
+            </div></>}
           </>
         )}
         {step === "list" && (

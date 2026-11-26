@@ -158,6 +158,48 @@ def _manager_turnover(db: Session, c: Company, ref: date) -> None:
                    f"({aides.LEVEL_LABEL[a.level]}, rigidez {rigor}) pesou na equipe")
 
 
+def _run_ceo(db: Session, c: Company, seg: rules.Segment, ref: date, k: str) -> None:
+    """O CEO (se houver) faz uma melhoria por mês e manda um relatório: o texto fica no briefing dele e no histórico da empresa."""
+    a = active_aide(db, c, "CEO")
+    if a is None:
+        return
+    budget = D(str(a.settings.get("monthly_budget", "0")))
+    spend = budget if budget > 0 and cash(db, c) >= budget else ZERO
+    if spend > 0:
+        _post(db, c, ref, kind=FlowKind.EXPENSE, amount=spend, desc="Melhorias conduzidas pelo CEO (orçamento mensal)", line="FEES", key=f"{k}:ceo-budget", overdraft=True)
+    ref_budget = rules.expansion_cost(seg, "QUALITY", c.size, c.units, "MEDIO")
+    res = aides.ceo_improvement(a.level, a.settings.get("focus", "GROWTH"), seed=_seed(db, c.user_id), company_id=c.id, ref=ref, budget=spend, reference=ref_budget)
+    mag, kind = res["mag"], res["kind"]
+    if not res["ok"]:
+        loss = round(0.4 * mag, 2)
+        c.quality = D(str(round(max(0.0, float(c.quality) - loss), 2)))
+        text = f"Tentou {'uma renegociação de contratos' if kind == 'contracts' else 'uma campanha de marca' if kind == 'brand' else 'um programa de qualidade' if kind == 'quality' else 'reorganizar processos'}, mas não deu certo (qualidade −{loss})."
+    elif kind == "contracts":
+        pct = min(4.0, 0.8 * mag)
+        saved = ZERO
+        for cost in db.scalars(select(CompanyCost).where(CompanyCost.company_id == c.id, CompanyCost.active.is_(True))):
+            new = quantize_money(cost.amount * D(str(1 - pct / 100)))
+            saved += (cost.amount - new) * (c.units if cost.scales_with_units else 1)
+            cost.amount = new
+        text = f"Renegociou contratos de fornecedores e serviços: custos fixos −{pct:.1f}% (economia de ~{quantize_money(saved)}/mês)."
+    elif kind == "brand":
+        gain = round(1.0 * mag, 2)
+        c.relevance = D(str(round(min(100.0, float(c.relevance) + gain), 2)))
+        c.reputation = min(100, c.reputation + (1 if mag > 0.8 else 0))
+        text = f"Conduziu uma campanha de marca e de relacionamento com clientes: relevância +{gain}."
+    elif kind == "quality":
+        gain = round(1.4 * mag, 2)
+        c.quality = D(str(round(min(100.0, float(c.quality) + gain), 2)))
+        text = f"Implantou um programa de qualidade e treinamento: qualidade +{gain}."
+    else:
+        gain = round(0.03 * mag, 3)
+        c.capacity_boost = D(str(round(min(float(rules.MAX_CAPACITY_LEVEL), float(c.capacity_boost) + gain), 3)))
+        text = f"Otimizou processos e rotinas: capacidade de atendimento +{gain * 25:.1f}%."
+    reports = list(a.settings.get("reports", []))[-23:] + [{"month": ref.isoformat(), "text": text, "spent": str(spend), "ok": res["ok"]}]
+    a.settings = {**a.settings, "reports": reports}
+    _event(db, c, ref, CompanyEventType.SETTINGS, f"Relatório do CEO ({aides.LEVEL_LABEL[a.level]}): {text}")
+
+
 def _run_marketing(db: Session, c: Company, seg: rules.Segment, ref: date, k: str) -> bool:
     """Campanha do marketeiro no mês: gasta o orçamento do briefing (se houver caixa) e sorteia o resultado pelo nível. Devolve True se
     a campanha deu efeito (vale como campanha ativa no mês)."""
@@ -1338,6 +1380,7 @@ def _process_company(db: Session, c: Company, month: SimMonth) -> CompanyMonth:
 
     # 1) condições do mês (relevância, demanda, sazonalidade, campanha, economia, mudança de endereço)
     _run_marketing(db, c, seg, ref, k)
+    _run_ceo(db, c, seg, ref, k)
     marketing = c.marketing_until is not None and ref <= c.marketing_until
     relevance = float(c.relevance)
     missing = rules.missing_mandatory(c.channel, [e.role for e in staff if rules.counts_as_filled(e.hours_week)])   # fase 2/3a: cargos obrigatórios

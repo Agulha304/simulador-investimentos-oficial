@@ -148,7 +148,7 @@ def test_topic_fit_and_sponsor_catalog():
 
 def test_events_data_is_consistent():
     discs = {e["disc"] for e in AR.EVENTS.values()}
-    assert discs == {"influencer", "music", "acting", "painting"}
+    assert discs == {"influencer", "music", "acting", "painting", "public", "politics"}
     assert {"bet_publi", "fa_na_rua", "tocar_na_rua"} <= set(AR.EVENTS)
     for k, e in AR.EVENTS.items():
         for o in e["options"]:

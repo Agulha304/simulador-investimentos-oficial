@@ -4,8 +4,8 @@ import { fmtBRL } from "../lib/format";
 import { sim, type ArtistAccount, type ArtistOffer, type ArtistView } from "../services/sim";
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : "Erro inesperado");
-type Sub = "acting" | "music" | "painting" | "influencer";
-const SUBS: [Sub, string][] = [["acting", "🎭 Ator"], ["music", "🎸 Músico"], ["painting", "🎨 Pintor"], ["influencer", "📱 Influenciador"]];
+type Sub = "acting" | "music" | "painting" | "influencer" | "film";
+const SUBS: [Sub, string][] = [["acting", "Ator"], ["music", "Músico"], ["painting", "Pintor"], ["influencer", "Influenciador"], ["film", "Cinema"]];
 const n0 = (v: number) => v.toLocaleString("pt-BR");
 
 /** Aba especial de artista: ator, músico, pintor e influenciador. */
@@ -39,6 +39,7 @@ export function ArtistTab() {
       {sub === "painting" && <Painter v={v} busy={busy} run={run} />}
       {sub === "music" && <Musician v={v} busy={busy} run={run} />}
       {sub === "influencer" && <Influencer v={v} busy={busy} run={run} />}
+      {sub === "film" && <Film v={v} busy={busy} run={run} />}
       {dec && (
         <div className="modal-back" role="dialog" aria-modal="true" aria-label="Decisão de divulgação">
           <div className="card modal">
@@ -76,12 +77,12 @@ function Train({ v, d, busy, run }: PV & { d: Sub }) {
   );
 }
 
-function Offers({ v, d, busy, run, empty }: PV & { d: "acting" | "music" | "painting"; empty: string }) {
-  const list = v.offers[d];
+function Offers({ v, d, busy, run, empty }: PV & { d: "acting" | "music" | "painting" | "film"; empty: string }) {
+  const list = d === "film" ? v.film.offers : v.offers[d];
   const jobs = v.jobs.filter((j) => j.discipline === d);
   return (
     <>
-      <h3>{d === "acting" ? "Testes e vagas de atuação" : d === "music" ? "Vagas para músicos" : "Encomendas"}</h3>
+      <h3>{d === "acting" ? "Testes e vagas de atuação" : d === "music" ? "Vagas para músicos" : d === "film" ? "Vagas para dirigir" : "Encomendas"}</h3>
       {list.length === 0 ? <p className="muted">{empty}</p> : <div className="cols-2">{list.map((o: ArtistOffer) => (
         <div key={o.key} className="card stack">
           <div className="row between"><b>{o.title}</b><span className="chip">{o.monthly ? `${fmtBRL(String(o.pay))}/mês × ${o.months}` : fmtBRL(String(o.pay))}</span></div>
@@ -104,7 +105,7 @@ function Painter({ v, busy, run }: PV) {
     <>
       <Offers v={v} d="painting" busy={busy} run={run} empty="Sem encomendas neste mês." />
       <section className="card stack">
-        <h3>🖌️ Pintar um quadro</h3>
+        <h3> Pintar um quadro</h3>
         <div className="row-gap" style={{ flexWrap: "wrap" }}>
           <label>Tema<select value={theme} onChange={(e) => setTheme(e.target.value)}>{v.catalog.paint_themes.map((x) => <option key={x.key} value={x.key}>{x.name}</option>)}</select></label>
           <label>Estilo<select value={style} onChange={(e) => setStyle(e.target.value)}>{v.catalog.paint_styles.map((x) => <option key={x.key} value={x.key}>{x.name}</option>)}</select></label>
@@ -124,7 +125,7 @@ function Musician({ v, busy, run }: PV) {
   return (
     <>
       <section className="card stack">
-        <h3>🎼 Instrumento dominante</h3>
+        <h3> Instrumento dominante</h3>
         <div className="row-gap" style={{ flexWrap: "wrap" }}>
           <select value={v.instrument ?? ""} onChange={(e) => e.target.value && void run("/instrument", "POST", { instrument: e.target.value })} disabled={busy}>
             <option value="">Escolha…</option>{v.catalog.instruments.map((i) => <option key={i.key} value={i.key}>{i.name} (procura {i.demand.toFixed(2)}×)</option>)}</select>
@@ -133,7 +134,7 @@ function Musician({ v, busy, run }: PV) {
       </section>
       {v.instrument && <Offers v={v} d="music" busy={busy} run={run} empty="Ninguém procura o seu instrumento neste mês." />}
       <section className="card stack">
-        <h3>🎤 Banda</h3>
+        <h3> Banda</h3>
         {!v.band ? (
           <div className="row-gap" style={{ flexWrap: "wrap" }}>
             <input placeholder="Nome da banda" value={bandName} onChange={(e) => setBandName(e.target.value)} />
@@ -154,7 +155,7 @@ function Musician({ v, busy, run }: PV) {
       </section>
       {v.instrument && (
         <section className="card stack">
-          <h3>🎵 Criar música e álbum</h3>
+          <h3> Criar música e álbum</h3>
           <div className="row-gap" style={{ flexWrap: "wrap" }}>
             <label>Em nome de<select value={scope} onChange={(e) => setScope(e.target.value as "BAND" | "SOLO")}><option value="BAND" disabled={!v.band}>Banda</option><option value="SOLO">Carreira solo</option></select></label>
             <label>Estilo<select value={style} onChange={(e) => setStyle(e.target.value)}>{v.catalog.styles.map((s) => <option key={s.key} value={s.key}>{s.name}</option>)}</select></label>
@@ -181,7 +182,7 @@ function Influencer({ v, busy, run }: PV) {
   return (
     <>
       <section className="card stack">
-        <h3>📱 Criar uma conta de criador</h3>
+        <h3> Criar uma conta de criador</h3>
         <p className="muted small" style={{ margin: 0 }}>Uma conta é um tema/nicho (ex.: games, tecnologia) e pode ter canais em várias plataformas. Você pode ter até {v.catalog.max_accounts} contas, cada uma com seu equipamento, público e investimentos.</p>
         <div className="row-gap" style={{ flexWrap: "wrap" }}>
           <input placeholder="Nome da conta" value={name} onChange={(e) => setName(e.target.value)} />
@@ -225,7 +226,7 @@ function Account({ a, v, busy, run }: PV & { a: ArtistAccount }) {
         <span className="muted small">Adicionar canal:</span>
         {v.catalog.platforms.filter((p) => !used.has(p.key)).map((p) => <button key={p.key} className="btn small ghost" disabled={busy} onClick={() => void run(`/accounts/${a.id}/channels`, "POST", { platform: p.key })}>+ {p.name}</button>)}
       </div>
-      <h4>🎬 Criar um vídeo</h4>
+      <h4> Criar um vídeo</h4>
       <div className="row-gap" style={{ flexWrap: "wrap" }}>
         <span className="muted small">Postar em:</span>
         {a.channels.map((c) => <label key={c.id} className="check"><input type="checkbox" checked={sel.includes(c.platform)} onChange={() => setSel((s) => (s.includes(c.platform) ? s.filter((x) => x !== c.platform) : [...s, c.platform]))} />{c.platform_name}</label>)}
@@ -239,12 +240,12 @@ function Account({ a, v, busy, run }: PV & { a: ArtistAccount }) {
       </div>
       <span className="muted small">Vídeos temáticos podem vender o que você divulga e atrair inscritos, mas se o assunto não combina com o nicho do canal ele pode vender pouco e afastar parte do público. Quanto mais vídeos no mês, mais visualizações.</span>
       {a.sponsors.length > 0 && <>
-        <h4>🤝 Propostas de publi</h4>
+        <h4> Propostas de publi</h4>
         <div className="cols-2">{a.sponsors.map((o) => (
           <div key={o.key} className="card stack">
             <div className="row between"><b>{o.brand}</b><span className="chip">{fmtBRL(String(o.pay))}</span></div>
             <span className="muted small">{o.category} · encaixe com o seu nicho {Math.round(o.fit * 100)}% · efeito esperado no público {o.subs_effect_pct > 0 ? "+" : ""}{o.subs_effect_pct}%</span>
-            {o.warning && <span className="small" style={{ color: "#ffd23f" }}>⚠ {o.warning}</span>}
+            {o.warning && <span className="small" style={{ color: "#ffd23f" }}> {o.warning}</span>}
             <div><button className="btn small primary" disabled={busy} onClick={() => void run(`/accounts/${a.id}/sponsor`, "POST", { offer_key: o.key })}>Aceitar publi (8h)</button></div>
           </div>))}</div></>}
       <b className="small">Equipamento (vale para todos os canais da conta)</b>
@@ -257,5 +258,69 @@ function Account({ a, v, busy, run }: PV & { a: ArtistAccount }) {
           {on && i.type !== "ONCE" && i.key !== "merch" ? <button className="btn ghost small" disabled={busy} onClick={() => void run(`/accounts/${a.id}/invest/${i.key}`, "DELETE")}>Desligar</button>
             : <button className="btn small" disabled={busy || (on && (i.type === "ONCE" || i.key === "merch"))} onClick={() => void run(`/accounts/${a.id}/invest`, "POST", { kind: i.key })}>{on ? "Ativo" : i.type === "ONCE" ? `Fazer — ${fmtBRL(String(i.cost))}` : i.type === "COMMISSION" ? "Contratar" : `Contratar — ${fmtBRL(String(i.cost))}/mês`}</button>}</div>); })}</div>
     </section>
+  );
+}
+
+/** Cinema: diretor contratado, roteirista (escreve, compra e vende roteiros) e produtor (monta o filme: elenco, figurino, estúdio e cenário). */
+function Film({ v, busy, run }: PV) {
+  const f = v.film;
+  const [title, setTitle] = useState(""), [genre, setGenre] = useState("drama"), [theme, setTheme] = useState("superacao");
+  const [fTitle, setFTitle] = useState(""), [script, setScript] = useState<number | "">(""), [funding, setFunding] = useState("SELF"), [scale, setScale] = useState("indie");
+  const owned = f.scripts.filter((s) => s.status === "OWNED");
+  const chosen = f.scripts.find((s) => s.id === script);
+  return (
+    <>
+      <Offers v={v} d="film" busy={busy} run={run} empty="Ninguém está contratando diretores neste mês." />
+      <section className="card stack">
+        <h3>Roteiros</h3>
+        <p className="muted small" style={{ margin: 0 }}>Escreva o seu roteiro (como roteirista), compre um pronto no mercado (como produtor) ou venda os seus para produtoras.</p>
+        <div className="row-gap" style={{ flexWrap: "wrap" }}>
+          <input placeholder="Título do roteiro" value={title} onChange={(e) => setTitle(e.target.value)} />
+          <select value={genre} onChange={(e) => setGenre(e.target.value)}>{f.catalog.genres.map((g) => <option key={g.key} value={g.key}>{g.name}</option>)}</select>
+          <select value={theme} onChange={(e) => setTheme(e.target.value)}>{f.catalog.themes.map((g) => <option key={g.key} value={g.key}>{g.name}</option>)}</select>
+          <button className="btn primary small" disabled={busy || !title.trim()} onClick={() => void run("/film/script/write", "POST", { title, genre, theme })}>Escrever (20h)</button>
+        </div>
+        <b className="small">Roteiros à venda neste mês</b>
+        <div className="cols-2">{f.market.scripts.map((s) => (
+          <div key={s.key} className="card stack"><div className="row between"><b>{s.title}</b><span className="chip">{fmtBRL(String(s.price))}</span></div>
+            <span className="muted small">{f.catalog.genres.find((g) => g.key === s.genre)?.name} · {f.catalog.themes.find((g) => g.key === s.theme)?.name} · por {s.writer} · qualidade {s.quality}</span>
+            <div><button className="btn small" disabled={busy} onClick={() => void run("/film/script/buy", "POST", { key: s.key })}>Comprar</button></div></div>))}</div>
+        {f.scripts.length > 0 && <><b className="small">Meus roteiros</b><ul className="list-plain">{f.scripts.map((s) => (
+          <li key={s.id}><span>{s.title} · qualidade {s.quality} · {s.source === "OWN" ? "escrito por você" : "comprado"} · {s.status === "OWNED" ? "disponível" : s.status === "SOLD" ? "vendido" : s.status === "IN_FILM" ? "em produção" : "filmado"}</span>
+            {s.status === "OWNED" && s.source === "OWN" && <button className="btn small ghost" disabled={busy} onClick={() => void run(`/film/script/${s.id}/sell`)}>Vender a uma produtora</button>}</li>))}</ul></>}
+      </section>
+      <section className="card stack">
+        <h3>Produzir um filme</h3>
+        <div className="row-gap" style={{ flexWrap: "wrap" }}>
+          <input placeholder="Título do filme" value={fTitle} onChange={(e) => setFTitle(e.target.value)} />
+          <select value={script} onChange={(e) => setScript(Number(e.target.value))}><option value="">Roteiro…</option>{owned.map((s) => <option key={s.id} value={s.id}>{s.title} (q. {s.quality})</option>)}</select>
+          <select value={scale} onChange={(e) => setScale(e.target.value)}>{f.catalog.scales.map((s) => <option key={s.key} value={s.key}>{s.name}</option>)}</select>
+          <select value={funding} onChange={(e) => setFunding(e.target.value)}><option value="SELF">Financiar por conta própria</option><option value="PRODUCER">Procurar uma produtora para financiar</option></select>
+          <button className="btn primary small" disabled={busy || !fTitle.trim() || !chosen} onClick={() => chosen && void run("/film/projects", "POST", { title: fTitle, theme: chosen.theme, genre: chosen.genre, script_id: chosen.id, funding, scale })}>Criar projeto</button>
+        </div>
+        <span className="muted small">Com produtora, ela cobre os custos mas fica com mais da metade do lucro, e só aceita roteiros bons e diretores com nome. Por conta própria, você paga tudo e fica com o resultado.</span>
+        {f.projects.map((p) => (
+          <div key={p.id} className="card stack">
+            <div className="row between"><b>{p.title}</b><span className="chip">{p.status === "PREP" ? "pré-produção" : p.status === "SHOOTING" ? `filmando (${p.months} mês(es))` : p.status === "WRAPPED" ? "aguardando lançamento" : p.status === "RELEASED" ? "lançado" : "cancelado"}</span></div>
+            <span className="muted small">{p.funding === "SELF" ? "Financiado por você" : "Financiado por produtora"} · gasto {fmtBRL(String(p.spent))} · elenco {p.cast.length}/{f.catalog.max_cast}{p.quality ? ` · qualidade ${p.quality}` : ""}</span>
+            {p.result && <span className="small">{p.result}</span>}
+            {p.status === "PREP" && <>
+              <span className="small">Falta: {p.missing.length ? p.missing.join(", ") : "nada — pode gravar!"}</span>
+              <div className="row-gap" style={{ flexWrap: "wrap" }}>
+                {(["costume", "studio", "set"] as const).map((k) => (
+                  <select key={k} value="" onChange={(e) => e.target.value && void run(`/film/projects/${p.id}/production`, "POST", { kind: k, tier: Number(e.target.value) })}>
+                    <option value="">{k === "costume" ? "Figurino" : k === "studio" ? "Estúdio" : "Cenário"}{p[k] ? ` (nível ${p[k]})` : ""}…</option>
+                    {Object.entries(f.catalog[k]).map(([t, x]) => <option key={t} value={t}>{x.name} — {fmtBRL(String(Math.round(x.cost * (f.catalog.scales.find((q) => q.key === p.scale)?.cost_mult ?? 1))))}</option>)}</select>))}
+              </div>
+              <b className="small">Atores disponíveis (cachê por porte do filme)</b>
+              <div className="cols-2">{f.market.actors.filter((a) => !p.cast.some((c) => c.key === a.key)).map((a) => (
+                <div key={a.key} className="row between small"><span>{a.name} · hab. {a.skill} · {fmtBRL(String(Math.round(a.fee * (f.catalog.scales.find((q) => q.key === p.scale)?.cost_mult ?? 1))))}</span>
+                  <button className="btn small" disabled={busy} onClick={() => void run(`/film/projects/${p.id}/cast`, "POST", { key: a.key })}>Convidar</button></div>))}</div>
+              <div className="row-gap"><button className="btn primary small" disabled={busy || p.missing.length > 0} onClick={() => void run(`/film/projects/${p.id}/shoot`)}>Começar a gravar</button>
+                <button className="btn danger small" disabled={busy} onClick={() => window.confirm("Cancelar o projeto?") && void run(`/film/projects/${p.id}`, "DELETE")}>Cancelar</button></div>
+            </>}
+          </div>))}
+      </section>
+    </>
   );
 }

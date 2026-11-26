@@ -74,12 +74,16 @@ def update_briefing(db: Session, user_id: int, month: SimMonth, company_id: int,
     if row is None or row.status != "ACTIVE":
         raise ConflictError(f"Contrate {'um marketeiro' if kind == 'MARKETER' else 'um gerente'} antes de definir o briefing")
     try:
-        row.settings = aides.build_briefing(kind, raw)
+        new = aides.build_briefing(kind, raw)
+        if kind == "CEO":
+            new["reports"] = list(row.settings.get("reports", []))                # o briefing não apaga os relatórios
+        row.settings = new
     except ValueError as e:
         raise FinanceError(str(e)) from None
     db.flush()
     cs._event(db, c, month.ref_month, CompanyEventType.SETTINGS,
               f"Briefing do marketeiro: orçamento mensal {row.settings['monthly_budget']}" if kind == "MARKETER"
+              else f"Briefing do CEO: foco {aides.CEO_FOCUS[row.settings['focus']]}, orçamento mensal {row.settings['monthly_budget']}" if kind == "CEO"
               else f"Briefing do gerente: rigidez {row.settings['rigor']}/100"
                    + (" (alta: risco de pedidos de demissão)" if row.settings["rigor"] >= 70 else ""))
     return row
@@ -94,6 +98,10 @@ def view(db: Session, c: Company) -> dict:
             continue
         d = {"kind": kind, "level": row.level, "label": aides.LEVEL_LABEL[row.level], "fee": str(aides.monthly_fee(kind, row.level, c.size)),
              "settings": row.settings, "hired_month": row.hired_month}
+        if kind == "CEO":
+            d["focus"] = row.settings.get("focus", "GROWTH")
+            d["focus_label"] = aides.CEO_FOCUS[d["focus"]]
+            d["reports"] = list(row.settings.get("reports", []))[-12:][::-1]
         if kind == "MANAGER":
             rigor = int(row.settings.get("rigor", 40))
             d["productivity_pct"] = round((aides.productivity_boost(row.level, rigor) - 1) * 100, 1)

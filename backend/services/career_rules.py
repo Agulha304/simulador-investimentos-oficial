@@ -32,6 +32,22 @@ FIELDS = {
                       degree="Engenharia de Produção / Mecatrônica", months=60, cost=1250, premium=35, hours=22),
     "ciencia": dict(label="Ciência e pesquisa", emoji="🔬", start=0.97, growth=5.4, outlook="começa baixo, cresce com mestrado e doutorado",
                     degree="Química / Física / Biologia", months=60, cost=1200, premium=44, hours=24),
+    "musica": dict(label="Música", emoji="🎼", start=0.97, growth=3.9, outlook="mercado irregular; aulas, orquestras e produção",
+                   degree="Música (bacharelado/licenciatura)", months=48, cost=900, premium=17, hours=18),
+    "matematica": dict(label="Matemática e estatística", emoji="➗", start=1.00, growth=5.6, outlook="muito valorizada em finanças, dados e ensino",
+                       degree="Matemática / Estatística", months=48, cost=1000, premium=30, hours=20),
+    "relacoes": dict(label="Relações internacionais e diplomacia", emoji="🌐", start=0.98, growth=4.7, outlook="abre portas em diplomacia, política e comércio exterior",
+                     degree="Relações Internacionais", months=48, cost=1150, premium=28, hours=18),
+}
+# Quanto o diploma em uma área AJUDA o currículo em OUTRAS áreas (pontos extras na área de destino; "politica" e "concurso" valem para carreira política e concursos).
+SYNERGY = {
+    ("matematica", "financas"): 12, ("matematica", "engenharia"): 12, ("matematica", "educacao"): 10, ("matematica", "tecnologia"): 11, ("matematica", "ciencia"): 9,
+    ("matematica", "industria"): 6, ("matematica", "logistica"): 5, ("matematica", "concurso"): 6,
+    ("relacoes", "direito"): 8, ("relacoes", "financas"): 6, ("relacoes", "seguranca"): 9, ("relacoes", "comercio"): 7, ("relacoes", "politica"): 14, ("relacoes", "concurso"): 8,
+    ("direito", "politica"): 11, ("direito", "seguranca"): 9, ("direito", "relacoes"): 8, ("direito", "concurso"): 10,
+    ("financas", "politica"): 9, ("financas", "comercio"): 8, ("financas", "matematica"): 5, ("financas", "concurso"): 8, ("financas", "relacoes"): 5,
+    ("educacao", "politica"): 6, ("educacao", "musica"): 5, ("educacao", "concurso"): 6, ("artes", "musica"): 7, ("musica", "artes"): 7, ("musica", "educacao"): 7,
+    ("engenharia", "industria"): 9, ("engenharia", "matematica"): 6, ("tecnologia", "matematica"): 6, ("ciencia", "matematica"): 7, ("comercio", "politica"): 4,
 }
 DEFAULT_FIELD = "comercio"
 NO_DEGREE_SWITCH = 0.85           # mudar de área sem diploma = recomeçar com 15% a menos

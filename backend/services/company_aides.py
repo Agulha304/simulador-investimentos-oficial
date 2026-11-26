@@ -17,8 +17,8 @@ from backend.models import CompanySize
 from backend.services.goods_rules import hash01
 
 D = Decimal
-KINDS = ("MARKETER", "MANAGER")
-KIND_LABEL = {"MARKETER": "Marketeiro", "MANAGER": "Gerente"}
+KINDS = ("MARKETER", "MANAGER", "CEO")
+KIND_LABEL = {"MARKETER": "Marketeiro", "MANAGER": "Gerente", "CEO": "CEO"}
 LEVELS = ("LOW", "MID", "HIGH")
 LEVEL_LABEL = {"LOW": "Baixo nível", "MID": "Médio nível", "HIGH": "Alto nível"}
 FEE_SIZE_MULT = {CompanySize.SMALL: D(1), CompanySize.MEDIUM: D("1.6"), CompanySize.LARGE: D("2.6")}
@@ -40,6 +40,15 @@ class ManagerTier:
     quit_mult: float        # gerentes melhores seguram a equipe: multiplicam a chance de demissão
 
 
+@dataclass(frozen=True)
+class CeoTier:
+    fee: Decimal
+    success: float          # chance de a melhoria do mês dar certo
+    scale: float            # tamanho das melhorias
+
+
+CEOS = {"LOW": CeoTier(D(12000), 0.55, 0.6), "MID": CeoTier(D(26000), 0.75, 1.0), "HIGH": CeoTier(D(58000), 0.90, 1.5)}
+CEO_FOCUS = {"GROWTH": "Crescimento (marca e relevância)", "SAVINGS": "Economia (cortar custos)", "QUALITY": "Qualidade e eficiência"}
 MARKETERS = {
     "LOW": MarketerTier(D(1200), 0.45, 0.35, 0.04),
     "MID": MarketerTier(D(3200), 0.70, 0.20, 0.10),
@@ -52,7 +61,7 @@ MANAGERS = {
 }
 QUIT_BASE = 0.07            # chance mensal de saída por funcionário com rigidez 100 e gerente de baixo nível
 QUIT_SHAPE = 2.0            # a chance cresce com a rigidez ao quadrado (rigidez baixa quase não demite)
-BRIEFING_DEFAULT = {"MARKETER": {"monthly_budget": "0"}, "MANAGER": {"rigor": 40}}
+BRIEFING_DEFAULT = {"MARKETER": {"monthly_budget": "0"}, "MANAGER": {"rigor": 40}, "CEO": {"focus": "GROWTH", "monthly_budget": "0", "reports": []}}
 
 
 def check_level(level: str) -> str:
@@ -62,7 +71,7 @@ def check_level(level: str) -> str:
 
 
 def monthly_fee(kind: str, level: str, size: CompanySize) -> Decimal:
-    tier = (MARKETERS if kind == "MARKETER" else MANAGERS)[check_level(level)]
+    tier = {"MARKETER": MARKETERS, "MANAGER": MANAGERS, "CEO": CEOS}[kind][check_level(level)]
     return quantize_money(tier.fee * FEE_SIZE_MULT[size])
 
 
@@ -76,6 +85,17 @@ def build_briefing(kind: str, raw: dict) -> dict:
         if budget < 0 or budget > MAX_BUDGET:
             raise ValueError(f"o orçamento mensal de marketing vai de 0 a {MAX_BUDGET}")
         return {"monthly_budget": str(quantize_money(budget))}
+    if kind == "CEO":
+        focus = raw.get("focus", "GROWTH")
+        if focus not in CEO_FOCUS:
+            raise ValueError("foco do CEO inválido (GROWTH, SAVINGS ou QUALITY)")
+        try:
+            budget = D(str(raw.get("monthly_budget", "0")))
+        except Exception:
+            raise ValueError("orçamento mensal inválido") from None
+        if budget < 0 or budget > MAX_BUDGET:
+            raise ValueError(f"o orçamento mensal de melhorias vai de 0 a {MAX_BUDGET}")
+        return {"focus": focus, "monthly_budget": str(quantize_money(budget))}
     rigor = raw.get("rigor", 40)
     if not isinstance(rigor, int) or isinstance(rigor, bool) or not 0 <= rigor <= 100:
         raise ValueError("a rigidez do gerente vai de 0 a 100")
@@ -125,3 +145,21 @@ def quit_probability(level: str, rigor: int) -> float:
 
 def quits(level: str, rigor: int, *, seed, company_id: int, employee_id: int, ref) -> bool:
     return hash01(seed, "mgr-quit", company_id, employee_id, ref.isoformat()) < quit_probability(level, rigor)
+
+
+# ------------------------------------------------------------------ CEO
+def ceo_improvement(level: str, focus: str, *, seed, company_id: int, ref, budget: Decimal, reference: Decimal) -> dict:
+    """Melhoria do mês do CEO. Foco e orçamento direcionam o tipo; o nível define a chance de dar certo e o tamanho do efeito."""
+    t = CEOS[check_level(level)]
+    effort = min(1.5, 0.8 + float(budget / reference)) if reference > 0 and budget > 0 else 0.8
+    weights = {"GROWTH": {"brand": 0.5, "process": 0.2, "quality": 0.15, "contracts": 0.15}, "SAVINGS": {"contracts": 0.55, "process": 0.25, "quality": 0.1, "brand": 0.1},
+               "QUALITY": {"quality": 0.5, "process": 0.3, "contracts": 0.1, "brand": 0.1}}[focus]
+    roll, acc, kind = hash01("ceo-kind", seed, company_id, ref.isoformat()), 0.0, "process"
+    for k, w in weights.items():
+        acc += w
+        if roll < acc:
+            kind = k
+            break
+    ok = hash01("ceo-ok", seed, company_id, ref.isoformat()) < min(0.97, t.success * (0.9 + 0.1 * effort))
+    mag = t.scale * effort * (0.7 + 0.6 * hash01("ceo-mag", seed, company_id, ref.isoformat()))
+    return {"kind": kind, "ok": ok, "mag": round(mag, 3)}

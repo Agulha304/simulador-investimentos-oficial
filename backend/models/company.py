@@ -409,7 +409,7 @@ class CompanyAide(Base):
     __tablename__ = "company_aides"
     __table_args__ = (
         UniqueConstraint("company_id", "kind", name="uq_company_aides_company_kind"),
-        CheckConstraint("kind IN ('MARKETER', 'MANAGER')", name="ck_company_aides_kind"),
+        CheckConstraint("kind IN ('MARKETER', 'MANAGER', 'CEO')", name="ck_company_aides_kind"),
         CheckConstraint("level IN ('LOW', 'MID', 'HIGH')", name="ck_company_aides_level"),
         CheckConstraint("status IN ('ACTIVE', 'ENDED')", name="ck_company_aides_status"),
     )

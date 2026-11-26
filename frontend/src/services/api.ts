@@ -378,10 +378,10 @@ export interface CoRelocateQuote {
   location: string; location_label: string; site_mode: CoSiteMode | null; size: string; move: Decimal; reinstall: Decimal; fine: Decimal;
   land_cost: Decimal; land_resale: Decimal; total: Decimal; relevance_after: number; sales_mult: number;
 }
-export type CoAideKind = "MARKETER" | "MANAGER";
+export type CoAideKind = "MARKETER" | "MANAGER" | "CEO";
 export type CoAideLevel = "LOW" | "MID" | "HIGH";
-export interface CoAide { kind: CoAideKind; level: CoAideLevel; label: string; fee: Decimal; settings: { monthly_budget?: string; rigor?: number };
-  hired_month: string; productivity_pct?: number; quit_chance_pct?: number }
+export interface CoAide { kind: CoAideKind; level: CoAideLevel; label: string; fee: Decimal; settings: { monthly_budget?: string; rigor?: number; focus?: string };
+  hired_month: string; productivity_pct?: number; quit_chance_pct?: number; focus?: string; focus_label?: string; reports?: { month: string; text: string; spent: string; ok: boolean }[] }
 export interface CoAideOption { level: CoAideLevel; label: string; fee: Decimal }
 export interface CoFranchise {
   appeal: number; royalty_pct: string; open: number; building: number; closed: number; total_royalties: Decimal; min_relevance_ad: number;
@@ -397,7 +397,7 @@ export interface CoIpo {
 export interface BuildCatalog { cities: { key: string; name: string }[]; closing_months: { cash: number; financed: number };
   plans: { key: string; name: string; category: string; area_m2: string; months: number; quotes: Record<string, { total: Decimal; land: Decimal; construction: Decimal }> }[] }
 export interface CompanyDetail {
-  aides?: { marketer: CoAide | null; manager: CoAide | null }; aide_options?: { marketer: CoAideOption[]; manager: CoAideOption[] };
+  aides?: { marketer: CoAide | null; manager: CoAide | null; ceo: CoAide | null }; aide_options?: { marketer: CoAideOption[]; manager: CoAideOption[]; ceo: CoAideOption[] };
   opens_month?: string | null; franchise?: CoFranchise; ipo?: CoIpo;
   partners?: { person_id: number; name: string; share_pct: string; contribution: string; status: string; joined_month: string; finance: string }[];
   company: Company; distributable_profit: Decimal; runway_months: Decimal | null; monthly_obligations: Decimal; loan_limit: Decimal;
@@ -579,7 +579,7 @@ export const api = {
   coAideHire: (id: number, kind: CoAideKind, level: CoAideLevel) =>
     request<CompanyDetail>(`/companies/${id}/aides/${kind}`, { method: "POST", body: JSON.stringify({ level }) }),
   coAideDismiss: (id: number, kind: CoAideKind) => request<CompanyDetail>(`/companies/${id}/aides/${kind}`, { method: "DELETE" }),
-  coAideBriefing: (id: number, kind: CoAideKind, body: { monthly_budget?: string; rigor?: number }) =>
+  coAideBriefing: (id: number, kind: CoAideKind, body: { monthly_budget?: string; rigor?: number; focus?: string }) =>
     request<CompanyDetail>(`/companies/${id}/aides/${kind}/briefing`, { method: "PUT", body: JSON.stringify(body) }),
   coFranchiseAd: (id: number, tier: CoTier) =>
     request<CompanyDetail>(`/companies/${id}/franchise/advertise`, { method: "POST", body: JSON.stringify({ tier, idempotency_key: crypto.randomUUID() }) }),

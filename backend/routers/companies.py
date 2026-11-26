@@ -422,7 +422,7 @@ def aide_dismiss(company_id: int, kind: str, user: CurrentUser, db: DbSession):
 @router.put("/{company_id}/aides/{kind}/briefing", response_model=s.CompanyDetailOut)
 def aide_briefing(company_id: int, kind: str, body: s.AideBriefingIn, user: CurrentUser, db: DbSession):
     """Briefing: marketeiro = orçamento mensal; gerente = rigidez (0 a 100; alta rende mais, mas funcionários podem se demitir)."""
-    raw = {k: v for k, v in (("monthly_budget", str(body.monthly_budget) if body.monthly_budget is not None else None), ("rigor", body.rigor)) if v is not None}
+    raw = {k: v for k, v in (("monthly_budget", str(body.monthly_budget) if body.monthly_budget is not None else None), ("rigor", body.rigor), ("focus", body.focus)) if v is not None}
     return _run(db, lambda: _act(db, user.id, company_id, lambda m: aidesvc.update_briefing(db, user.id, m, company_id, kind, raw)))
 
 

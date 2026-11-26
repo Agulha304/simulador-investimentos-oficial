@@ -1,7 +1,7 @@
 // Etapas 4-6: vida pessoal, economia, partida/progressão. Valores monetários chegam como string (Decimal).
 import { request } from "./api";
 
-export interface Attrs { health: number; wellbeing: number; quality: number; satisfaction: number; social: number; financial_stability: number; free_hours_left: number; free_hours_total: number }
+export interface Attrs { study?: number; study_hours_day?: number; health: number; wellbeing: number; quality: number; satisfaction: number; social: number; financial_stability: number; free_hours_left: number; free_hours_total: number }
 export interface Rel {
   role: "MOTHER" | "FATHER" | "BROTHER" | "SISTER" | null; alive: boolean;
   gender: "M" | "F"; compat_bonus: number; finance_label: string; person_id: number; name: string; age: number; personality: string; interests: string[]; occupation: string; income: string;
@@ -196,6 +196,10 @@ export const sim = {
   artist: () => request<ArtistView>("/artist"),
   artistDo: (path: string, method: "POST" | "PUT" | "DELETE" = "POST", body?: unknown) =>
     request<ArtistView>(`/artist${path}`, method === "DELETE" ? { method } : { method, body: JSON.stringify(body ?? {}) }),
+  lifeStudy: (hours_day: number) => request<Life>("/life/study", put({ hours_day })),
+  politics: () => request<PoliticsView>("/politics"),
+  polDo: (path: string, method: "POST" | "PUT" | "DELETE" = "POST", body?: unknown) =>
+    request<PoliticsView>(`/politics${path}`, method === "DELETE" ? { method } : { method, body: JSON.stringify(body ?? {}) }),
   lifeAbroad: () => request<Abroad>("/life/abroad"),
   lifeExchange: (program_key: string) => request<Abroad>("/life/exchange", post({ program_key })),
   lifeExchangeCancel: () => request<Abroad>("/life/exchange", { method: "DELETE" }),
@@ -275,7 +279,7 @@ export interface ArtistView {
   friend_musicians: { key: string; name: string; instrument: string; skill: number; affinity: number }[];
   works: { id: number; name: string; status: string; work: string; quality: number; scope?: string; style?: string; royalty?: number; size?: string }[];
   decisions: { id: number; title: string; work: string; desc?: string; options: { key: string; label: string; cost: number; desc: string }[] }[];
-  influencer: ArtistInfluencer; inst_skills: Record<string, number>; effective_music: number; payouts: { name: string; month: string; amount: string }[];
+  influencer: ArtistInfluencer; film: FilmView; inst_skills: Record<string, number>; effective_music: number; payouts: { name: string; month: string; amount: string }[];
   result?: { message?: string; hired?: boolean; created?: boolean; booked?: boolean; joined?: boolean; released?: boolean };
   catalog: {
     instruments: { key: string; name: string; demand: number }[]; styles: { key: string; name: string; market: number }[]; themes: { key: string; name: string }[];
@@ -285,4 +289,25 @@ export interface ArtistView {
     gear: { key: string; name: string; prices: number[] }[]; gear_levels: string[]; invest: { key: string; name: string; type: string; cost: number; desc: string }[];
     train: Record<string, { name: string; cost: number; hours: number }>;
   };
+}
+
+export interface PolOffice { key: string; name: string; sphere: string; cycle: string; min_age: number; salary: number; campaign_cost: number; rivals: number; seats: number; election: string; can_run: boolean; blocked_by: string[]; estimate: { score: number; win_chance: number; mood_lean: number } | null }
+export interface PolExam { key: string; kind: string; organ: string; role: string; net: number; competition: number; requires: string | null; fee: number; field: string; level: number; exam_month: string; registered: boolean; chance: number; eligible: boolean }
+export interface PoliticsView {
+  profile: { party: string | null; joined: string | null; ideology: string; proposals: string[]; media: string }; fame: number; skill: number; relevance: number; age: number; study: number; study_hours_day: number;
+  offices: PolOffice[];
+  campaigns: { id: number; name: string; office: string; status: string; election: string; spent: number; momentum: number; marketer: string | null; year: number; estimate: { win_chance: number } | null; done: string[] }[];
+  terms: { id: number; name: string; status: string; start: string; end: string; salary: number; approval: number; done: string[] }[];
+  exams: { offers: PolExam[]; mine: { id: number; name: string; status: string; exam_month: string; net: number; chance: number | null }[] };
+  catalog: { parties: { key: string; name: string; ideology: number; strength: number }[]; ideologies: { key: string; name: string }[]; proposals: { key: string; name: string; lean: number }[]; max_proposals: number;
+    media: { key: string; name: string; desc: string }[]; marketers: { key: string; name: string; fee: number; skill: number }[]; rallies: { key: string; name: string; cost: number; gain: number }[] };
+  result?: { message?: string };
+}
+export interface FilmView {
+  market: { scripts: { key: string; title: string; writer: string; genre: string; theme: string; quality: number; price: number }[]; actors: { key: string; name: string; skill: number; fee: number }[] };
+  offers: ArtistOffer[];
+  scripts: { id: number; title: string; status: string; source: string; genre: string; theme: string; quality: number }[];
+  projects: { id: number; title: string; status: string; missing: string[]; genre: string; theme: string; funding: string; scale: string; budget: number; spent: number; cast: { key: string; name: string; skill: number; fee: number }[]; costume: number; studio: number; set: number; months: number; quality?: number; result?: string }[];
+  catalog: { genres: { key: string; name: string; market: number }[]; themes: { key: string; name: string }[]; scales: { key: string; name: string; cost_mult: number; months: number }[];
+    costume: Record<string, { name: string; cost: number }>; studio: Record<string, { name: string; cost: number }>; set: Record<string, { name: string; cost: number }>; min_cast: number; max_cast: number };
 }

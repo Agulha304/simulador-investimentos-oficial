@@ -86,6 +86,7 @@ class AideHireIn(BaseModel):
 class AideBriefingIn(BaseModel):
     monthly_budget: Decimal | None = Field(default=None, ge=0)    # marketeiro: orçamento mensal de campanhas
     rigor: int | None = Field(default=None, ge=0, le=100)         # gerente: rigidez (0 = brando, 100 = linha dura)
+    focus: str | None = None                                       # CEO: GROWTH | SAVINGS | QUALITY
 
 
 class CompanyBuildIn(BaseModel):

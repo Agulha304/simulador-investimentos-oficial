@@ -1,8 +1,9 @@
 import { Suspense, lazy, useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { EXPANSION_KINDS, ExpansionModal, HireModal, LeaseModal, LoanModal, MoneyModal, RelocateModal, SupplierModal } from "../components/CompanyModals";
-import { AidesCard, FranchiseCard, IpoCard } from "../components/CompanyGrowth";
-import { RecruiterCard, ReportPanel, SupplierLimitsModal, TeamModal } from "../components/CompanyRecruiter";
+import { FranchiseCard, IpoCard } from "../components/CompanyGrowth";
+import { StaffBriefing, StaffRows, staffList, type StaffKind } from "../components/CompanyStaff";
+import { ReportPanel, SupplierLimitsModal, TeamModal } from "../components/CompanyRecruiter";
 import { StatCard } from "../components/StatCard";
 import { api, type CoExpKind, type CoRecruiterReport, type CoSupplierContract, type CompanyDetail, type Good, type Listing } from "../services/api";
 import { cachedGet } from "../services/dataCache";
@@ -32,6 +33,7 @@ export function CompanyPage() {
   const [hireRole, setHireRole] = useState<string | undefined>(undefined);
   const [supCat, setSupCat] = useState<string>("");
   const [report, setReport] = useState<CoRecruiterReport | null>(null);
+  const [briefing, setBriefing] = useState<StaffKind | null>(null);
   const [limitsCt, setLimitsCt] = useState<CoSupplierContract | null>(null);
   const [personalGoods, setPersonalGoods] = useState<Good[]>([]);
   const [market, setMarket] = useState<Listing[]>([]);
@@ -167,10 +169,8 @@ export function CompanyPage() {
             <li key={p.person_id}><span><b>{p.name}</b> <span className="muted small">· situação {p.finance} · entrou com {fmtBRL(p.contribution)}</span></span>
               <span className={`chip ${p.status === "ACTIVE" ? "up" : "down"}`}>{p.share_pct}% · {p.status === "ACTIVE" ? "sócio(a)" : "deu calote"}</span></li>))}</ul>
         </section>)}
-      <RecruiterCard d={d} act={act} onReport={runReport} onTeam={() => setModal("team")} />
       {d.opens_month && d.months.reduce((m, x) => (x.ref_month > m ? x.ref_month : m), "") < d.opens_month && <div className="alert">Empresa em abertura: começa a vender em {d.opens_month.slice(0, 7)}. Enquanto isso, só os custos correm.</div>}
       {d.company.country && d.company.country !== "BR" && <div className="notice">🌍 Empresa em {d.company.country_name} ({d.company.currency}): receitas, custos e salários seguem os preços e o câmbio do país (fator atual ×{Number(d.company.country_factor).toFixed(2)} sobre o Brasil) e os tributos são os de lá.</div>}
-      <AidesCard d={d} act={act} />
       <FranchiseCard d={d} act={act} />
       <IpoCard d={d} act={act} />
       {d.compliance && (
@@ -233,8 +233,8 @@ export function CompanyPage() {
         <div className="row"><h2>Funcionários</h2><span className="row-gap">
           <button className="btn small ghost" onClick={() => { setHireRole(undefined); setModal("hire"); }}>+ Contratar</button>
           <button className="btn small ghost" disabled={!hasRecruiter} title={hasRecruiter ? "Escolha quantos de cada área" : recruiterHint} onClick={() => setModal("team")}>Contratar via contratador</button></span></div>
-        {d.employees.length === 0 && <div className="empty">Nenhum funcionário. A empresa nasce sem equipe: sem funcionários produtivos só o dono produz ({d.expected_capacity} /mês).</div>}
-        {d.employees.length > 0 && (
+        {d.employees.length === 0 && staffList(d).length === 0 && <div className="empty">Nenhum funcionário. A empresa nasce sem equipe: sem funcionários produtivos só o dono produz ({d.expected_capacity} /mês).</div>}
+        {(d.employees.length > 0 || staffList(d).length > 0) && (
           <div className="table-wrap"><table>
             <thead><tr><th>Funcionário</th><th>Regime</th><th title={SCHEDULE_HELP}>Escala</th><th>Escolaridade</th><th>Nível</th><th className="r">Salário negociado</th><th className="r">Custo real/mês</th><th>Situação</th><th /></tr></thead>
             <tbody>{d.employees.map((e) => (
@@ -247,7 +247,7 @@ export function CompanyPage() {
                 <td className="r">{e.status === "ACTIVE" && <button className="link-btn" onClick={() => window.confirm(
                   `Desligar ${e.name || e.role_label}?\nRescisão: ${e.regime === "CLT" ? `${fmtBRL(e.severance_estimate)} (1 salário + aviso prévio)` : "nenhuma (PJ)"}.\nRisco de processo trabalhista: ${String(e.lawsuit_risk_pct).replace(".", ",")}%${e.regime === "PJ" ? " — PJ costuma alegar vínculo empregatício e processar com muito mais frequência que CLT" : ""}${e.hours_week > 44 || e.schedule === "6x1" ? ". Jornada acima de 44 h/semana e escala 6x1 aumentam o risco" : ""}.`) && act(() => api.coFire(c.id, e.id), "Funcionário desligado.")}>desligar</button>}</td>
               </tr>
-            ))}</tbody>
+            ))}<StaffRows d={d} act={act} onBriefing={setBriefing} /></tbody>
           </table></div>
         )}
         <p className="muted small" style={{ margin: 0 }}>Custo real: CLT = 2× o salário negociado; PJ = 1× (sem encargos, mas com risco alto de processo ao demitir). {SCHEDULE_HELP}.</p>
@@ -369,6 +369,7 @@ export function CompanyPage() {
       {modal === "team" && <TeamModal d={d} onClose={() => setModal(null)} onReport={runReport} />}
       {modal === "limits" && limitsCt && <SupplierLimitsModal d={d} ct={limitsCt} onClose={() => setModal(null)} onDone={(x) => done(x, "Limites do contrato salvos.")} />}
       {report && <ReportPanel r={report} onClose={() => setReport(null)} />}
+      {briefing && <StaffBriefing d={d} kind={briefing} act={act} onClose={() => setBriefing(null)} onReport={runReport as never} onTeam={() => setModal("team")} />}
       {modal === "supplier" && <SupplierModal d={d} category={supCat} onClose={() => setModal(null)} onDone={(x, m) => done(x, m)} />}
       {modal === "expansion" && <ExpansionModal initialKind={expKind ?? undefined} d={d} onClose={() => setModal(null)} onDone={(x, m) => done(x, m)} />}
       {modal === "loan" && <LoanModal d={d} onClose={() => setModal(null)} onDone={(x) => done(x, "Empréstimo contratado.")} />}

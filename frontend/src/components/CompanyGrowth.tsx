@@ -5,27 +5,10 @@ import { fmtBRL, fmtMonth } from "../lib/format";
 type Act = (fn: () => Promise<CompanyDetail>, msg: string) => Promise<void>;
 const TIER_LABEL: Record<CoTier, string> = { BARATO: "Barata", MEDIO: "Média", CARO: "Cara" };
 
-/** Marketeiro e gerente: baixo/médio/alto nível, cada um com briefing (orçamento mensal; rigidez). */
-export function AidesCard({ d, act }: { d: CompanyDetail; act: Act }) {
-  const id = d.company.id;
-  return (
-    <section className="card stack" aria-label="Marketeiro e gerente">
-      <h2>Marketeiro e gerente</h2>
-      <p className="muted small" style={{ margin: 0 }}>
-        <b>Opcionais.</b> O marketeiro gasta todo mês o orçamento que você definir em campanhas: quanto melhor o nível e o orçamento, maior a chance de a campanha dar certo (nunca é garantido).
-        O gerente eleva a produtividade da empresa; quanto mais <b>rígido</b>, mais ela rende, mas os funcionários podem pedir demissão.
-      </p>
-      <div className="goods-grid">
-        <AideBox d={d} kind="MARKETER" title="📣 Marketeiro" act={act} id={id} />
-        <AideBox d={d} kind="MANAGER" title="🧑‍💼 Gerente" act={act} id={id} />
-      </div>
-    </section>
-  );
-}
-
-function AideBox({ d, kind, title, act, id }: { d: CompanyDetail; kind: CoAideKind; title: string; act: Act; id: number }) {
-  const cur: CoAide | null = (kind === "MARKETER" ? d.aides?.marketer : d.aides?.manager) ?? null;
-  const opts = (kind === "MARKETER" ? d.aide_options?.marketer : d.aide_options?.manager) ?? [];
+export function AideBox({ d, kind, title, act, id }: { d: CompanyDetail; kind: CoAideKind; title: string; act: Act; id: number }) {
+  const cur: CoAide | null = (kind === "MARKETER" ? d.aides?.marketer : kind === "CEO" ? d.aides?.ceo : d.aides?.manager) ?? null;
+  const opts = (kind === "MARKETER" ? d.aide_options?.marketer : kind === "CEO" ? d.aide_options?.ceo : d.aide_options?.manager) ?? [];
+  const [focus, setFocus] = useState(cur?.settings.focus ?? "GROWTH");
   const [budget, setBudget] = useState(cur?.settings.monthly_budget ?? "0");
   const [rigor, setRigor] = useState(cur?.settings.rigor ?? 40);
   return (
@@ -43,7 +26,17 @@ function AideBox({ d, kind, title, act, id }: { d: CompanyDetail; kind: CoAideKi
           <label className="muted small">Trocar nível
             <select value={cur.level} onChange={(e) => void act(() => api.coAideHire(id, kind, e.target.value as CoAideLevel), "Nível alterado.")}>
               {opts.map((o) => <option key={o.level} value={o.level}>{o.label} — {fmtBRL(o.fee)}/mês</option>)}</select></label>
-          {kind === "MARKETER" ? (
+          {kind === "CEO" ? (
+            <>
+              <label>Foco do CEO<select value={focus} onChange={(e) => setFocus(e.target.value)}>
+                <option value="GROWTH">Crescimento (marca e relevância)</option><option value="SAVINGS">Economia (cortar custos)</option><option value="QUALITY">Qualidade e eficiência</option></select></label>
+              <label>Orçamento mensal de melhorias (R$)<input inputMode="decimal" value={budget} onChange={(e) => setBudget(e.target.value)} /></label>
+              <button type="button" className="btn small" onClick={() => void act(() => api.coAideBriefing(id, kind, { focus, monthly_budget: budget.replace(/\./g, "").replace(",", ".") }), "Briefing do CEO salvo.")}>Salvar briefing</button>
+              <b className="small">Relatórios mensais do CEO</b>
+              {(cur.reports ?? []).length === 0 ? <span className="muted small">O primeiro relatório chega no fechamento do mês.</span> : (
+                <ul className="list-plain">{(cur.reports ?? []).map((r, i) => <li key={i}><span>{fmtMonth(r.month)} — {r.text}</span><span className={`chip ${r.ok ? "up" : "down"}`}>{r.ok ? "ok" : "falhou"}</span></li>)}</ul>)}
+            </>
+          ) : kind === "MARKETER" ? (
             <>
               <label>Orçamento mensal de marketing (R$)
                 <input inputMode="decimal" value={budget} onChange={(e) => setBudget(e.target.value)} /></label>

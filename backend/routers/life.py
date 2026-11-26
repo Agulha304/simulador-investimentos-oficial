@@ -133,7 +133,7 @@ def _overview(db: Session, user_id: int) -> dict:
         "month": month.ref_month.isoformat(),
         "character": {"name": p.name, "age_years": p.age_years, "gender": p.gender, "interested_in": p.interested_in},
         "career": _career_out(db, user_id, p, month),
-        "attributes": {"health": p.health, "wellbeing": p.wellbeing, "quality": p.quality, "satisfaction": p.satisfaction,
+        "attributes": {"study": round(float(p.study or 0), 1), "study_hours_day": float(p.study_hours_day or 0), "health": p.health, "wellbeing": p.wellbeing, "quality": p.quality, "satisfaction": p.satisfaction,
                        "social": p.social, "financial_stability": stability, "free_hours_left": ls.free_hours(p) - p.hours_used,
                        "free_hours_total": ls.free_hours(p)},
         "choices": {k: getattr(p, k) for k in R.LEVELS},
@@ -289,6 +289,19 @@ def degree_enroll(body: DegreeIn, user: CurrentUser, db: DbSession):
         out = _overview(db, user.id)
         out["admission"] = getattr(p, "admission", None)
         return out
+    return _run(db, go)
+
+
+class StudyIn(BaseModel):
+    hours_day: float
+
+
+@router.put("/study")
+def study(body: StudyIn, user: CurrentUser, db: DbSession):
+    """Quantas horas por dia você estuda por conta própria (ajuda em vestibulares e concursos; consome tempo livre)."""
+    def go():
+        ls.set_study_hours(db, user.id, bs.ensure_setup(db, user.id), body.hours_day)
+        return _overview(db, user.id)
     return _run(db, go)
 
 

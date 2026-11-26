@@ -59,7 +59,7 @@ def test_opening_and_build_delays_and_unit_cap():
 def test_aide_api_hire_briefing_and_dismiss(client, rich):
     cid = create_ok(client, rich, staff=False, extra="300000")["company"]["id"]
     d = detail(client, rich, cid)
-    assert d["opens_month"] is not None and set(d["aide_options"]) == {"marketer", "manager"}
+    assert d["opens_month"] is not None and set(d["aide_options"]) == {"marketer", "manager", "ceo"}
     r = client.post(f"{C}/{cid}/aides/MARKETER", headers=rich, json={"level": "MID"})
     assert r.status_code == 200 and r.json()["aides"]["marketer"]["level"] == "MID"
     assert client.post(f"{C}/{cid}/aides/MARKETER", headers=rich, json={"level": "XX"}).status_code == 400

@@ -65,7 +65,7 @@ def test_career_start_sets_gender_and_field(client, auth_headers):
                                                          "interested_in": "M", "career_field": "tecnologia"})
     assert r.status_code == 200, r.text
     j = life(client, h2)
-    assert j["character"]["gender"] == "F" and j["career"]["field"] == "tecnologia" and len(j["career"]["fields"]) == 14
+    assert j["character"]["gender"] == "F" and j["career"]["field"] == "tecnologia" and len(j["career"]["fields"]) == 17
     assert client.post("/api/game/start", headers={**auth_headers, "X-Game-Id": str(client.post("/api/games", headers=auth_headers, json={"kind": "LIFE", "name": "x"}).json()["id"])},
                        json={"mode": "CAREER", "scenario": "young_pro", "career_field": "nao_existe"}).status_code == 400
 

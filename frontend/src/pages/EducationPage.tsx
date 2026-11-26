@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Toast } from "../components/Toast";
 import { fmtBRL, fmtMonth } from "../lib/format";
-import { sim, type Education, type University } from "../services/sim";
+import { sim, type Education, type PoliticsView, type University } from "../services/sim";
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : "Erro inesperado");
 const ST: Record<string, string> = { ACTIVE: "Cursando", DONE: "Concluído", DROPPED: "Abandonado" };
@@ -12,11 +12,14 @@ export function EducationPage() {
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [pickField, setPickField] = useState<string | null>(null);
+  const [pol, setPol] = useState<PoliticsView | null>(null);
+  const loadPol = useCallback(() => { sim.politics().then(setPol).catch(() => undefined); }, []);
+  useEffect(() => { loadPol(); }, [loadPol]);
   const load = useCallback(() => { sim.education().then(setE).catch((x) => setErr(errMsg(x))); }, []);
   useEffect(() => { load(); }, [load]);
   const act = async (fn: () => Promise<unknown>, ok: string) => {
     setBusy(true); setErr(null); setNote(null);
-    try { await fn(); setNote(ok); } catch (x) { setErr(errMsg(x)); } finally { setBusy(false); load(); }
+    try { await fn(); setNote(ok); } catch (x) { setErr(errMsg(x)); } finally { setBusy(false); load(); loadPol(); }
   };
   if (!e) return err ? <div className="alert">{err}</div> : <div className="muted">Carregando educação…</div>;
   const general = e.courses.filter((c) => c.field === "geral");
@@ -36,6 +39,14 @@ export function EducationPage() {
       <header className="page-head"><div><h1>🎓 Educação</h1><p className="muted">Cursos e faculdades custam dinheiro (mensalidade no orçamento) e tempo livre ({e.free_hours}h sobrando no mês). Depois de concluir, você escolhe se entra no currículo.</p></div></header>
       {err && <div className="alert">{err}</div>}
       {note && <Toast text={note} onClose={() => setNote(null)} />}
+      <section className="card stack">
+        <h2>Estudo por conta própria</h2>
+        <p className="muted small" style={{ margin: 0 }}>O atributo <b>Estudo</b> ({pol ? pol.study : "…"}/100) aumenta quando você estuda e conclui cursos, e ajuda a passar em vestibulares e concursos públicos. Cada hora por dia consome ~30 h do seu tempo livre no mês ({e.free_hours} h livres agora).</p>
+        <div className="row-gap" style={{ flexWrap: "wrap" }}>
+          <label>Horas por dia: <b>{pol ? pol.study_hours_day : 0}</b>
+            <input type="range" min={0} max={6} step={0.5} value={pol?.study_hours_day ?? 0} disabled={busy || !pol} onChange={(ev) => void act(() => sim.lifeStudy(Number(ev.target.value)), "Rotina de estudo atualizada.")} /></label>
+        </div>
+      </section>
       <h2>Faculdades</h2>
       {e.studying && <div className="notice">Cursando agora: {e.degrees.find((d) => d.key === e.studying!.field)?.degree} — {e.studying.progress} de {e.studying.total} meses.</div>}
       <div className="cols-2">{e.degrees.map((d) => (
@@ -46,6 +57,16 @@ export function EducationPage() {
       <div className="cols-2">{general.map((c) => <Course key={c.key} c={c} />)}</div>
       <h2>Cursos por área</h2>
       <div className="cols-2">{byField.map((c) => <Course key={c.key} c={c} />)}</div>
+      <h2>Concursos públicos</h2>
+      <p className="muted small">Cargos públicos pagam bem e têm estabilidade, mas a concorrência é alta. A chance depende do seu <b>estudo</b>, das horas diárias, de diplomas que ajudam (direito, administração, relações internacionais, matemática...) e da formação exigida. A prova acontece 2 meses após a inscrição.</p>
+      <div className="cols-2">{(pol?.exams.offers ?? []).map((o) => (
+        <div key={o.key} className="card stack">
+          <div className="row between"><b>{o.role}</b><span className="chip">{fmtBRL(String(o.net))}/mês</span></div>
+          <span className="muted small">{o.organ} · {o.competition} candidatos por vaga · inscrição {fmtBRL(String(o.fee))}{o.requires ? ` · exige formação em ${o.requires}` : ""} · prova em {o.exam_month.slice(0, 7)}</span>
+          <span className="small">Chance hoje: <b>{Math.round(o.chance * 100)}%</b></span>
+          <div><button className="btn primary small" disabled={busy || o.registered} onClick={() => void act(() => sim.polDo("/exams/register", "POST", { key: o.key }), "Inscrição feita!")}>{o.registered ? "Inscrito(a)" : "Inscrever-me"}</button></div>
+        </div>))}</div>
+      {pol && pol.exams.mine.length > 0 && <ul className="list-plain">{pol.exams.mine.map((x) => <li key={x.id}><span>{x.name} · prova {x.exam_month.slice(0, 7)}{x.chance != null ? ` · chance ${Math.round(x.chance * 100)}%` : ""}</span><span className={`chip ${x.status === "PASSED" ? "up" : x.status === "FAILED" ? "down" : ""}`}>{x.status === "PASSED" ? "aprovado(a)" : x.status === "FAILED" ? "reprovado(a)" : "inscrito(a)"}</span></li>)}</ul>}
       <h2>📚 Meu histórico de educação</h2>
       {e.history.length === 0 ? <p className="muted">Você ainda não fez nenhum curso.</p> : (
         <div className="table-wrap"><table><thead><tr><th>Curso</th><th>Área</th><th>Período</th><th>Situação</th><th>No currículo</th></tr></thead>

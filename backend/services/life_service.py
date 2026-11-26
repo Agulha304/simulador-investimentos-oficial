@@ -970,6 +970,7 @@ def enroll_degree(db: Session, user_id: int, month: SimMonth, field: str, uni_ke
         raise ConflictError(f"você foi reprovado(a) no vestibular da {uni.short}: nova tentativa em {wait} {'mês' if wait == 1 else 'meses'}")
     from backend.services import career_hub
     prep, _ = career_hub.resume_score(db, user_id, field, ref)
+    prep = max(0.0, min(100.0, prep + 0.6 * (float(p.study if p.study is not None else 20.0) - 20.0)))      # estudar por conta própria ajuda no vestibular
     chance = uni_rules.admission_chance(uni, prep)
     if R.hash01("vestibular", user_id, uni.key, field, ref.isoformat()) >= chance:
         attempts[akey] = ref.isoformat()
@@ -987,6 +988,43 @@ def enroll_degree(db: Session, user_id: int, month: SimMonth, field: str, uni_ke
     db.flush()
     sync_month(db, user_id, month)
     return p
+
+
+STUDY_MAX_HOURS_DAY = 6.0
+
+
+def set_study_hours(db: Session, user_id: int, month: SimMonth, hours_day: float) -> LifeProfile:
+    """Define quantas horas por dia você estuda por conta própria (1 h/dia = ~30 h do seu tempo livre no mês). Só cabe o que o calendário permite."""
+    budget_service.require_open(month)
+    try:
+        h = round(float(hours_day) * 2) / 2
+    except (TypeError, ValueError):
+        raise FinanceError("horas de estudo inválidas") from None
+    if not 0 <= h <= STUDY_MAX_HOURS_DAY:
+        raise FinanceError(f"estude entre 0 e {STUDY_MAX_HOURS_DAY:g} horas por dia")
+    p = get_profile(db, user_id, lock=True)
+    free_without = raw_free_hours(p) + int(round((p.study_hours_day or 0) * 30))
+    if h * 30 > free_without:
+        raise ConflictError(f"o seu calendário não comporta {h:g} h/dia ({int(h * 30)} h/mês): você só tem {max(0, free_without)} h livres por mês")
+    p.study_hours_day = h
+    from backend.services import career_hub
+    career_hub.recalc_hours(db, user_id)
+    log(db, user_id, month.ref_month, "STUDY_HOURS", f"Você passou a estudar {h:g} h por dia por conta própria")
+    db.flush()
+    return p
+
+
+def _study_monthly(p: LifeProfile) -> None:
+    """Estudo: sobe com as horas diárias (rendimento decrescente), cai devagar sem estudar, e cresce um pouco enquanto você cursa faculdade."""
+    h = float(p.study_hours_day or 0.0)
+    cur = float(p.study if p.study is not None else 20.0)
+    if h > 0:
+        cur += 0.9 * h * (1 - cur / 130)
+    else:
+        cur -= 0.4
+    if p.degree_field:
+        cur += 0.25
+    p.study = round(max(0.0, min(100.0, cur)), 2)
 
 
 def drop_degree(db: Session, user_id: int, month: SimMonth) -> LifeProfile:
@@ -1271,6 +1309,7 @@ def process_month(db: Session, user_id: int, month: SimMonth) -> None:
         c.development = _clamp(c.development + (1 if c.school_kind == "PRIVATE" else 0) + (1 if c.activities else 0)
                                + {"LOW": -1, "NORMAL": 0, "HIGH": 1}[p.family_time])
         c.health = _clamp(c.health + (1 if p.health_level == "PLUS" else 0) - (1 if p.health_level == "NONE" else 0))
+    _study_monthly(p)
     if p.degree_field:                                  # faculdade: um mês cursado; ao final, formatura
         p.degree_progress += 1
         if p.degree_progress >= p.degree_total:

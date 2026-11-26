@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useState } from "react";
 import { StatCard } from "../components/StatCard";
 import { ArtistTab } from "../components/ArtistTab";
+import { PoliticsTab } from "../components/PoliticsTab";
 import { Toast } from "../components/Toast";
 import { fmtBRL, fmtMonth } from "../lib/format";
 import { sim, type CareerHub, type Gig, type HubApplication, type HubJob, type JobOffer } from "../services/sim";
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : "Erro inesperado");
 const WORK: Record<string, string> = { REDUCED: "Trabalhar menos (menos renda, mais tempo livre)", NORMAL: "Jornada normal", INTENSE: "Trabalhar mais (mais renda, menos tempo livre)" };
-type Tab = "now" | "search" | "freela" | "resume" | "artist";
+type Tab = "now" | "search" | "freela" | "resume" | "artist" | "politics";
 
 export function CareerPage() {
   const [c, setC] = useState<CareerHub | null>(null);
@@ -27,13 +28,14 @@ export function CareerPage() {
       {err && <div className="alert">{err}</div>}
       {note && <Toast text={note} onClose={() => setNote(null)} />}
       <div className="seg compact tabs">
-        {([["now", "Minha carreira"], ["search", "Procurar emprego"], ["freela", "Freelas"], ["resume", "Currículo"], ["artist", "🎭 Artista"]] as [Tab, string][]).map(([k, l]) => <button key={k} className={tab === k ? "on" : ""} onClick={() => setTab(k)}>{l}</button>)}
+        {([["now", "Minha carreira"], ["search", "Procurar emprego"], ["freela", "Freelas"], ["resume", "Currículo"], ["artist", "Artista"], ["politics", "Política"]] as [Tab, string][]).map(([k, l]) => <button key={k} className={tab === k ? "on" : ""} onClick={() => setTab(k)}>{l}</button>)}
       </div>
       {tab === "now" && <Now c={c} busy={busy} act={act} />}
       {tab === "search" && <Search c={c} busy={busy} act={act} />}
       {tab === "freela" && <Freela c={c} busy={busy} act={act} />}
       {tab === "resume" && <Resume c={c} busy={busy} act={act} />}
       {tab === "artist" && <ArtistTab />}
+      {tab === "politics" && <PoliticsTab />}
     </div>
   );
 }

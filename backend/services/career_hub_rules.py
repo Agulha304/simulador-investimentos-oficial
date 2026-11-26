@@ -78,6 +78,18 @@ LADDER = {
                 ("Analista de laboratório", "Assistente de pesquisa", "Bolsista de iniciação"),
                 ("Pesquisador(a)", "Químico(a)", "Biólogo(a)"),
                 ("Pesquisador(a) sênior", "Coordenador(a) de laboratório", "Cientista-chefe")),
+    "musica": (("Auxiliar de estúdio", "Roadie / montador de palco", "Assistente de escola de música"),
+               ("Professor(a) de música (aulas particulares)", "Músico de apoio", "Técnico(a) de som júnior"),
+               ("Professor(a) de música", "Instrumentista de orquestra", "Produtor(a) musical"),
+               ("Regente / maestro(a)", "Coordenador(a) de escola de música", "Diretor(a) musical")),
+    "matematica": (("Auxiliar de dados", "Monitor(a) de matemática", "Assistente de pesquisa de mercado"),
+                   ("Analista de dados júnior", "Professor(a) de matemática", "Estatístico(a) júnior"),
+                   ("Estatístico(a)", "Analista quantitativo(a)", "Cientista de dados"),
+                   ("Cientista de dados sênior", "Atuário(a)", "Gerente de analytics")),
+    "relacoes": (("Assistente de comércio exterior", "Auxiliar de tradução", "Recepcionista bilíngue"),
+                 ("Analista de comércio exterior júnior", "Assistente de organização internacional", "Analista de risco-país júnior"),
+                 ("Analista de relações internacionais", "Consultor(a) de comércio exterior", "Assessor(a) parlamentar"),
+                 ("Gerente de relações governamentais", "Diplomata (assessoria sênior)", "Diretor(a) de comércio exterior")),
 }
 EMPLOYERS = ("Grupo Horizonte", "Casa Nova", "Mercado Bom Preço", "Rede Vida", "Clínica Aurora", "TecnoSul", "Construtora Alicerce", "Banco Meridional",
              "Escritório Almeida & Costa", "Colégio Saber", "Studio Cor", "Atacado Brasil", "Hospital São Lucas", "Inova Sistemas", "Prime Consultoria",
@@ -114,6 +126,9 @@ COURSES = {
     "edicao_video": ("Edição de vídeo", "artes", 6, 240, 14, 13),
     "redacao": ("Redação publicitária", "artes", 4, 190, 10, 10),
     "espanhol": ("Espanhol", "geral", 8, 210, 12, 7),
+    "harmonia": ("Harmonia e teoria musical", "musica", 6, 240, 12, 13), "producao_musical": ("Produção musical e áudio", "musica", 8, 300, 14, 15),
+    "estatistica": ("Estatística aplicada", "matematica", 6, 260, 12, 14), "calculo": ("Cálculo e álgebra linear", "matematica", 6, 230, 14, 13),
+    "diplomacia": ("Introdução à diplomacia e política externa", "relacoes", 6, 250, 12, 14), "comex": ("Comércio exterior", "relacoes", 5, 240, 12, 12),
     "lideranca": ("Liderança e gestão de equipes", "geral", 4, 260, 10, 8),
     "agronegocio": ("Gestão do agronegócio", "agro", 6, 280, 14, 14),
     "manejo_ambiental": ("Manejo ambiental e licenciamento", "agro", 5, 240, 12, 12),
@@ -147,6 +162,9 @@ GIG_TITLES = {
     "seguranca": ("Segurança de evento", "Ronda noturna avulsa", "Controle de acesso em show"),
     "industria": ("Conserto de máquina", "Instalação elétrica", "Soldagem de portão"),
     "ciencia": ("Análise de amostras", "Revisão de artigo científico", "Aulas de ciências"),
+    "musica": ("Show em evento", "Aulas particulares de música", "Gravação de jingle"),
+    "matematica": ("Aulas particulares de matemática", "Análise estatística para pesquisa", "Correção de provas"),
+    "relacoes": ("Tradução e interpretação em evento", "Consultoria de exportação", "Relatório de mercado internacional"),
 }
 
 

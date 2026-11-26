@@ -122,6 +122,7 @@ def recalc_hours(db: Session, user_id: int) -> None:
     from backend.services import artist_service
     total = sum(j.hours for j in jobs(db, user_id) if j.end_month is None) + artist_service.committed_hours(db, user_id)
     total += sum(e.hours for e in db.scalars(select(Education).where(Education.user_id == user_id, Education.kind == "COURSE", Education.status == "ACTIVE")))
+    total += int(round((p.study_hours_day or 0) * 30))                                      # estudo por conta própria
     p.career_hours = total
     db.flush()
 
@@ -146,7 +147,7 @@ def resume_score(db: Session, user_id: int, field: str, ref: date) -> tuple[floa
     for e in db.scalars(select(Education).where(Education.user_id == user_id, Education.status == "DONE", Education.in_resume.is_(True))):
         if e.kind == "DEGREE":
             base = float(e.points or H.DEGREE_POINTS)            # diploma de faculdade forte vale mais (peso da instituição)
-            pts = base if e.field == field else H.OTHER_DEGREE_POINTS * base / H.DEGREE_POINTS
+            pts = base if e.field == field else H.OTHER_DEGREE_POINTS * base / H.DEGREE_POINTS + career_rules.SYNERGY.get((e.field, field), 0) * base / H.DEGREE_POINTS
         else:
             pts = float(e.points) if e.field == field else (e.points * 0.5 if e.field == "geral" else 0.0)
         if pts:
@@ -160,6 +161,34 @@ def resume_score(db: Session, user_id: int, field: str, ref: date) -> tuple[floa
         items.append({"kind": "job", "name": f"{j.title} — {j.employer}", "points": round(pts, 1)})
         s += pts
     return min(100.0, round(s, 1)), items
+
+
+def create_public_job(db: Session, user_id: int, ref: date, title: str, employer: str, field: str, net: Decimal, level: int = 1) -> CareerJob:
+    """Posse em cargo público (concurso): cria o emprego e o salário recorrente no orçamento a partir do mês seguinte."""
+    start = budget_service.shift_month(ref, 1)
+    cat = item_sync.category(db, user_id, FlowKind.INCOME, "Salário")
+    acc = finance_ledger.personal_account(db, user_id)
+    r = RecurringItem(user_id=user_id, account_id=acc.id, category_id=cat.id, name=f"Salário — {title}"[:80], kind=FlowKind.INCOME, start_month=start)
+    db.add(r)
+    db.flush()
+    db.add(RecurringItemVersion(item_id=r.id, amount=quantize_money(net), effective_from=start))
+    job = CareerJob(user_id=user_id, title=title[:80], employer=employer[:80], field=field, kind="CLT", level=level, net=quantize_money(net), vr=ZERO, health_plan=True, hours=0,
+                    start_month=start, recurring_item_id=r.id, in_resume=True)
+    db.add(job)
+    p = ls.get_profile(db, user_id, create=False)
+    if p is not None:
+        p.career_field, p.career_since = field, start
+    db.flush()
+    recalc_hours(db, user_id)
+    return job
+
+
+def degree_synergy(db: Session, user_id: int, target: str) -> float:
+    """Pontos extras que os diplomas concluídos dão a um alvo (carreira política, concursos...), conforme `career_rules.SYNERGY`."""
+    pts = 0.0
+    for e in db.scalars(select(Education).where(Education.user_id == user_id, Education.status == "DONE", Education.kind == "DEGREE", Education.in_resume.is_(True))):
+        pts += career_rules.SYNERGY.get((e.field, target), 0) * float(e.points or H.DEGREE_POINTS) / H.DEGREE_POINTS
+    return round(pts, 1)
 
 
 def set_resume(db: Session, user_id: int, kind: str, item_id: int, on: bool) -> None:
@@ -467,6 +496,7 @@ def process_month(db: Session, p: LifeProfile, ref: date) -> None:
         if e.progress >= e.months_total:
             e.status, e.end_month = "DONE", ref
             p.satisfaction = ls._clamp(p.satisfaction + 3)
+            p.study = round(min(100.0, float(p.study or 20.0) + 2.0 + min(3.0, float(e.points) / 6)), 2)          # concluir um curso aumenta o estudo
             ls.log(db, p.user_id, ref, "COURSE_DONE", f"Você concluiu o curso {e.name}! Ele já pode entrar no seu currículo.")
     plan = False
     for j in active_jobs(db, p.user_id, ref):

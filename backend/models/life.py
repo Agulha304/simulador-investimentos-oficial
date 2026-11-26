@@ -8,6 +8,7 @@ from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import (
+    Float,
     JSON, Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, String, UniqueConstraint, func,
 )
 from sqlalchemy.orm import Mapped, mapped_column
@@ -48,6 +49,8 @@ class LifeProfile(Base):
     uni_attempts: Mapped[dict] = mapped_column(JSON, default=dict)             # "faculdade:área" -> último mês reprovado (vestibular anual)
     country: Mapped[str] = mapped_column(String(2), default="BR", server_default="BR")   # país onde o personagem mora
     abroad_since: Mapped[date | None] = mapped_column(Date)
+    study: Mapped[float] = mapped_column(Float, default=20.0, server_default="20")             # 0..100: preparo para vestibulares e concursos
+    study_hours_day: Mapped[float] = mapped_column(Float, default=0.0, server_default="0")      # horas de estudo por conta própria por dia
     one_offs: Mapped[dict] = mapped_column(JSON, default=dict)                # despesas pontuais agendadas: chave -> {name, amount, cat, month}
     pending_career: Mapped[dict | None] = mapped_column(JSON)                 # mudança de área combinada para o mês seguinte
     stress: Mapped[int] = mapped_column(Integer, default=0, server_default="0")                  # sobrecarga acumulada (0..100)

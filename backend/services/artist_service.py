@@ -13,8 +13,10 @@ from sqlalchemy.orm import Session
 from backend.core.money import quantize_money
 from backend.models import ArtistItem, ArtistProfile, FlowKind, Person, Portfolio, Relationship, SimMonth
 from backend.services import artist_events as events
+from backend.services import artist_film as films
 from backend.services import artist_influencer as inf
 from backend.services import artist_rules as AR
+from backend.services import politics_service as pols
 from backend.services import budget_service, finance_ledger
 from backend.services import life_service as ls
 from backend.services.artist_core import (_add, _bump, _get, _income, _life, _pay_cash, _resync, _seed, _upd, fame, items, profile, skill)
@@ -31,7 +33,7 @@ APPLY_HOURS = 3
 # ------------------------------------------------------------------ horas comprometidas
 def committed_hours(db: Session, user_id: int) -> int:
     """Horas fixas por mês: ensaios da banda e contratos mensais (vídeos consomem horas só quando você os cria)."""
-    h = 14 if any(b.status == "ACTIVE" for b in items(db, user_id, "BAND")) else 0
+    h = (14 if any(b.status == "ACTIVE" for b in items(db, user_id, "BAND")) else 0) + films.committed_hours(db, user_id)
     return h + sum(int(j.data.get("hours", 0)) for j in items(db, user_id, "JOB", "ACTIVE") if j.data.get("pay_type") == "MONTHLY")
 
 
@@ -155,7 +157,7 @@ def _callbacks(db: Session, user_id: int, discipline: str) -> list[dict]:
 
 
 def _find_offer(db: Session, user_id: int, ref: date, discipline: str, key: str) -> dict:
-    fn = {"acting": acting_offers, "music": music_offers, "painting": commission_offers}[discipline]
+    fn = {"acting": acting_offers, "music": music_offers, "painting": commission_offers, "film": films.film_offers}[discipline]
     o = next((x for x in fn(db, user_id, ref) if x["key"] == key), None)
     if o is None:
         raise NotFoundError("essa vaga não existe mais")
@@ -348,6 +350,15 @@ def decide(db: Session, user_id: int, month: SimMonth, decision_id: int, option:
     opt = next((o for o in dec.data["options"] if o["key"] == option), None)
     if opt is None:
         raise FinanceError("opção desconhecida")
+    if dec.data.get("work") == "FILM":
+        if opt["cost"]:
+            _pay_cash(db, user_id, month, opt["cost"], opt["label"], "Outros")
+        res = films.release(db, user_id, month, dec, option)
+        dec.status = "DONE"
+        _upd(dec, chosen=option, result=res["message"])
+        ls.log(db, user_id, ref, "FILM_RELEASE", res["message"])
+        _resync(db, user_id, month)
+        return {"message": res["message"], "status": "FILM"}
     if dec.data.get("work") == "EVENT":
         res = events.resolve(db, user_id, month, dec, option)
         dec.status = "DONE"
@@ -561,6 +572,8 @@ def process_month(db: Session, lp, ref: date) -> None:
         return
     seed = _seed(db, user_id)
     inf.process_month(db, user_id, p, ref, seed)
+    pols.process_month(db, user_id, p, ref, seed)
+    films.process_month(db, user_id, p, ref, seed)
     for j in items(db, user_id, "JOB", "ACTIVE"):
         d = j.data
         if d["pay_type"] == "MONTHLY":
@@ -613,6 +626,8 @@ def desired_items(db: Session, user_id: int, ref: date, want) -> None:
             want(f"life:artist:job:{j.id}", f"Artista: {j.name}", FlowKind.INCOME, "Renda extra", d["pay"])
         elif d["pay_type"] == "ONEOFF" and d["pay_month"] == ref.isoformat() and j.status != "QUIT":
             want(f"life:artist:job:{j.id}", f"Artista: {j.name}", FlowKind.INCOME, "Renda extra", d["pay"])
+    pols.desired_items(db, user_id, ref, want)
+    films.desired_items(db, user_id, ref, want)
     for a, cost in inf.monthly_costs(db, user_id):
         want(f"life:artist:accountcost:{a.id}", f"Custos da conta {a.name}", FlowKind.EXPENSE, "Lazer", cost)
 
@@ -635,7 +650,7 @@ def overview(db: Session, user_id: int, ref: date) -> dict:
         "market_musicians": market_musicians(db, user_id, ref) if band else [], "friend_musicians": friend_musicians(db, user_id) if band else [],
         "works": [{"id": w.id, "name": w.name, "status": w.status, **{k: v for k, v in w.data.items()}} for w in works if w.name],
         "decisions": [{"id": d.id, "title": d.name, "work": d.data["work"], "desc": d.data.get("desc", ""), "options": d.data["options"]} for d in items(db, user_id, "DECISION", "OPEN")],
-        "influencer": inf.overview(db, user_id, ref), "payouts": [{"name": x.name, "month": x.data["month"], "amount": x.data["amount"]} for x in items(db, user_id, "PAYOUT") if x.data["month"] >= ref.isoformat()],
+        "influencer": inf.overview(db, user_id, ref), "film": films.overview(db, user_id, ref), "payouts": [{"name": x.name, "month": x.data["month"], "amount": x.data["amount"]} for x in items(db, user_id, "PAYOUT") if x.data["month"] >= ref.isoformat()],
         "catalog": {
             "instruments": [{"key": k, "name": v[0], "demand": v[1]} for k, v in AR.INSTRUMENTS.items()], "styles": [{"key": k, "name": v[0], "market": v[1]} for k, v in AR.STYLES.items()],
             "themes": [{"key": k, "name": v} for k, v in AR.THEMES.items()], "venues": [{"key": k, "name": v[0], "need_rep": v[1], "min": v[2], "max": v[3]} for k, v in AR.VENUES.items()],
