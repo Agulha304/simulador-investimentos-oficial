@@ -34,7 +34,7 @@ TEMP_MULT = 0.6                      # intercâmbio (temporário) assusta menos 
 def upfront_brl(db: Session, user_id: int, code: str, ref: date) -> dict:
     """Passagem, visto/seguro e instalação (2 aluguéis de caução), em reais ao câmbio do mês."""
     c = cr.get(code)
-    deposit = ws.convert(db, user_id, code, c.living["rent"] * 2, ref, friction=True)
+    deposit = ws.convert(db, user_id, code, c.living["rent"] * 2 * float(ws.price_level(db, user_id, code, ref)), ref, friction=True)
     out = {"flight": D(c.flight), "visa": D(c.visa), "deposit": deposit}
     out["total"] = quantize_money(sum(out.values(), ZERO))
     return {k: str(quantize_money(v)) for k, v in out.items()}
@@ -50,8 +50,9 @@ def preview(db: Session, user_id: int, ref: date, program_key: str | None = None
     c = cr.get(code)
     lifestyle = "NORMAL"
     up = upfront_brl(db, user_id, code, ref)
-    tuition = ws.convert(db, user_id, code, p.tuition, ref, friction=True) if p else ZERO
-    stipend = ws.convert(db, user_id, code, p.stipend, ref) if p else ZERO
+    pl = float(ws.price_level(db, user_id, code, ref))
+    tuition = ws.convert(db, user_id, code, p.tuition * pl, ref, friction=True) if p else ZERO
+    stipend = ws.convert(db, user_id, code, p.stipend * pl, ref) if p else ZERO
     living = ws.living_brl(db, user_id, code, ref, lifestyle)
     month_net = D(living["total"]) + tuition - stipend
     months = p.months if p else 0
@@ -225,9 +226,9 @@ def desired_items(db: Session, user_id: int, ref: date, want) -> None:
     if ex is not None:
         prog = xr.PROGRAMS[ex.program_key]
         if prog.tuition:
-            want(f"life:exchange:{ex.id}:tuition", f"Curso: {prog.name}", ls.FlowKind.EXPENSE, "Educação", ws.convert(db, user_id, code, prog.tuition, ref, friction=True))
+            want(f"life:exchange:{ex.id}:tuition", f"Curso: {prog.name}", ls.FlowKind.EXPENSE, "Educação", ws.convert(db, user_id, code, prog.tuition * float(ws.price_level(db, user_id, code, ref)), ref, friction=True))
         if prog.stipend:
-            want(f"life:exchange:{ex.id}:stipend", f"Bolsa/estágio: {prog.name}", ls.FlowKind.INCOME, "Renda extra", ws.convert(db, user_id, code, prog.stipend, ref))
+            want(f"life:exchange:{ex.id}:stipend", f"Bolsa/estágio: {prog.name}", ls.FlowKind.INCOME, "Renda extra", ws.convert(db, user_id, code, prog.stipend * float(ws.price_level(db, user_id, code, ref)), ref))
         if ref == ex.start_month:
             want(f"life:exchange:{ex.id}:start", "Intercâmbio: passagem, visto e instalação", ls.FlowKind.EXPENSE, "Educação", ex.upfront_brl)
     elif p.abroad_since == ref:

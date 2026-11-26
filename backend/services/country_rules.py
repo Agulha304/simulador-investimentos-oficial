@@ -1,5 +1,6 @@
-"""Países do jogo: moeda, câmbio de referência, custo de vida, impostos e mercado. Valores aproximados de 2025/2026 em moeda local; servem
-de base realista (não são cotações ao vivo). O câmbio evolui mês a mês em `world_service` (paridade de poder de compra + ruído).
+"""Países do jogo: moeda, câmbio inicial, custo de vida, impostos e mercado. NENHUM dado é consultado da vida real durante o jogo: estes
+são apenas PONTOS DE PARTIDA aproximados (ordens de grandeza), e a economia de cada país é SIMULADA em `world_economy` (inflação, juros,
+crescimento, nível de preços, câmbio e crises sorteados a cada partida).
 
 Campos:
   fx0         reais por 1 unidade da moeda no início do jogo;     infl   inflação anual (%) usada na deriva cambial (PPC);

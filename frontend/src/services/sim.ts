@@ -198,7 +198,7 @@ export const sim = {
   lifeExchangeCancel: () => request<Abroad>("/life/exchange", { method: "DELETE" }),
   lifeMoveAbroad: (country: string) => request<Abroad & { result: { ended_jobs: string[]; reactions: string[] } }>("/life/move-abroad", post({ country })),
   lifeReturnHome: () => request<Abroad & { result: { flight_brl: string } }>("/life/return-home", post()),
-  economyCountries: () => request<{ month: string; countries: CountryRow[] }>("/economy/countries"),
+  economyCountries: () => request<{ month: string; countries: CountryRow[]; events: WorldEvent[] }>("/economy/countries"),
   lifeDegreeDrop: () => request<Life>("/life/degree", { method: "DELETE" }),
   decisions: () => request<{ month: string; pending: EcoEvent[] }>("/economy/decisions"),
   gameSimParams: (id: number) => request<{ game: string; params: SimParams }>(`/games/${id}/sim-params`),
@@ -241,5 +241,6 @@ export interface Abroad {
 export interface CountryRow {
   code: string; name: string; flag: string; currency: string; symbol: string; rate: string; rate_start: string; change_12m_pct: number; inflation: number; income_tax: number;
   corp_tax: number; vat: number; burden: number; cost_index: number; wage_index: number; market: number; language: string; living_local: Record<string, number>;
-  living_brl: string; history: { month: string; rate: string }[];
+  living_brl: string; history: { month: string; rate: string }[]; growth?: number; interest?: number; confidence?: number; demand?: number; price_level?: number; crisis?: string | null;
 }
+export interface WorldEvent { country: string; country_name: string; flag: string; kind: string; label: string; start: string; end: string; active: boolean; intensity: number }

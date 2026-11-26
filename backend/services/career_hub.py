@@ -206,7 +206,7 @@ def offers(db: Session, user_id: int, month: SimMonth, field: str, country: str 
              "country": country, "country_name": c.name, "flag": c.flag, "work_mode": "REMOTE" if remote else "ONSITE", "needs_move": needs_move}
         if country != "BR":
             brl_eq = net * c.wage_index * (1 - c.income_tax / 100) / (1 - 0.12)      # mesmo cargo, salário do país já líquido do imposto de lá
-            local = round(brl_eq / c.fx0, 2)
+            local = round(brl_eq / c.fx0 * float(ws.price_level(db, user_id, country, ref)), 2)      # salários acompanham a inflação simulada do país
             now = ws.convert(db, user_id, country, local, ref)
             o["intl"] = {"currency": c.currency, "symbol": c.symbol, "net_local": local, "net_brl": str(now), "income_tax": c.income_tax,
                          "rate": str(ws.fx(db, user_id, country, ref))}
@@ -305,7 +305,8 @@ def reprice_foreign_jobs(db: Session, user_id: int, ref: date) -> int:
     for j in active_jobs(db, user_id, ref):
         if j.country == "BR" or not j.net_local or not j.recurring_item_id:
             continue
-        new = ws.convert(db, user_id, j.country, j.net_local, ref)
+        infl = ws.price_level(db, user_id, j.country, ref) / ws.price_level(db, user_id, j.country, max(j.start_month, ws.EPOCH))
+        new = ws.convert(db, user_id, j.country, D(str(j.net_local)) * infl, ref)
         cur = budget_service.version_amount(db, j.recurring_item_id, ref) or ZERO
         if cur and abs(new - cur) / cur > D("0.005"):
             ex = db.scalar(select(RecurringItemVersion).where(RecurringItemVersion.item_id == j.recurring_item_id, RecurringItemVersion.effective_from == ref))

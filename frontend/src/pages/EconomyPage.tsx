@@ -2,7 +2,7 @@ import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { CartesianGrid, Legend, Line, LineChart, ReferenceArea, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { StatCard } from "../components/StatCard";
 import { fmtMonth } from "../lib/format";
-import { sim, type CountryRow, type Crisis, type EcoEvent, type Economy } from "../services/sim";
+import { sim, type CountryRow, type Crisis, type WorldEvent, type EcoEvent, type Economy } from "../services/sim";
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : "Erro inesperado");
 const SCOPE: Record<string, string> = { WORLD: "todo o mundo", SECTOR: "um setor", USER: "você", COMPANY: "uma empresa sua" };
@@ -169,27 +169,30 @@ function Spark({ rows }: { rows: { rate: string }[] }) {
 /** Economia de todos os países do jogo: quanto vale a moeda em reais, inflação, impostos e custo de vida. */
 function Countries() {
   const [rows, setRows] = useState<CountryRow[] | null>(null);
+  const [events, setEvents] = useState<WorldEvent[]>([]);
   const [err, setErr] = useState<string | null>(null);
   const [open, setOpen] = useState<string | null>(null);
-  useEffect(() => { sim.economyCountries().then((r) => setRows(r.countries)).catch((e) => setErr(errMsg(e))); }, []);
+  useEffect(() => { sim.economyCountries().then((r) => { setRows(r.countries); setEvents(r.events); }).catch((e) => setErr(errMsg(e))); }, []);
   if (err) return <div className="alert">{err}</div>;
   if (!rows) return <div className="muted">Carregando países…</div>;
   const money = (v: string, d = 4) => `R$ ${Number(v).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: d })}`;
   return (
     <section className="card stack">
       <h2>🌐 Economia dos países</h2>
-      <p className="muted small" style={{ margin: 0 }}>Quanto vale 1 unidade da moeda de cada país em reais. O câmbio acompanha a inflação de cada país e oscila todo mês. Clique em uma linha para ver impostos e custo de vida.</p>
+      <p className="muted small" style={{ margin: 0 }}>Economias <b>simuladas</b> (nada vem da vida real): cada partida sorteia inflação, juros, crescimento, câmbio e crises de cada país. O câmbio responde à inflação, aos juros e às crises; moedas de países emergentes sofrem mais nas crises mundiais, e as de "porto seguro" sobem. Clique numa linha para ver impostos e custo de vida.</p>
       <div className="table-wrap"><table>
-        <thead><tr><th>País</th><th>Moeda</th><th className="r">Cotação (R$)</th><th className="r">12 meses</th><th>Histórico</th><th className="r">Inflação a.a.</th><th className="r">Custo de vida/mês</th></tr></thead>
+        <thead><tr><th>País</th><th>Situação</th><th>Moeda</th><th className="r">Cotação (R$)</th><th className="r">12 meses</th><th>Histórico</th><th className="r">Inflação a.a.</th><th className="r">Custo de vida/mês</th></tr></thead>
         <tbody>{rows.map((c) => (
           <Fragment key={c.code}>
             <tr onClick={() => setOpen(open === c.code ? null : c.code)} style={{ cursor: "pointer" }}>
-              <td>{c.flag} {c.name}</td><td>{c.currency}</td><td className="r num">{c.code === "BR" ? "—" : money(c.rate)}</td>
+              <td>{c.flag} {c.name}</td><td>{c.crisis ? <span className="chip down" title={c.crisis}>⚠ {c.crisis.split(":")[0]}</span> : <span className="muted small">estável</span>}</td><td>{c.currency}</td><td className="r num">{c.code === "BR" ? "—" : money(c.rate)}</td>
               <td className={`r num ${c.change_12m_pct > 0 ? "tone-down" : c.change_12m_pct < 0 ? "tone-up" : ""}`}>{c.code === "BR" ? "—" : `${c.change_12m_pct > 0 ? "+" : ""}${c.change_12m_pct.toFixed(1)}%`}</td>
               <td><Spark rows={c.history} /></td><td className="r num">{c.inflation.toFixed(1)}%</td><td className="r num">{money(c.living_brl, 0)}</td>
             </tr>
-            {open === c.code && <tr key={`${c.code}-d`}><td colSpan={7}>
+            {open === c.code && <tr key={`${c.code}-d`}><td colSpan={8}>
               <div className="stats-grid">
+                <div className="card"><span className="muted small">Crescimento / juros</span><b className="num">{c.growth?.toFixed(1)}% / {c.interest?.toFixed(1)}%</b></div>
+                <div className="card"><span className="muted small">Confiança · demanda · preços</span><b className="num">{c.confidence} · {c.demand?.toFixed(2)} · ×{c.price_level?.toFixed(2)}</b></div>
                 <div className="card"><span className="muted small">Imposto de renda (efetivo)</span><b className="num">{c.income_tax}%</b></div>
                 <div className="card"><span className="muted small">Imposto sobre lucro de empresas</span><b className="num">{c.corp_tax}%</b></div>
                 <div className="card"><span className="muted small">IVA / imposto sobre vendas</span><b className="num">{c.vat}%</b></div>
@@ -201,6 +204,10 @@ function Countries() {
             </td></tr>}
           </Fragment>))}</tbody>
       </table></div>
+      <h3>⚠ Crises no mundo</h3>
+      {events.length === 0 ? <p className="muted small">Nenhuma crise até agora. Elas surgem ao longo do jogo, em países isolados ou no mundo todo.</p> : (
+        <ul className="list-plain">{events.slice(0, 14).map((e, i) => (
+          <li key={i}><span>{e.flag} {e.label} · {e.start.slice(0, 7)} → {e.end.slice(0, 7)}</span><span className={`chip ${e.active ? "down" : ""}`}>{e.active ? "em andamento" : "encerrada"}</span></li>))}</ul>)}
     </section>
   );
 }

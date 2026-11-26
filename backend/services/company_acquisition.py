@@ -64,7 +64,7 @@ def make_target(seed: int, ref: date, i: int, db: Session | None = None, user_id
         units = seg.base_demand * rules.SIZES[size].demand * 0.5
     ratio = 1.0
     if db is not None and country != "BR":
-        ratio = cc.cost_index * float(ws.fx(db, user_id, country, ref)) / cc.fx0
+        ratio = cc.cost_index * float(ws.fx(db, user_id, country, ref) * ws.price_level(db, user_id, country, ref)) / cc.fx0
     else:
         ratio = cc.cost_index
     revenue = float(seg.price) * units * ratio

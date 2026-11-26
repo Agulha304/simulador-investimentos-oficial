@@ -16,13 +16,36 @@ REF = date(2026, 11, 1)
 
 
 # ------------------------------------------------------------------ países e câmbio
-def test_countries_and_fx_are_realistic_and_deterministic():
+def test_world_economy_is_simulated_deterministic_and_has_crises():
+    from backend.services import world_economy as we
     assert len(cr.COUNTRIES) >= 19 and cr.COUNTRIES["BR"].currency == "BRL"
     for c in cr.COUNTRIES.values():
         assert c.fx0 > 0 and c.cost_index > 0 and cr.living_local(c.code)["total"] > 0
-    a = ws._series_value("AR", 5, date(2029, 11, 1))
-    assert a == ws._series_value("AR", 5, date(2029, 11, 1)) and a < cr.COUNTRIES["AR"].fx0 * 0.6     # inflação alta: peso argentino perde valor
-    assert abs(ws._series_value("CH", 5, date(2027, 11, 1)) - cr.COUNTRIES["CH"].fx0) / cr.COUNTRIES["CH"].fx0 < 0.2
+    far = date(2031, 11, 1)
+    assert we.fx(5, "AR", far) == we.fx(5, "AR", far) and we.fx(5, "AR", far) < cr.COUNTRIES["AR"].fx0 * 0.6       # inflação alta: moeda perde valor
+    assert we.fx(5, "US", far) != we.fx(6, "US", far)                                                              # cada partida tem o seu mundo
+    assert we.state(5, "AR", far)["infl"] != we.state(6, "AR", far)["infl"]
+    assert we.state(5, "BR", date(2026, 11, 1))["fx"] == 1.0 and we.state(5, "US", date(2026, 11, 1))["fx"] == cr.COUNTRIES["US"].fx0
+    crises = [c for sd in range(1, 9) for c in we.crises(sd, date(2034, 11, 1))]
+    assert len(crises) >= 20 and {c.kind for c in crises} >= {"CURRENCY", "RECESSION", "INFLATION"}
+    assert any(c.code == "*" for c in crises)                                                                      # há crises globais
+    pl = [we.price_level(5, "AR", date(2026 + (10 + m) // 12, (10 + m) % 12 + 1, 1)) for m in (0, 12, 36)]
+    assert pl[0] == 1.0 and pl[1] > 1.2 and pl[2] > pl[1] > pl[0]                                                  # preços sobem com a inflação simulada
+
+
+def test_global_panic_hits_emerging_markets_harder_than_safe_havens():
+    from backend.services import world_economy as we
+    drops_em, drops_haven, n = [], [], 0
+    for sd in range(1, 40):
+        w = we.world(sd)
+        w.at(date(2034, 11, 1))
+        for c in w.crises:
+            if c.kind == "FINANCIAL_PANIC" and c.code == "*" and c.end <= date(2034, 11, 1):
+                a, b = c.start, c.end
+                for code, bucket in (("MX", drops_em), ("AR", drops_em), ("CH", drops_haven), ("JP", drops_haven)):
+                    bucket.append(w.state[b][code]["fx"] / w.state[a][code]["fx"] - 1)
+                n += 1
+    assert n >= 2 and sum(drops_em) / len(drops_em) < sum(drops_haven) / len(drops_haven)
 
 
 def test_economy_countries_tab(client, auth_headers):
@@ -32,6 +55,8 @@ def test_economy_countries_tab(client, auth_headers):
     assert {"BR", "US", "PT", "JP", "AR"} <= set(rows) and D(rows["US"]["rate"]) > 1
     assert len(rows["US"]["history"]) == 24 and rows["BR"]["history"] == []
     assert rows["US"]["vat"] == 7.0 and rows["PT"]["corp_tax"] == 21.0
+    assert {"growth", "interest", "price_level", "demand", "crisis", "confidence"} <= set(rows["AR"])
+    assert isinstance(r.json()["events"], list)
 
 
 # ------------------------------------------------------------------ faculdades

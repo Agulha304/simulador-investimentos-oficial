@@ -250,7 +250,7 @@ def create_company(db: Session, user_id: int, month: SimMonth, *, name: str, seg
     except ValueError as e:
         raise FinanceError(str(e)) from None
     ref = month.ref_month
-    fz0 = D(str(round(ccountry.cost_index * float(ws.fx(db, user_id, country, ref)) / ccountry.fx0, 6))) if country != "BR" else D(1)
+    fz0 = D(str(round(ccountry.cost_index * float(ws.fx(db, user_id, country, ref) * ws.price_level(db, user_id, country, ref)) / ccountry.fx0, 6))) if country != "BR" else D(1)
     minimum = quantize_money(rules.minimum_capital(seg, location, size, channel, site_mode) * fz0)
     land = quantize_money(rules.land_value(seg, channel, site_mode, location, size) * fz0)
     parts = partners.contributions(invites, minimum) if invites else []
@@ -381,12 +381,12 @@ def _blocked(db: Session, c: Company) -> set[str]:
     return set(db.scalars(select(CandidateBlock.candidate_id).where(CandidateBlock.company_id == c.id)))
 
 
-def _scaled(cand: team.Candidate, country: str) -> team.Candidate:
-    """Candidato de outro país pede o salário do mercado de lá (índice de salários x o de referência do Brasil)."""
+def _scaled(db: Session, user_id: int, cand: team.Candidate, country: str, ref: date) -> team.Candidate:
+    """Candidato de outro país pede o salário do mercado de lá (índice de salários x o de referência do Brasil, corrigido pela inflação simulada do país)."""
     from dataclasses import replace
     if country == cw.HOME:
         return cand
-    return replace(cand, asking_salary=quantize_money(cand.asking_salary * cw.wage_scale(country)))
+    return replace(cand, asking_salary=quantize_money(cand.asking_salary * cw.wage_scale(country) * ws.price_level(db, user_id, country, ref)))
 
 
 def list_candidates(db: Session, user_id: int, month: SimMonth, company_id: int, role_key: str,
@@ -398,7 +398,7 @@ def list_candidates(db: Session, user_id: int, month: SimMonth, company_id: int,
     role = _role(rules.SEGMENTS[c.segment], role_key, c.size)
     blocked = _blocked(db, c)
     country = (country or c.country).upper()
-    return [_scaled(x, country) for x in team.candidates_for(_seed(db, user_id), c.id, month.ref_month, role, regime) if x.id not in blocked]
+    return [_scaled(db, user_id, x, country, month.ref_month) for x in team.candidates_for(_seed(db, user_id), c.id, month.ref_month, role, regime) if x.id not in blocked]
 
 
 def staff_capacity(staff: list[Employee]) -> list[tuple[str, Decimal]]:
@@ -453,7 +453,7 @@ def hire(db: Session, user_id: int, month: SimMonth, company_id: int, *, candida
         work_mode, country = cw.validate_hire(c, cand.role, work_mode, country)
     except ValueError as e:
         raise FinanceError(str(e)) from None
-    cand = _scaled(cand, country)
+    cand = _scaled(db, user_id, cand, country, ref)
     salary = quantize_money(salary)
     if salary <= 0 or not team.MIN_WEEK <= hours_week <= team.MAX_WEEK:
         raise FinanceError(f"informe salário positivo e jornada entre {team.MIN_WEEK} e {team.MAX_WEEK} horas por semana")
@@ -1369,7 +1369,7 @@ def _process_company(db: Session, c: Company, month: SimMonth) -> CompanyMonth:
     if suspended:
         _event(db, c, ref, CompanyEventType.LEASE, "Empresa sem ponto (despejo): vendas zeradas até mudar de endereço ou o prazo acabar")
     seed = _seed(db, c.user_id)
-    econ = economy_service.company_demand_mult(db, c, ref) * cw.market_mult(c)   # economia, crises e eventos + tamanho do mercado do país
+    econ = economy_service.company_demand_mult(db, c, ref) * cw.market_mult(db, c, ref)   # economia, crises e eventos + tamanho do mercado do país
     fz = cw.company_factor(db, c, ref)                                   # preços e custos do país (câmbio x nível de preços); 1 no Brasil
     reloc = rules.RELOCATION_SALES_MULT if c.relocated_on == ref else 1.0
     qual = float(c.quality)

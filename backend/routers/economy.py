@@ -90,7 +90,8 @@ def countries(user: CurrentUser, db: DbSession):
     def go():
         from backend.services import world_service
         month = bs.ensure_setup(db, user.id)
-        return {"month": month.ref_month.isoformat(), "countries": world_service.table(db, user.id, month.ref_month)}
+        return {"month": month.ref_month.isoformat(), "countries": world_service.table(db, user.id, month.ref_month),
+                "events": world_service.events(db, user.id, month.ref_month)}
     return _run(db, go)
 
 

@@ -41,12 +41,14 @@ def company_factor(db, c, ref: date) -> D:
     if c.country == HOME:
         return D(1)
     cc = cr.get(c.country)
-    return D(str(round(cc.cost_index * float(ws.fx(db, c.user_id, c.country, ref)) / cc.fx0, 6)))
+    return D(str(round(cc.cost_index * float(ws.fx(db, c.user_id, c.country, ref) * ws.price_level(db, c.user_id, c.country, ref)) / cc.fx0, 6)))
 
 
-def market_mult(c) -> float:
-    """Tamanho relativo do mercado do país (demanda)."""
-    return cr.get(c.country).market if c.country != HOME else 1.0
+def market_mult(db, c, ref: date) -> float:
+    """Tamanho relativo do mercado do país x o momento da economia dele (recessão derruba, boom aumenta a demanda)."""
+    if c.country == HOME:
+        return 1.0
+    return cr.get(c.country).market * ws.demand(db, c.user_id, c.country, ref)
 
 
 def emp_cost(db, c, e, ref: date) -> D:
@@ -57,7 +59,8 @@ def emp_cost(db, c, e, ref: date) -> D:
     if e.country == HOME:
         return rules.payroll_cost(e.salary, e.regime)
     cc = cr.get(e.country)
-    ratio = D(str(round(float(ws.fx(db, c.user_id, e.country, ref)) / cc.fx0, 6)))
+    pl = ws.price_level(db, c.user_id, e.country, ref) / ws.price_level(db, c.user_id, e.country, max(e.hired_on, ws.EPOCH))   # salários acompanham a inflação do país
+    ratio = D(str(round(float(ws.fx(db, c.user_id, e.country, ref) * pl) / cc.fx0, 6)))
     burden = D(str(cc.burden)) if e.regime == EmployeeRegime.CLT else D(1)
     return quantize_money(e.salary * ratio * burden)
 

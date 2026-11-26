@@ -261,7 +261,7 @@ def quote(body: s.QuoteIn, user: CurrentUser, db: DbSession):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e)) from None
     month = bs.ensure_setup(db, user.id)
     rate = wsvc.fx(db, user.id, cc.code, month.ref_month)
-    fz = Decimal(str(round(cc.cost_index * float(rate) / cc.fx0, 6))) if cc.code != "BR" else Decimal(1)
+    fz = Decimal(str(round(cc.cost_index * float(rate * wsvc.price_level(db, user.id, cc.code, month.ref_month)) / cc.fx0, 6))) if cc.code != "BR" else Decimal(1)
     channel = body.channel or (rules.PHYSICAL if rules.PHYSICAL in seg.channels else seg.channels[0])
     try:
         location, site_mode = rules.validate_site(seg, channel, body.location, body.site_mode)
