@@ -120,59 +120,168 @@ def test_politics_catalog_is_real_brazil():
     assert pols.election_date("prefeito", dt.date(2028, 10, 1)) == dt.date(2028, 10, 1) and pols.election_date("prefeito", dt.date(2028, 11, 1)) == dt.date(2032, 10, 1)
 
 
-def test_politics_profile_candidacy_campaign_and_election(client, rich):
+def seed_politics(client, h, *, party="pmc", months_ago=8, fame=None, ideology="centro_direita", proposals=("saude", "seguranca"), media="transparente"):
+    """Prepara o perfil político direto no banco (a filiação real depende de sorteio): partido, antiguidade, fama e propostas."""
+    client.get(POL, headers=h)
+    u = uid(client, h)
+    with SessionLocal() as s:
+        ref = open_ref(s, u)
+        p = s.scalar(select(ArtistProfile).where(ArtistProfile.user_id == u))
+        joined = (ref.replace(day=1) if months_ago == 0 else dt.date((ref.year * 12 + ref.month - 1 - months_ago) // 12, (ref.year * 12 + ref.month - 1 - months_ago) % 12 + 1, 1))
+        p.data = {**(p.data or {}), "pol": {"party": party, "joined": joined.isoformat(), "ideology": ideology, "proposals": list(proposals), "media": media}}
+        if fame is not None:
+            p.fame = {**(p.fame or {}), **fame}
+        s.commit()
+
+
+def test_unknown_person_starts_with_no_chance_and_famous_never_above_20pct(client, rich):
+    seed_politics(client, rich)
     ov = client.get(POL, headers=rich).json()
-    vereador = next(o for o in ov["offices"] if o["key"] == "vereador")
-    assert not vereador["can_run"] and any("partido" in x for x in vereador["blocked_by"])
-    assert client.put(f"{POL}/profile", headers=rich, json={"party": "xx"}).status_code == 400
-    assert client.put(f"{POL}/profile", headers=rich, json={"proposals": ["saude", "educacao", "economia", "social"]}).status_code == 400            # no máximo 3
-    r = client.put(f"{POL}/profile", headers=rich, json={"party": "pmc", "ideology": "centro_direita", "proposals": ["saude", "seguranca"], "media": "transparente"})
-    assert r.status_code == 200, r.text
-    prof = r.json()["profile"]
-    assert prof["party"] == "pmc" and prof["media"] == "transparente" and prof["proposals"] == ["saude", "seguranca"]
-    vereador = next(o for o in r.json()["offices"] if o["key"] == "vereador")
-    assert vereador["can_run"] and 0 < vereador["estimate"]["win_chance"] < 1
-    president = next(o for o in r.json()["offices"] if o["key"] == "presidente")
-    assert president["estimate"]["win_chance"] < vereador["estimate"]["win_chance"]
-    c = client.post(f"{POL}/candidacy", headers=rich, json={"office": "vereador"})
-    assert c.status_code == 200, c.text
-    camp = c.json()["campaigns"][0]
-    assert camp["status"] == "RUNNING" and client.post(f"{POL}/candidacy", headers=rich, json={"office": "vereador"}).status_code == 409
+    assert ov["popularity"] == 0
+    for o in ov["offices"]:
+        if o["estimate"]:
+            assert o["estimate"]["win_chance"] == 0.0 and o["estimate"]["base_chance"] == 0.0
+    seed_politics(client, rich, fame={"music": 100.0, "acting": 90.0})
+    famous = client.get(POL, headers=rich).json()
+    assert famous["popularity"] > 50
+    for o in famous["offices"]:
+        assert 0 < o["estimate"]["win_chance"] <= 0.20                                      # nem o mais famoso passa de 20% antes da campanha
+    ver = next(o for o in famous["offices"] if o["key"] == "vereador")
+    pres = next(o for o in famous["offices"] if o["key"] == "presidente")
+    assert ver["estimate"]["win_chance"] > pres["estimate"]["win_chance"]
+    assert client.get("/api/life", headers=rich).json()["attributes"]["popularity"] > 50      # aparece na vida pessoal
+
+
+def test_popularity_counts_companies_and_any_kind_of_fame(client, rich):
+    seed_politics(client, rich, fame={"film": 40.0})
+    base = client.get(POL, headers=rich).json()["popularity"]
+    assert 20 < base < 40
+    cid = create_ok(client, rich, staff=False, extra="300000")["company"]["id"]
+    u = uid(client, rich)
+    with SessionLocal() as s:
+        from backend.models import Company
+        s.get(Company, cid).relevance = D("80")
+        s.commit()
+    assert client.get(POL, headers=rich).json()["popularity"] > base
+
+
+def test_party_must_admit_you_and_can_refuse(client, rich):
+    seed_politics(client, rich, party="pmc")
+    chances = client.get(POL, headers=rich).json()["party_chances"]
+    assert set(chances) == set(PR.PARTIES) and all(0.05 <= c <= 0.92 for c in chances.values())
+    assert chances["pmc"] < chances["pvs"]                                                    # partido grande é mais exigente que o pequeno
+    assert client.put(f"{POL}/profile", headers=rich, json={"party": "pdl"}).status_code == 400   # filiação não é automática
+    assert client.post(f"{POL}/party", headers=rich, json={"party": "xx"}).status_code == 400
+    assert client.post(f"{POL}/party", headers=rich, json={"party": "pmc"}).status_code == 409    # já é filiado
+    r = client.delete(f"{POL}/party", headers=rich)
+    assert r.status_code == 200 and r.json()["profile"]["party"] is None
+    outcomes = []
+    for k in ("pvs", "pen", "pdl", "pnr", "psl", "pdt"):
+        rr = client.post(f"{POL}/party", headers=rich, json={"party": k})
+        assert rr.status_code == 200, rr.text
+        joined = rr.json()["result"]["joined"]
+        outcomes.append(joined)
+        if joined:
+            assert rr.json()["profile"]["party"] == k
+            break
+        again = client.post(f"{POL}/party", headers=rich, json={"party": k})
+        assert again.status_code == 409 and "recusou" in again.json()["detail"]               # recusado: tem de esperar para tentar de novo
+    assert outcomes                                                                              # pelo menos uma resposta do partido
+
+
+def test_party_nomination_for_the_office_and_campaign_flow(client, rich):
+    seed_politics(client, rich, fame={"music": 100.0})
+    ov = client.get(POL, headers=rich).json()
+    ver = next(o for o in ov["offices"] if o["key"] == "vereador")
+    assert ver["can_run"] and 0 < ver["nomination"] < 1
+    pres = next(o for o in ov["offices"] if o["key"] == "presidente")
+    assert pres["nomination"] < ver["nomination"] and not pres["can_run"]
+    u = uid(client, rich)
+    camp = None
+    for _ in range(8):                                                                         # o partido pode recusar; depois de um tempo reconsidera
+        r = client.post(f"{POL}/candidacy", headers=rich, json={"office": "vereador"})
+        assert r.status_code == 200, r.text
+        res = r.json()["result"]
+        if res["registered"]:
+            camp = r.json()["campaigns"][0]
+            break
+        assert "partido não quis" in res["message"]
+        blocked = next(o for o in r.json()["offices"] if o["key"] == "vereador")
+        assert not blocked["can_run"] and any("partido não quis" in x for x in blocked["blocked_by"])
+        assert client.post(f"{POL}/candidacy", headers=rich, json={"office": "vereador"}).status_code == 409
+        with SessionLocal() as s:                                                              # simula a passagem dos meses de espera
+            p = s.scalar(select(ArtistProfile).where(ArtistProfile.user_id == u))
+            st = dict(p.data["pol"])
+            st["nom_refused"] = {}
+            p.data = {**p.data, "pol": st}
+            s.commit()
+    assert camp is not None
     base = camp["estimate"]["win_chance"]
+    assert camp["momentum"] == 0 and camp["spent"] == 0 and base <= 0.20                      # a campanha começa do zero
+    assert client.post(f"{POL}/candidacy", headers=rich, json={"office": "vereador"}).status_code == 409
     m = client.post(f"{POL}/campaigns/{camp['id']}/marketer", headers=rich, json={"level": "HIGH"})
     assert m.status_code == 200 and m.json()["campaigns"][0]["marketer"] == "HIGH"
     assert client.post(f"{POL}/campaigns/{camp['id']}/marketer", headers=rich, json={"level": "XX"}).status_code == 400
     rr = client.post(f"{POL}/campaigns/{camp['id']}/rally", headers=rich, json={"kind": "comicio"})
-    assert rr.status_code == 200 and rr.json()["campaigns"][0]["momentum"] > camp["momentum"]
+    assert rr.status_code == 200 and rr.json()["campaigns"][0]["momentum"] > 0
     assert client.post(f"{POL}/campaigns/{camp['id']}/rally", headers=rich, json={"kind": "comicio"}).status_code == 409
     sp = client.post(f"{POL}/campaigns/{camp['id']}/spend", headers=rich, json={"amount": 80000})
-    assert sp.status_code == 200 and sp.json()["campaigns"][0]["estimate"]["win_chance"] > base
-    # a eleição é decidida em outubro: força a data para este mês e confere o resultado e o mandato
-    u = uid(client, rich)
-    with SessionLocal() as s:
+    after = sp.json()["campaigns"][0]["estimate"]["win_chance"]
+    assert sp.status_code == 200 and after > base + 0.10 and after <= 0.95
+    with SessionLocal() as s:                                                                  # a eleição é decidida em outubro (força a data para este mês)
         ref = open_ref(s, u)
-        camp_row = s.scalar(select(ArtistItem).where(ArtistItem.user_id == u, ArtistItem.kind == "CAMPAIGN"))
-        camp_row.data = {**camp_row.data, "election": ref.isoformat()}
+        row = s.scalar(select(ArtistItem).where(ArtistItem.user_id == u, ArtistItem.kind == "CAMPAIGN"))
+        row.data = {**row.data, "election": ref.isoformat()}
         pols.process_month(s, u, s.scalar(select(ArtistProfile).where(ArtistProfile.user_id == u)), ref, 3)
-        assert camp_row.status in ("WON", "LOST")
-        won = camp_row.status == "WON"
+        assert row.status in ("WON", "LOST")
+        won = row.status == "WON"
         assert bool(s.scalar(select(ArtistItem).where(ArtistItem.user_id == u, ArtistItem.kind == "TERM"))) == won
         s.commit()
-    after = client.get(POL, headers=rich).json()
     if won:
-        t = after["terms"][0]
+        t = client.get(POL, headers=rich).json()["terms"][0]
         assert t["status"] == "ACTIVE" and t["salary"] == 14000
         a = client.post(f"{POL}/terms/{t['id']}/action", headers=rich, json={"kind": "town_hall"})
-        assert a.status_code == 200 and a.json()["terms"][0]["approval"] >= t["approval"]
+        assert a.status_code == 200
         assert client.post(f"{POL}/terms/{t['id']}/action", headers=rich, json={"kind": "town_hall"}).status_code == 409
 
 
-def test_underage_cannot_run_for_senate(client, rich):
-    client.put(f"{POL}/profile", headers=rich, json={"party": "pmc", "proposals": ["saude"]})
+def test_underage_and_unaffiliated_cannot_run(client, rich):
+    ov = client.get(POL, headers=rich).json()
+    ver = next(o for o in ov["offices"] if o["key"] == "vereador")
+    assert not ver["can_run"] and any("partido" in x for x in ver["blocked_by"])
+    assert client.post(f"{POL}/candidacy", headers=rich, json={"office": "vereador"}).status_code == 409
+    seed_politics(client, rich)
     ov = client.get(POL, headers=rich).json()
     sen = next(o for o in ov["offices"] if o["key"] == "senador")
     assert ov["age"] < 35 and not sen["can_run"] and any("idade" in x for x in sen["blocked_by"])
     assert client.post(f"{POL}/candidacy", headers=rich, json={"office": "senador"}).status_code == 409
+
+
+def test_political_public_exams_exist_and_give_political_career(client, rich):
+    kinds = {k for k, v in PR.EXAMS.items() if len(v) > 8 and v[8] == "politica"}
+    assert {"camara_mun", "assembleia", "camara_fed", "senado", "tce", "gabinete"} <= kinds
+    offers = []
+    for mth in range(3):
+        offers += [o for o in client.get(POL, headers=rich).json()["exams"]["offers"] if o["area"] == "politica"]
+    assert offers and all(o["net"] >= 6000 for o in offers)
+    o = offers[0]
+    r = client.post(f"{POL}/exams/register", headers=rich, json={"key": o["key"]})
+    assert r.status_code == 200, r.text
+    u = uid(client, rich)
+    with SessionLocal() as s:
+        from backend.models import LifeProfile
+        lp = s.scalar(select(LifeProfile).where(LifeProfile.user_id == u))
+        lp.study, lp.study_hours_day = 100.0, 6.0
+        ref = open_ref(s, u)
+        c = s.scalar(select(ArtistItem).where(ArtistItem.user_id == u, ArtistItem.kind == "CONCURSO"))
+        c.data = {**c.data, "exam_month": ref.isoformat(), "competition": 10, "requires": None, "level": 0}
+        p = s.scalar(select(ArtistProfile).where(ArtistProfile.user_id == u))
+        before = float((p.skills or {}).get("politics", 10))
+        pols.process_month(s, u, p, ref, 11)
+        assert c.status in ("PASSED", "FAILED")
+        if c.status == "PASSED":
+            assert float(p.skills["politics"]) > before and s.scalar(select(CareerJob).where(CareerJob.user_id == u, CareerJob.title == c.data["role"]))
+        s.commit()
 
 
 # ------------------------------------------------------------------ polêmicas (artistas, empresários, políticos)

@@ -117,6 +117,10 @@ class PolProfileIn(BaseModel):
     media: str | None = None
 
 
+class PartyIn(BaseModel):
+    party: str
+
+
 class OfficeIn(BaseModel):
     office: str
 
@@ -325,9 +329,21 @@ def pol_profile(body: PolProfileIn, user: CurrentUser, db: DbSession):
     return _pact(db, user, lambda m: (pol.set_profile(db, user.id, m, body.party, body.ideology, body.proposals, body.media), {})[1])
 
 
+@politics.post("/party")
+def pol_party(body: PartyIn, user: CurrentUser, db: DbSession):
+    """Pede filiação a um partido: ele pode recusar (e só reconsidera depois de alguns meses)."""
+    return _pact(db, user, lambda m: pol.join_party(db, user.id, m, body.party))
+
+
+@politics.delete("/party")
+def pol_leave_party(user: CurrentUser, db: DbSession):
+    return _pact(db, user, lambda m: pol.leave_party(db, user.id, m))
+
+
 @politics.post("/candidacy")
 def pol_candidacy(body: OfficeIn, user: CurrentUser, db: DbSession):
-    return _pact(db, user, lambda m: {"campaign_id": pol.candidacy(db, user.id, m, body.office).id})
+    """Pede a candidatura: o partido precisa querer você para o cargo."""
+    return _pact(db, user, lambda m: pol.candidacy(db, user.id, m, body.office))
 
 
 @politics.delete("/campaigns/{cid}")

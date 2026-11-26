@@ -93,6 +93,11 @@ def _expenses(db: Session, user_id: int, month) -> list[dict]:
     return out
 
 
+def _popularity(db, user_id):
+    from backend.services import artist_core, politics_service
+    return politics_service.popularity(db, user_id, artist_core.profile(db, user_id))
+
+
 def _career_out(db: Session, user_id: int, p, month) -> dict:
     cur = career_rules.FIELDS.get(p.career_field or "")
     next_raise = None
@@ -133,7 +138,7 @@ def _overview(db: Session, user_id: int) -> dict:
         "month": month.ref_month.isoformat(),
         "character": {"name": p.name, "age_years": p.age_years, "gender": p.gender, "interested_in": p.interested_in},
         "career": _career_out(db, user_id, p, month),
-        "attributes": {"study": round(float(p.study or 0), 1), "study_hours_day": float(p.study_hours_day or 0), "health": p.health, "wellbeing": p.wellbeing, "quality": p.quality, "satisfaction": p.satisfaction,
+        "attributes": {"popularity": _popularity(db, user_id), "study": round(float(p.study or 0), 1), "study_hours_day": float(p.study_hours_day or 0), "health": p.health, "wellbeing": p.wellbeing, "quality": p.quality, "satisfaction": p.satisfaction,
                        "social": p.social, "financial_stability": stability, "free_hours_left": ls.free_hours(p) - p.hours_used,
                        "free_hours_total": ls.free_hours(p)},
         "choices": {k: getattr(p, k) for k in R.LEVELS},

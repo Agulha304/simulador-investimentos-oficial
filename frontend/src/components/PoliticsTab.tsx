@@ -14,6 +14,7 @@ export function PoliticsTab() {
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [spend, setSpend] = useState("10000");
+  const [pick, setPick] = useState("");
   const loadDec = useCallback(() => { sim.artist().then((a) => setDec(a.decisions[0] ?? null)).catch(() => undefined); }, []);
   useEffect(() => { sim.politics().then(setV).catch((e) => setErr(errMsg(e))); loadDec(); }, [loadDec]);
   const run = useCallback(async (path: string, method: "POST" | "PUT" | "DELETE" = "POST", body?: unknown) => {
@@ -36,18 +37,20 @@ export function PoliticsTab() {
       <section className="card stack">
         <div className="row-gap" style={{ flexWrap: "wrap" }}>
           <span className="chip">Fama política <b>{v.fame}</b></span><span className="chip">Habilidade <b>{v.skill}</b></span><span className="chip">Relevância pública <b>{v.relevance}</b></span>
-          <span className="chip">Idade <b>{v.age}</b></span>
+          <span className="chip">Idade <b>{v.age}</b></span><span className="chip">Popularidade <b>{v.popularity ?? 0}</b></span>
         </div>
-        <span className="muted small">Cargos exigem idade mínima, filiação a um partido com {6} meses de antecedência e propostas definidas. Diplomas de direito, administração, economia, relações internacionais e matemática ajudam. Polêmicas aparecem como decisões e mexem na sua relevância.</span>
+        <span className="muted small">Quem é desconhecido começa a campanha com chance próxima de zero; só pessoas já famosas (música, cinema, atuação, empresa, internet...) largam com algo, e nunca com mais de 20%. O partido precisa <b>admitir</b> você e depois <b>querer você</b> para o cargo. Campanha, dinheiro e marqueteiro fazem o resto. Diplomas ajudam, e há concursos para carreiras técnicas do Legislativo (veja abaixo e em Educação).</span>
       </section>
       <section className="card stack">
         <h3>Perfil político</h3>
         <div className="row-gap" style={{ flexWrap: "wrap" }}>
-          <label>Partido<select value={pr.party ?? ""} disabled={busy} onChange={(e) => e.target.value && void run("/profile", "PUT", { party: e.target.value })}><option value="">Filie-se…</option>{v.catalog.parties.map((p) => <option key={p.key} value={p.key}>{p.name}</option>)}</select></label>
+          <label>Partido (precisa admitir você)<select value={pick} disabled={busy} onChange={(e) => setPick(e.target.value)}><option value="">Escolha…</option>{v.catalog.parties.map((p) => <option key={p.key} value={p.key}>{p.name}{v.party_chances ? ` — chance de admissão ${pct(v.party_chances[p.key] ?? 0)}` : ""}</option>)}</select></label>
+          <button className="btn small primary" disabled={busy || !pick || pick === pr.party} onClick={() => void run("/party", "POST", { party: pick })}>Pedir filiação</button>
+          {pr.party && <button className="btn small ghost" disabled={busy} onClick={() => window.confirm("Se desfiliar?") && void run("/party", "DELETE")}>Desfiliar-me</button>}
           <label>Lado político<select value={pr.ideology} disabled={busy} onChange={(e) => void run("/profile", "PUT", { ideology: e.target.value })}>{v.catalog.ideologies.map((p) => <option key={p.key} value={p.key}>{p.name}</option>)}</select></label>
           <label>Postura com a mídia<select value={pr.media} disabled={busy} onChange={(e) => void run("/profile", "PUT", { media: e.target.value })}>{v.catalog.media.map((p) => <option key={p.key} value={p.key}>{p.name}</option>)}</select></label>
         </div>
-        <span className="muted small">{v.catalog.media.find((m) => m.key === pr.media)?.desc}{party ? ` Partido com força ${pct(party.strength)}${pr.joined ? `, filiado desde ${pr.joined.slice(0, 7)}` : ""}.` : ""}</span>
+        <span className="muted small">{v.catalog.media.find((m) => m.key === pr.media)?.desc} {party ? `Você é filiado(a) ao ${party.name} (força ${pct(party.strength)})${pr.joined ? ` desde ${pr.joined.slice(0, 7)}` : ""}.` : "Você ainda não é filiado(a) a nenhum partido."}</span>
         <b className="small">Propostas (até {v.catalog.max_proposals})</b>
         <div className="row-gap" style={{ flexWrap: "wrap" }}>{v.catalog.proposals.map((p) => (
           <label key={p.key} className="check"><input type="checkbox" checked={pr.proposals.includes(p.key)} disabled={busy || (!pr.proposals.includes(p.key) && pr.proposals.length >= v.catalog.max_proposals)}
@@ -85,12 +88,21 @@ export function PoliticsTab() {
       <section className="card stack">
         <h3>Cargos e eleições</h3>
         <div className="table-wrap"><table>
-          <thead><tr><th>Cargo</th><th>Esfera</th><th className="r">Subsídio</th><th className="r">Campanha competitiva</th><th>Eleição</th><th className="r">Chance hoje</th><th></th></tr></thead>
+          <thead><tr><th>Cargo</th><th>Esfera</th><th className="r">Subsídio</th><th className="r">Campanha competitiva</th><th>Eleição</th><th className="r">Partido quer você</th><th className="r">Chance hoje</th><th></th></tr></thead>
           <tbody>{v.offices.map((o) => (
             <tr key={o.key}><td>{o.name}<br /><span className="muted small">idade mínima {o.min_age}</span></td><td>{o.sphere}</td><td className="r num">{fmtBRL(String(o.salary))}</td><td className="r num">{fmtBRL(String(o.campaign_cost))}</td>
-              <td>{o.election.slice(0, 7)}</td><td className="r num">{o.estimate ? pct(o.estimate.win_chance) : "—"}</td>
+              <td>{o.election.slice(0, 7)}</td><td className="r num">{o.nomination != null ? pct(o.nomination) : "—"}</td><td className="r num">{o.estimate ? pct(o.estimate.win_chance) : "—"}</td>
               <td>{o.can_run ? <button className="btn primary small" disabled={busy} onClick={() => void run("/candidacy", "POST", { office: o.key })}>Candidatar-me</button> : <span className="muted small">{o.blocked_by.join("; ")}</span>}</td></tr>))}</tbody>
         </table></div>
+      </section>
+      <section className="card stack">
+        <h3>Concursos públicos da área política</h3>
+        <span className="muted small">Carreiras técnicas do Legislativo e de órgãos de controle: sem eleição, com salário e estabilidade. A chance depende do seu <b>estudo</b> (atual: {v.study}), das horas diárias, de diplomas (direito, relações internacionais, economia...) e da concorrência. Aprovado(a), você ganha habilidade e fama política.</span>
+        <div className="cols-2">{v.exams.offers.filter((o) => o.area === "politica").map((o) => (
+          <div key={o.key} className="card stack"><div className="row between"><b>{o.role}</b><span className="chip">{fmtBRL(String(o.net))}/mês</span></div>
+            <span className="muted small">{o.organ} · {o.competition} candidatos por vaga · inscrição {fmtBRL(String(o.fee))}{o.requires ? ` · exige formação em ${o.requires}` : ""} · prova em {o.exam_month.slice(0, 7)}</span>
+            <span className="small">Chance hoje: <b>{pct(o.chance)}</b></span>
+            <div><button className="btn primary small" disabled={busy || o.registered} onClick={() => void run("/exams/register", "POST", { key: o.key })}>{o.registered ? "Inscrito(a)" : "Inscrever-me"}</button></div></div>))}</div>
       </section>
       {v.campaigns.filter((c) => c.status !== "RUNNING").length > 0 && <><h3>Histórico eleitoral</h3><ul className="list-plain">{v.campaigns.filter((c) => c.status !== "RUNNING").map((c) => <li key={c.id}><span>{c.name}</span><span className={`chip ${c.status === "WON" ? "up" : "down"}`}>{c.status === "WON" ? "eleito(a)" : c.status === "LOST" ? "não eleito(a)" : "desistiu"}</span></li>)}</ul></>}
       {dec && (

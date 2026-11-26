@@ -1,7 +1,7 @@
 // Etapas 4-6: vida pessoal, economia, partida/progressão. Valores monetários chegam como string (Decimal).
 import { request } from "./api";
 
-export interface Attrs { study?: number; study_hours_day?: number; health: number; wellbeing: number; quality: number; satisfaction: number; social: number; financial_stability: number; free_hours_left: number; free_hours_total: number }
+export interface Attrs { popularity?: number; study?: number; study_hours_day?: number; health: number; wellbeing: number; quality: number; satisfaction: number; social: number; financial_stability: number; free_hours_left: number; free_hours_total: number }
 export interface Rel {
   role: "MOTHER" | "FATHER" | "BROTHER" | "SISTER" | null; alive: boolean;
   gender: "M" | "F"; compat_bonus: number; finance_label: string; person_id: number; name: string; age: number; personality: string; interests: string[]; occupation: string; income: string;
@@ -291,9 +291,10 @@ export interface ArtistView {
   };
 }
 
-export interface PolOffice { key: string; name: string; sphere: string; cycle: string; min_age: number; salary: number; campaign_cost: number; rivals: number; seats: number; election: string; can_run: boolean; blocked_by: string[]; estimate: { score: number; win_chance: number; mood_lean: number } | null }
-export interface PolExam { key: string; kind: string; organ: string; role: string; net: number; competition: number; requires: string | null; fee: number; field: string; level: number; exam_month: string; registered: boolean; chance: number; eligible: boolean }
+export interface PolOffice { nomination?: number | null; key: string; name: string; sphere: string; cycle: string; min_age: number; salary: number; campaign_cost: number; rivals: number; seats: number; election: string; can_run: boolean; blocked_by: string[]; estimate: { score: number; win_chance: number; mood_lean: number; base_chance?: number; popularity?: number } | null }
+export interface PolExam { area?: string; key: string; kind: string; organ: string; role: string; net: number; competition: number; requires: string | null; fee: number; field: string; level: number; exam_month: string; registered: boolean; chance: number; eligible: boolean }
 export interface PoliticsView {
+  popularity?: number; party_chances?: Record<string, number>; party_refused?: Record<string, string>;
   profile: { party: string | null; joined: string | null; ideology: string; proposals: string[]; media: string }; fame: number; skill: number; relevance: number; age: number; study: number; study_hours_day: number;
   offices: PolOffice[];
   campaigns: { id: number; name: string; office: string; status: string; election: string; spent: number; momentum: number; marketer: string | null; year: number; estimate: { win_chance: number } | null; done: string[] }[];

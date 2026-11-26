@@ -14,6 +14,10 @@ OFFICES = {
     "governador": ("Governador(a)", "Estadual", "geral", 30, 41000, 6_500_000, 0.86, 1),
     "presidente": ("Presidente da República", "Federal", "geral", 35, 46400, 22_000_000, 0.92, 1),
 }
+INITIAL_CAP = 0.20                       # NINGUÉM começa a campanha com mais de 20% de chance, por mais famoso que seja
+OFFICE_DIFFICULTY = {"vereador": 1.0, "prefeito": 0.70, "dep_estadual": 0.80, "dep_federal": 0.60, "senador": 0.50, "governador": 0.45, "presidente": 0.35}
+PARTY_RETRY_MONTHS = 6                   # um partido que recusa a sua filiação só reconsidera depois disso
+NOMINATION_RETRY_MONTHS = 3              # o partido que não quis você para um cargo só reconsidera depois disso
 ELECTION_MONTH = 10                      # eleições em outubro
 AFFILIATION_MONTHS = 6                   # filiação ao partido pelo menos 6 meses antes da eleição
 TERM_YEARS = 4
@@ -52,6 +56,13 @@ EXAMS = {  # tipo -> (órgão, cargo, salário líquido R$, candidatos por vaga,
     "inss": ("INSS", "Técnico do seguro social", 5200, 160, None, 160, "financas", 1),
     "estatistico": ("Instituto de pesquisa federal", "Analista de dados/estatístico(a)", 10500, 130, "matematica", 220, "matematica", 2),
     "prefeitura": ("Prefeitura municipal", "Agente administrativo", 3200, 70, None, 90, "financas", 0),
+    # ---- área política (cargos técnicos do Legislativo e dos órgãos de controle)
+    "camara_mun": ("Câmara Municipal", "Analista legislativo", 6800, 95, None, 130, "direito", 1, "politica"),
+    "assembleia": ("Assembleia Legislativa", "Consultor(a) legislativo(a)", 14500, 210, "direito", 280, "direito", 3, "politica"),
+    "camara_fed": ("Câmara dos Deputados", "Analista legislativo (Câmara dos Deputados)", 24500, 380, None, 340, "direito", 3, "politica"),
+    "senado": ("Senado Federal", "Técnico(a) legislativo(a) do Senado", 21000, 330, None, 320, "direito", 3, "politica"),
+    "tce": ("Tribunal de Contas", "Auditor(a) de controle externo", 19500, 290, "financas", 300, "financas", 3, "politica"),
+    "gabinete": ("Gabinete parlamentar (processo seletivo público)", "Assessor(a) parlamentar concursado(a)", 8200, 120, "relacoes", 150, "relacoes", 2, "politica"),
 }
 EXAM_DELAY_MONTHS = 2
 

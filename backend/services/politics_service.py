@@ -34,11 +34,8 @@ def set_profile(db: Session, user_id: int, month, party: str | None, ideology: s
     p = profile(db, user_id, lock=True)
     st, ref = pol(p), month.ref_month
     kv = {}
-    if party is not None:
-        if party not in P.PARTIES:
-            raise FinanceError("partido desconhecido")
-        if st.get("party") != party:
-            kv["party"], kv["joined"] = party, ref.isoformat()                      # trocar de partido reinicia o prazo de filiação
+    if party is not None and party != st.get("party"):
+        raise FinanceError("para entrar em um partido peça a filiação (o partido pode recusar); a troca é feita em /party")
     if ideology is not None:
         if ideology not in P.IDEOLOGIES:
             raise FinanceError("lado político desconhecido")
@@ -98,6 +95,84 @@ def public_relevance(db: Session, user_id: int, p) -> float:
     return min(100.0, float(f.get("politics", 0)) + 0.5 * (others[0] if others else 0) + 0.2 * (others[1] if len(others) > 1 else 0))
 
 
+def popularity(db: Session, user_id: int, p) -> float:
+    """Popularidade da pessoa (0..100): quanto ela é conhecida por música, atuação, cinema, pintura, internet, política ou por uma empresa. Sem fama, é zero."""
+    from sqlalchemy import select as _select
+    from backend.models import Company, CompanyStatus
+    fames = [float(v) for v in (p.fame or {}).values()]
+    top = max(fames, default=0.0)
+    second = sorted(fames, reverse=True)[1] if len(fames) > 1 else 0.0
+    comp = max((float(c.relevance) for c in db.scalars(_select(Company).where(Company.user_id == user_id, Company.status == CompanyStatus.ACTIVE))), default=0.0)
+    return round(min(100.0, 0.62 * top + 0.10 * second + 0.30 * comp * 0.8), 1)
+
+
+def _compat(p, party_key: str) -> float:
+    party = P.PARTIES.get(party_key)
+    if party is None:
+        return 0.0
+    return 1 - abs(P.IDEOLOGIES.get(pol(p).get("ideology", "centro"), 0) - party[1]) / 4
+
+
+def party_chance(db: Session, user_id: int, p, party_key: str) -> float:
+    """Chance de o partido ADMITIR você: partidos fortes são mais exigentes; fama e afinidade ideológica ajudam."""
+    pop = popularity(db, user_id, p) / 100
+    strength = P.PARTIES[party_key][2]
+    return round(max(0.05, min(0.92, 0.80 - 0.35 * strength + 0.35 * pop + 0.35 * (_compat(p, party_key) - 0.5))), 3)
+
+
+def join_party(db: Session, user_id: int, month, party_key: str) -> dict:
+    require_open(month)
+    if party_key not in P.PARTIES:
+        raise FinanceError("partido desconhecido")
+    p = profile(db, user_id, lock=True)
+    st, ref = pol(p), month.ref_month
+    if st.get("party") == party_key:
+        raise ConflictError("você já é filiado(a) a esse partido")
+    if items(db, user_id, "CAMPAIGN", "RUNNING"):
+        raise ConflictError("encerre ou conclua a campanha antes de trocar de partido")
+    refused = dict(st.get("party_refused", {}))
+    last = refused.get(party_key)
+    if last and months_between(date.fromisoformat(last), ref) < P.PARTY_RETRY_MONTHS:
+        wait = P.PARTY_RETRY_MONTHS - months_between(date.fromisoformat(last), ref)
+        raise ConflictError(f"esse partido recusou você recentemente: tente de novo em {wait} {'mês' if wait == 1 else 'meses'}")
+    chance = party_chance(db, user_id, p, party_key)
+    name = P.PARTIES[party_key][0]
+    if hash01("party-admit", _seed(db, user_id), user_id, party_key, ref.isoformat(), st.get("party_tries", 0)) >= chance:
+        refused[party_key] = ref.isoformat()
+        _set_pol(p, party_refused=refused, party_tries=int(st.get("party_tries", 0)) + 1)
+        ls.log(db, user_id, ref, "PARTY_REFUSED", f"O {name} recusou a sua filiação (a chance era {chance * 100:.0f}%)")
+        db.flush()
+        return {"joined": False, "message": f"O {name} não quis admitir você agora (chance era {chance * 100:.0f}%). Tente outro partido ou volte em {P.PARTY_RETRY_MONTHS} meses."}
+    _set_pol(p, party=party_key, joined=ref.isoformat(), nom_refused={})
+    ls.log(db, user_id, ref, "PARTY_JOINED", f"Você foi admitido(a) no {name}")
+    db.flush()
+    return {"joined": True, "message": f"O {name} admitiu você como filiado(a)! Para ser candidato(a), o partido ainda precisa querer você para o cargo."}
+
+
+def leave_party(db: Session, user_id: int, month) -> dict:
+    require_open(month)
+    p = profile(db, user_id, lock=True)
+    if not pol(p).get("party"):
+        raise ConflictError("você não é filiado(a) a nenhum partido")
+    if items(db, user_id, "CAMPAIGN", "RUNNING"):
+        raise ConflictError("encerre ou conclua a campanha antes de sair do partido")
+    _set_pol(p, party=None, joined=None)
+    ls.log(db, user_id, month.ref_month, "PARTY_LEFT", "Você se desfiliou do partido")
+    db.flush()
+    return {"message": "Você se desfiliou."}
+
+
+def nomination_chance(db: Session, user_id: int, p, office: str, ref: date) -> float:
+    """Chance de o partido QUERER você para o cargo: depende da popularidade, do tempo de casa e da afinidade; cargos maiores exigem muito mais."""
+    st = pol(p)
+    if not st.get("party"):
+        return 0.0
+    tenure = months_between(date.fromisoformat(st["joined"]), ref) if st.get("joined") else 0
+    pop = popularity(db, user_id, p) / 100
+    diff = P.OFFICE_DIFFICULTY[office]
+    return round(max(0.03, min(0.95, 0.12 + 0.55 * pop + 0.012 * min(tenure, 36) + 0.15 * (_compat(p, st["party"]) - 0.5) - 0.45 * (1 - diff))), 3)
+
+
 def office_rows(db: Session, user_id: int, ref: date, lp) -> list[dict]:
     p = profile(db, user_id)
     st, seed = pol(p), _seed(db, user_id)
@@ -117,42 +192,62 @@ def office_rows(db: Session, user_id: int, ref: date, lp) -> list[dict]:
             reasons.append("escolha ao menos uma proposta")
         if ref.year == ed.year and ref.month > 8:
             reasons.append("prazo de registro de candidaturas encerrado (agosto)")
+        nr = st.get("nom_refused", {}).get(k)
+        if nr and months_between(date.fromisoformat(nr), ref) < P.NOMINATION_RETRY_MONTHS:
+            reasons.append(f"o partido não quis você para esse cargo (tente de novo em {P.NOMINATION_RETRY_MONTHS - months_between(date.fromisoformat(nr), ref)} mês(es))")
         if k in camps:
             reasons.append("candidatura já registrada")
         out.append({"key": k, "name": name, "sphere": sphere, "cycle": cycle, "min_age": min_age, "salary": salary, "campaign_cost": cost, "rivals": rival, "seats": seats,
-                    "election": ed.isoformat(), "can_run": not reasons, "blocked_by": reasons, "estimate": estimate(db, user_id, p, k, ed, 0.0, 0.0, 0.0) if st.get("party") else None})
+                    "election": ed.isoformat(), "can_run": not reasons, "blocked_by": reasons, "nomination": nomination_chance(db, user_id, p, k, ref) if st.get("party") else None, "estimate": estimate(db, user_id, p, k, ed, 0.0, 0.0, 0.0) if st.get("party") else None})
     return out
 
 
 def estimate(db: Session, user_id: int, p, office: str, ed: date, spent: float, momentum: float, marketer: float) -> dict:
+    """Chance de vitória. Sem campanha ela é só a popularidade da pessoa (no máximo 20%, e zero para quem é desconhecido); a campanha (embalo, dinheiro e
+    marqueteiro) soma o resto, filtrada pela credibilidade (popularidade), pelas propostas, pelo lado político e pela força do partido."""
     st, seed = pol(p), _seed(db, user_id)
     _, _, _, _, _, cost, rival, seats = P.OFFICES[office]
     mood = _mood(seed, ed.year)
     ideology = P.IDEOLOGIES.get(st.get("ideology", "centro"), 0)
     party = P.PARTIES.get(st.get("party", ""), (None, 0, 0.3))
-    pid = party[1]
-    rel = public_relevance(db, user_id, p) / 100
-    score = (0.26 * rel + 0.18 * _fit(st.get("proposals", []), mood, ideology) + 0.14 * _ideo_fit(ideology, mood) * (1 - 0.12 * abs(ideology - pid) / 2) + 0.20 * momentum / 100
-             + 0.10 * min(1.2, spent / cost) / 1.2 + 0.07 * party[2] + 0.05 * marketer)
-    prob = max(0.02, min(0.95, 0.5 + (score - rival * 0.55) * 1.7 + (0.10 if seats > 1 else 0.0)))
-    return {"score": round(score, 3), "win_chance": round(prob, 3), "mood_lean": mood["lean"]}
+    pop = popularity(db, user_id, p) / 100
+    base = min(P.INITIAL_CAP, P.INITIAL_CAP * (pop ** 0.8) * P.OFFICE_DIFFICULTY[office])
+    quality = 0.45 + 0.30 * _fit(st.get("proposals", []), mood, ideology) + 0.15 * _ideo_fit(ideology, mood) * (1 - 0.12 * abs(ideology - party[1]) / 2) + 0.10 * party[2]
+    credibility = 0.30 + 0.70 * (pop ** 0.5)
+    power = 0.42 * min(1.0, momentum / 100) + 0.30 * min(1.0, spent / cost) + 0.12 * marketer
+    boost = power * quality * credibility * (1 - 0.55 * rival) + (0.05 * min(1.0, power) if seats > 1 else 0.0)
+    prob = max(0.0, min(0.95, base + boost))
+    return {"score": round(power, 3), "win_chance": round(prob, 3), "base_chance": round(base, 3), "mood_lean": mood["lean"], "popularity": round(pop * 100, 1)}
 
 
 # ------------------------------------------------------------------ candidatura e campanha
-def candidacy(db: Session, user_id: int, month, office: str) -> ArtistItem:
+def candidacy(db: Session, user_id: int, month, office: str) -> dict:
+    """Pede a candidatura: além de cumprir os requisitos, o PARTIDO precisa querer você para o cargo (pode recusar e só reconsidera depois de alguns meses)."""
     require_open(month)
     if office not in P.OFFICES:
         raise FinanceError("cargo desconhecido")
+    ref = month.ref_month
     lp = _life(db, user_id)
-    row = next(r for r in office_rows(db, user_id, month.ref_month, lp) if r["key"] == office)
+    row = next(r for r in office_rows(db, user_id, ref, lp) if r["key"] == office)
     if not row["can_run"]:
         raise ConflictError("você ainda não pode se candidatar: " + "; ".join(row["blocked_by"]))
+    p = profile(db, user_id, lock=True)
+    st = pol(p)
+    name = P.OFFICES[office][0]
+    chance = row["nomination"] or 0.0
+    if hash01("nomination", _seed(db, user_id), user_id, office, ref.isoformat(), st["party"], st.get("nom_tries", 0)) >= chance:
+        refused = dict(st.get("nom_refused", {}))
+        refused[office] = ref.isoformat()
+        _set_pol(p, nom_refused=refused, nom_tries=int(st.get("nom_tries", 0)) + 1)
+        ls.log(db, user_id, ref, "NOMINATION_REFUSED", f"O partido não quis lançar você a {name} (chance era {chance * 100:.0f}%)")
+        db.flush()
+        return {"registered": False, "message": f"O partido não quis lançar você a {name} (chance era {chance * 100:.0f}%). Ganhe popularidade e tempo de casa e tente de novo em {P.NOMINATION_RETRY_MONTHS} meses."}
     ed = date.fromisoformat(row["election"])
-    c = _add(db, user_id, "CAMPAIGN", f"Campanha para {P.OFFICES[office][0]} ({ed.year})", month.ref_month, status="RUNNING", office=office, year=ed.year, election=ed.isoformat(),
-             spent=0.0, momentum=10.0, marketer=None, marketer_skill=0.0)
-    ls.log(db, user_id, month.ref_month, "CANDIDACY", f"Você registrou candidatura a {P.OFFICES[office][0]} para outubro de {ed.year}")
+    c = _add(db, user_id, "CAMPAIGN", f"Campanha para {name} ({ed.year})", ref, status="RUNNING", office=office, year=ed.year, election=ed.isoformat(),
+             spent=0.0, momentum=0.0, marketer=None, marketer_skill=0.0)
+    ls.log(db, user_id, ref, "CANDIDACY", f"O partido lançou você a {name} para outubro de {ed.year}")
     _resync(db, user_id, month)
-    return c
+    return {"registered": True, "campaign_id": c.id, "message": f"O partido aprovou a sua candidatura a {name}! A campanha começa do zero: ganhe embalo, invista e contrate um marqueteiro."}
 
 
 def withdraw(db: Session, user_id: int, month, cid: int) -> None:
@@ -277,14 +372,15 @@ def exam_offers(db: Session, user_id: int, ref: date) -> list[dict]:
     from backend.services import career_hub
     out, done = [], {c.data["offer_key"] for c in items(db, user_id, "CONCURSO")}
     degrees = set(lp.degrees or [])
-    for i in range(4):
+    for i in range(6):
         key = f"CP{ref:%Y%m}{i}"
-        k = kinds[int(hash01("exam-kind", seed, key) * len(kinds))]
-        org, role, net, comp, req, fee, field, level = P.EXAMS[k]
+        k = kinds[int(hash01("exam-kind", seed, key) * len(kinds))] if i < 4 else [x for x in kinds if len(P.EXAMS[x]) > 8][int(hash01("exam-pol", seed, key) * 6)]
+        org, role, net, comp, req, fee, field, level, *_rest = P.EXAMS[k]
+        area = _rest[0] if _rest else "geral"
         comp = int(comp * (0.8 + 0.5 * hash01("exam-comp", seed, key)))
         match = req is None or req in degrees
         syn = career_hub.degree_synergy(db, user_id, "concurso") + (career_hub.degree_synergy(db, user_id, req) if req else 0)
-        out.append({"key": key, "kind": k, "organ": org, "role": role, "net": net, "competition": comp, "requires": req, "fee": fee, "field": field, "level": level,
+        out.append({"key": key, "kind": k, "area": area, "organ": org, "role": role, "net": net, "competition": comp, "requires": req, "fee": fee, "field": field, "level": level,
                     "exam_month": shift_month(ref, P.EXAM_DELAY_MONTHS).isoformat(), "registered": key in done,
                     "chance": P.exam_chance(float(lp.study or 0), syn, match, comp, level, float(lp.study_hours_day or 0)), "eligible": match or req is None})
     return out
@@ -301,7 +397,7 @@ def exam_register(db: Session, user_id: int, month, key: str) -> dict:
     if any(c.status == "REGISTERED" and c.data["exam_kind"] == offer["kind"] for c in items(db, user_id, "CONCURSO")):
         raise ConflictError("você já tem uma inscrição ativa para esse tipo de concurso")
     _pay_cash(db, user_id, month, offer["fee"], f"Inscrição no concurso: {offer['role']}", "Educação")
-    c = _add(db, user_id, "CONCURSO", f"{offer['role']} — {offer['organ']}", ref, status="REGISTERED", offer_key=key, exam_kind=offer["kind"], exam_month=offer["exam_month"],
+    c = _add(db, user_id, "CONCURSO", f"{offer['role']} — {offer['organ']}", ref, status="REGISTERED", offer_key=key, exam_kind=offer["kind"], area=offer["area"], exam_month=offer["exam_month"],
              organ=offer["organ"], role=offer["role"], net=offer["net"], competition=offer["competition"], requires=offer["requires"], field=offer["field"], level=offer["level"])
     ls.log(db, user_id, ref, "EXAM_REGISTERED", f"Inscrição no concurso {offer['role']} ({offer['organ']}); prova em {offer['exam_month'][:7]}")
     _resync(db, user_id, month)
@@ -327,6 +423,8 @@ def process_month(db: Session, user_id: int, p, ref: date, seed: int) -> None:
                 c.status = "PASSED"
                 from backend.services import career_hub
                 career_hub.create_public_job(db, user_id, ref, c.data["role"], c.data["organ"], c.data["field"], D(str(c.data["net"])), c.data["level"])
+                if c.data.get("area") == "politica":
+                    _bump(p, "politics", skill_d=3.0, fame_d=1.5)
                 ls.log(db, user_id, ref, "EXAM_PASSED", f"APROVADO(A) no concurso {c.data['role']} ({c.data['organ']})! Posse no mês que vem. (chance era {chance * 100:.0f}%)")
             else:
                 c.status = "FAILED"
@@ -391,6 +489,7 @@ def overview(db: Session, user_id: int, ref: date) -> dict:
               if c.status == "RUNNING" else None, "done": [k for k in c.data if k.startswith("rally:") and k.endswith(f"{ref:%Y-%m}")]} for c in items(db, user_id, "CAMPAIGN")]
     return {
         "profile": {"party": st.get("party"), "joined": st.get("joined"), "ideology": st.get("ideology", "centro"), "proposals": st.get("proposals", []), "media": st.get("media", "evasivo")},
+        "popularity": popularity(db, user_id, p), "party_chances": {k: party_chance(db, user_id, p, k) for k in P.PARTIES}, "party_refused": st.get("party_refused", {}),
         "fame": round(fame(p, "politics"), 1), "skill": round(skill(p, "politics"), 1), "relevance": round(public_relevance(db, user_id, p), 1), "age": lp.age_years,
         "study": round(float(lp.study or 0), 1), "study_hours_day": float(lp.study_hours_day or 0),
         "offices": office_rows(db, user_id, ref, lp), "campaigns": camps,

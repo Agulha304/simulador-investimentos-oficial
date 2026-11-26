@@ -67,7 +67,7 @@ export function LifePage() {
             <div className="cols-2">
               <Meter label="Saúde" value={a.health} /><Meter label="Bem-estar" value={a.wellbeing} />
               <Meter label="Qualidade de vida" value={a.quality} /><Meter label="Satisfação pessoal" value={a.satisfaction} />
-              <Meter label="Estudo (preparo para vestibulares e concursos)" value={a.study ?? 0} /><Meter label="Vida social" value={a.social} /><Meter label="Estabilidade financeira" value={a.financial_stability} />
+              <Meter label="Popularidade (fama pelo que você faz)" value={a.popularity ?? 0} /><Meter label="Estudo (preparo para vestibulares e concursos)" value={a.study ?? 0} /><Meter label="Vida social" value={a.social} /><Meter label="Estabilidade financeira" value={a.financial_stability} />
             </div>
             <p className="muted small">Tempo livre neste mês: <b className="num">{a.free_hours_left}h</b> de {a.free_hours_total}h. Atividades e convivência consomem horas.</p>
           </section>
