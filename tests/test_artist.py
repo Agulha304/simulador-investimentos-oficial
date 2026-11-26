@@ -123,23 +123,119 @@ def test_painting_flow_and_promotion_decision(client, rich):
     assert client.post(f"{A}/painting", headers=rich, json={"theme": "x", "style": "realismo", "size": "pequeno"}).status_code == 400
 
 
-def test_influencer_channel_gear_invest_and_month_close(client, rich):
-    c = client.post(f"{A}/channels", headers=rich, json={"platform": "youtube", "niche": "tecnologia", "name": "Canal Teste"})
-    assert c.status_code == 200, c.text
-    cid = c.json()["result"]["channel_id"]
-    assert client.post(f"{A}/channels", headers=rich, json={"platform": "youtube", "niche": "games", "name": "Outro"}).status_code == 409
-    assert client.post(f"{A}/channels/{cid}/gear", headers=rich, json={"category": "camera"}).status_code == 200
-    assert client.post(f"{A}/channels/{cid}/gear", headers=rich, json={"category": "xx"}).status_code == 400
-    ov = client.post(f"{A}/channels/{cid}/invest", headers=rich, json={"kind": "editor"}).json()
-    ch = ov["channels"][0]
-    assert ch["gear"]["camera"] == 1 and ch["flags"]["editor"] and ch["quality"] > 0 and ov["committed_hours"] > 0
-    assert client.post(f"{A}/channels/{cid}/invest", headers=rich, json={"kind": "editor"}).status_code == 409
-    assert client.post(f"{A}/channels/{cid}/invest", headers=rich, json={"kind": "agencia"}).status_code == 409        # exige 10 mil inscritos
-    assert client.put(f"{A}/channels/{cid}/cadence", headers=rich, json={"cadence": 8}).status_code == 200
-    assert client.put(f"{A}/channels/{cid}/cadence", headers=rich, json={"cadence": 7}).status_code == 400
+def test_platform_monetization_goals_follow_real_rules():
+    yt = AR.PLATFORM_RULES["youtube"]
+    assert (yt[0]["subs"], yt[0]["watch_12m"], yt[0]["uploads_90d"]) == (500, 3000, 3) and (yt[1]["subs"], yt[1]["watch_12m"]) == (1000, 4000)
+    assert AR.PLATFORM_RULES["tiktok"][0]["subs"] == 10000 and AR.PLATFORM_RULES["twitch"][0]["subs"] == 50
+    assert [t["subs"] for t in AR.PLATFORM_RULES["instagram"]] == [1000, 5000, 10000]
+    assert AR.tier_status("youtube", 1500, watch_12m=4500)["tier"]["key"] == "FULL"
+    assert AR.tier_status("youtube", 700, watch_12m=3500, uploads_90d=4)["tier"]["key"] == "EXPANDED"
+    st = AR.tier_status("youtube", 900, watch_12m=1000)
+    assert st["tier"] is None and st["next"]["key"] == "EXPANDED" and {m["goal"] for m in st["next"]["missing"]} == {3000, 3}
+    assert AR.channel_money("youtube", None, 100000, 5000, "games", 50, False) == (0, 0, 0)
+    ads, fan, shop = AR.channel_money("youtube", yt[1], 100000, 5000, "financas", 60, True)
+    assert ads > 0 and fan > 0 and shop > 0
+    ig = AR.channel_money("instagram", AR.PLATFORM_RULES["instagram"][2], 100000, 12000, "beleza", 60, False)
+    assert ig[0] == 0 and ig[1] > 0                                                              # Instagram não divide anúncios
+
+
+def test_topic_fit_and_sponsor_catalog():
+    assert AR.topic_fit("tecnologia", "painting") < 0.3 < AR.topic_fit("beleza", "painting")
+    assert AR.topic_fit("musica", "song") > 1 > AR.topic_fit("financas", "song") and AR.topic_fit("negocios", "company") > 1
+    bet = next(x for x in AR.SPONSORS if "bet" in x[1].lower())
+    assert bet[4] >= 0.8 and bet[3] >= 3 * min(x[3] for x in AR.SPONSORS)                         # bet paga muito e é arriscada
+
+
+def test_events_data_is_consistent():
+    discs = {e["disc"] for e in AR.EVENTS.values()}
+    assert discs == {"influencer", "music", "acting", "painting"}
+    assert {"bet_publi", "fa_na_rua", "tocar_na_rua"} <= set(AR.EVENTS)
+    for k, e in AR.EVENTS.items():
+        for o in e["options"]:
+            assert abs(sum(x[0] for x in o["outcomes"]) - 1) < 1e-6, (k, o["key"])
+
+
+def test_music_lessons_general_or_specific_instrument(client, rich):
+    client.post(f"{A}/instrument", headers=rich, json={"instrument": "guitarra"})
+    base = client.get(A, headers=rich).json()
+    g = client.post(f"{A}/train", headers=rich, json={"discipline": "music", "instrument": "geral"})
+    assert g.status_code == 200 and g.json()["result"]["instrument"] is None
+    sp = client.post(f"{A}/train", headers=rich, json={"discipline": "music", "instrument": "guitarra"})
+    assert sp.status_code == 200 and sp.json()["result"]["instrument"] == "guitarra"
+    ov = sp.json()
+    assert ov["inst_skills"]["guitarra"] > 0 and ov["effective_music"] > base["effective_music"]
+    assert client.post(f"{A}/train", headers=rich, json={"discipline": "music", "instrument": "guitarra"}).status_code == 409
+    assert client.post(f"{A}/train", headers=rich, json={"discipline": "music", "instrument": "pandeiro"}).status_code == 400
+    other = client.post(f"{A}/instrument", headers=rich, json={"instrument": "violino"}).json()
+    assert other["effective_music"] < ov["effective_music"]                                          # o treino específico fica no instrumento
+
+
+def test_influencer_accounts_multi_platform_and_selective_videos(client, rich):
+    r = client.post(f"{A}/accounts", headers=rich, json={"name": "Games do Zé", "niche": "games", "platforms": ["youtube", "tiktok", "twitch"]})
+    assert r.status_code == 200, r.text
+    aid = r.json()["result"]["account_id"]
+    assert len(r.json()["influencer"]["accounts"][0]["channels"]) == 3
+    t = client.post(f"{A}/accounts", headers=rich, json={"name": "Tech do Zé", "niche": "tecnologia", "platforms": ["youtube", "instagram"]})
+    assert t.status_code == 200 and len(t.json()["influencer"]["accounts"]) == 2                    # duas contas (nichos), cada uma com canais próprios
+    assert client.post(f"{A}/accounts/{aid}/channels", headers=rich, json={"platform": "youtube"}).status_code == 409
+    assert client.post(f"{A}/accounts/{aid}/channels", headers=rich, json={"platform": "podcast"}).status_code == 200
+    assert client.post(f"{A}/accounts/{aid}/gear", headers=rich, json={"category": "camera"}).status_code == 200
+    assert client.post(f"{A}/accounts/{aid}/gear", headers=rich, json={"category": "xx"}).status_code == 400
+    ov = client.post(f"{A}/accounts/{aid}/invest", headers=rich, json={"kind": "editor"}).json()
+    acc = next(a for a in ov["influencer"]["accounts"] if a["id"] == aid)
+    assert acc["gear"]["camera"] == 1 and acc["flags"]["editor"] and acc["quality"] > 0
+    assert client.post(f"{A}/accounts/{aid}/invest", headers=rich, json={"kind": "agencia"}).status_code == 409           # exige 10 mil inscritos
+    # vídeo só em algumas plataformas
+    v = client.post(f"{A}/accounts/{aid}/video", headers=rich, json={"platforms": ["youtube", "tiktok"]})
+    assert v.status_code == 200, v.text
+    ch = {c["platform"]: c for c in next(a for a in v.json()["influencer"]["accounts"] if a["id"] == aid)["channels"]}
+    assert ch["youtube"]["posted"] == 1 and ch["tiktok"]["posted"] == 1 and ch["twitch"]["posted"] == 0 and ch["podcast"]["posted"] == 0
+    assert client.post(f"{A}/accounts/{aid}/video", headers=rich, json={"platforms": ["instagram"]}).status_code == 400       # a conta de games não tem Instagram
+    allv = client.post(f"{A}/accounts/{aid}/video", headers=rich, json={"platforms": ["youtube", "tiktok", "twitch", "podcast"]})
+    assert allv.status_code == 200
     assert close(client, rich).status_code == 200
-    after = client.get(A, headers=rich).json()["channels"][0]
-    assert after["views"] > 0 and len(after["history"]) == 1 and after["last"]["quality"] > 0
-    assert client.delete(f"{A}/channels/{cid}/invest/editor", headers=rich).status_code == 200
-    assert client.delete(f"{A}/channels/{cid}", headers=rich).status_code == 200
-    assert client.get(A, headers=rich).json()["channels"] == []
+    after = client.get(A, headers=rich).json()["influencer"]["accounts"]
+    g = next(a for a in after if a["id"] == aid)
+    yt = next(c for c in g["channels"] if c["platform"] == "youtube")
+    assert yt["views"] > 0 and len(yt["history"]) == 1 and yt["posted"] == 0 and yt["next"] is not None and yt["next"]["missing"]
+    assert next(c for c in g["channels"] if c["platform"] == "podcast")["history"][0]["posted"] == 1
+    assert client.delete(f"{A}/accounts/{aid}/invest/editor", headers=rich).status_code == 200
+    assert client.delete(f"{A}/accounts/{aid}", headers=rich).status_code == 200
+    assert len(client.get(A, headers=rich).json()["influencer"]["accounts"]) == 1
+
+
+def test_themed_videos_sell_or_hurt_depending_on_niche_fit(client, rich):
+    p = client.post(f"{A}/painting", headers=rich, json={"theme": "paisagem", "style": "realismo", "size": "pequeno"})
+    assert p.status_code == 200
+    wid = p.json()["result"].get("work_id")
+    assert wid and p.json()["influencer"]["promotable"]["painting"]
+    aid = client.post(f"{A}/accounts", headers=rich, json={"name": "Canal Tech", "niche": "tecnologia", "platforms": ["youtube"]}).json()["result"]["account_id"]
+    r = client.post(f"{A}/accounts/{aid}/video", headers=rich, json={"platforms": ["youtube"], "topic": "painting", "ref_id": wid})
+    assert r.status_code == 200 and "não combina" in r.json()["result"]["message"]                    # quadro num canal de tecnologia: mal encaixado
+    assert client.post(f"{A}/accounts/{aid}/video", headers=rich, json={"platforms": ["youtube"], "topic": "painting"}).status_code == 400   # falta escolher o quadro
+    assert client.post(f"{A}/accounts/{aid}/video", headers=rich, json={"platforms": ["youtube"], "topic": "xx"}).status_code == 400
+    aid2 = client.post(f"{A}/accounts", headers=rich, json={"name": "Arte e Vida", "niche": "vlog", "platforms": ["instagram"]}).json()["result"]["account_id"]
+    r2 = client.post(f"{A}/accounts/{aid2}/video", headers=rich, json={"platforms": ["instagram"], "topic": "company", "ref_id": 999999})
+    assert r2.status_code == 404
+
+
+def test_artist_event_decision_resolves_with_effects(client, rich):
+    from sqlalchemy import select
+
+    from backend.database import SessionLocal
+    from backend.models import ArtistItem, SimMonth
+    uid = client.get("/api/auth/me", headers=rich).json()["id"]
+    client.post(f"{A}/instrument", headers=rich, json={"instrument": "violao"})
+    with SessionLocal() as s:
+        month = s.scalar(select(SimMonth).where(SimMonth.user_id == uid, SimMonth.status == "OPEN"))
+        e = AR.EVENTS["tocar_na_rua"]
+        s.add(ArtistItem(user_id=uid, kind="DECISION", status="OPEN", name=e["title"], created_month=month.ref_month,
+                         data={"work": "EVENT", "event_key": "tocar_na_rua", "desc": e["desc"], "work_id": 0,
+                               "options": [{"key": o["key"], "label": o["label"], "cost": o["cost"], "desc": ""} for o in e["options"]]}))
+        s.commit()
+    ov = client.get(A, headers=rich).json()
+    dec = ov["decisions"][0]
+    assert dec["work"] == "EVENT" and dec["desc"] and {o["key"] for o in dec["options"]} == {"tocar", "recusar"}
+    r = client.post(f"{A}/decisions/{dec['id']}", headers=rich, json={"option": "tocar"})
+    assert r.status_code == 200 and r.json()["decisions"] == [] and r.json()["result"]["message"]
+    assert client.post(f"{A}/decisions/{dec['id']}", headers=rich, json={"option": "tocar"}).status_code == 409

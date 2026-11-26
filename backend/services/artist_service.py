@@ -12,9 +12,12 @@ from sqlalchemy.orm import Session
 
 from backend.core.money import quantize_money
 from backend.models import ArtistItem, ArtistProfile, FlowKind, Person, Portfolio, Relationship, SimMonth
+from backend.services import artist_events as events
+from backend.services import artist_influencer as inf
 from backend.services import artist_rules as AR
 from backend.services import budget_service, finance_ledger
 from backend.services import life_service as ls
+from backend.services.artist_core import (_add, _bump, _get, _income, _life, _pay_cash, _resync, _seed, _upd, fame, items, profile, skill)
 from backend.services.budget_service import require_open, shift_month
 from backend.services.finance_ledger import ConflictError, FinanceError, NotFoundError
 from backend.services.goods_rules import hash01
@@ -25,99 +28,24 @@ MAX_APPS = 5
 APPLY_HOURS = 3
 
 
-# ------------------------------------------------------------------ acesso
-def _seed(db: Session, user_id: int) -> int:
-    from backend.services import world_service
-    return world_service._seed(db, user_id)
-
-
-def profile(db: Session, user_id: int, lock: bool = False) -> ArtistProfile:
-    q = select(ArtistProfile).where(ArtistProfile.user_id == user_id)
-    p = db.scalar(q.with_for_update() if lock else q)
-    if p is None:
-        p = ArtistProfile(user_id=user_id, skills={k: 10.0 for k in AR.DISCIPLINES}, fame={k: 0.0 for k in AR.DISCIPLINES}, data={})
-        db.add(p)
-        db.flush()
-    return p
-
-
-def items(db: Session, user_id: int, kind: str, status: str | None = None) -> list[ArtistItem]:
-    q = select(ArtistItem).where(ArtistItem.user_id == user_id, ArtistItem.kind == kind)
-    if status:
-        q = q.where(ArtistItem.status == status)
-    return list(db.scalars(q.order_by(ArtistItem.id)))
-
-
-def _add(db: Session, user_id: int, kind: str, name: str, ref: date, status: str = "ACTIVE", **data) -> ArtistItem:
-    it = ArtistItem(user_id=user_id, kind=kind, status=status, name=name[:120], created_month=ref, data=data)
-    db.add(it)
-    db.flush()
-    return it
-
-
-def _upd(it: ArtistItem, **kv) -> None:
-    it.data = {**(it.data or {}), **kv}
-
-
-def _get(db: Session, user_id: int, item_id: int, kind: str) -> ArtistItem:
-    it = db.get(ArtistItem, item_id)
-    if it is None or it.user_id != user_id or it.kind != kind:
-        raise NotFoundError("item não encontrado")
-    return it
-
-
-def skill(p: ArtistProfile, d: str) -> float:
-    return float((p.skills or {}).get(d, 10.0))
-
-
-def fame(p: ArtistProfile, d: str) -> float:
-    return float((p.fame or {}).get(d, 0.0))
-
-
-def _bump(p: ArtistProfile, d: str, skill_d: float = 0.0, fame_d: float = 0.0) -> None:
-    p.skills = {**(p.skills or {}), d: round(AR.clamp(skill(p, d) + skill_d), 2)}
-    p.fame = {**(p.fame or {}), d: round(AR.clamp(fame(p, d) + fame_d), 2)}
-
-
-def _life(db: Session, user_id: int):
-    return ls.get_profile(db, user_id, lock=True)
-
-
-def _pay_cash(db: Session, user_id: int, month: SimMonth, amount: float | Decimal, name: str, cat: str = "Lazer") -> None:
-    """Gasto à vista (entra no orçamento do mês); exige saldo."""
-    amount = quantize_money(D(str(amount)))
-    if amount <= 0:
-        return
-    bal = db.scalar(select(Portfolio.cash_balance).where(Portfolio.user_id == user_id)) or ZERO       # dinheiro pessoal
-    if bal < amount:
-        raise FinanceError(f"saldo insuficiente: {name} custa {amount} e você tem {bal}")
-    lp = _life(db, user_id)
-    ls.add_one_off(lp, f"life:artist:cost:{month.ref_month:%Y-%m}:{len(lp.one_offs or {})}", name, amount, cat, month.ref_month, "EXPENSE")
-
-
-def _income(db: Session, user_id: int, ref: date, name: str, amount: float | Decimal, months_ahead: int = 1) -> None:
-    amount = quantize_money(D(str(amount)))
-    if amount > 0:
-        _add(db, user_id, "PAYOUT", name, ref, status="PENDING", month=shift_month(ref, months_ahead).isoformat(), amount=str(amount))
-
-
-def _resync(db: Session, user_id: int, month: SimMonth) -> None:
-    from backend.services import career_hub
-    career_hub.recalc_hours(db, user_id)
-    ls.sync_month(db, user_id, month)
-
-
 # ------------------------------------------------------------------ horas comprometidas
 def committed_hours(db: Session, user_id: int) -> int:
-    h = 0
-    for ch in items(db, user_id, "CHANNEL", "ACTIVE"):
-        d = ch.data
-        per = AR.HOURS_PER_VIDEO * (0.6 if d.get("editor") else 1.0)
-        h += int(d.get("cadence", 0) * per)
-    if any(b.status == "ACTIVE" for b in items(db, user_id, "BAND")):
-        h += 14
-    h += sum(int(j.data.get("hours", 0)) for j in items(db, user_id, "JOB", "ACTIVE") if j.data.get("pay_type") == "MONTHLY")
-    return h
+    """Horas fixas por mês: ensaios da banda e contratos mensais (vídeos consomem horas só quando você os cria)."""
+    h = 14 if any(b.status == "ACTIVE" for b in items(db, user_id, "BAND")) else 0
+    return h + sum(int(j.data.get("hours", 0)) for j in items(db, user_id, "JOB", "ACTIVE") if j.data.get("pay_type") == "MONTHLY")
+
+
+# ------------------------------------------------------------------ habilidade por instrumento
+def inst_skills(p: ArtistProfile) -> dict:
+    return dict((p.data or {}).get("inst_skill", {}))
+
+
+def msk(p: ArtistProfile, instrument: str | None = None) -> float:
+    """Habilidade EFETIVA no instrumento: o treino específico no instrumento + metade da base geral de música."""
+    inst = instrument or p.instrument
+    if not inst:
+        return skill(p, "music")
+    return round(min(100.0, float(inst_skills(p).get(inst, 0.0)) + 0.5 * skill(p, "music")), 2)
 
 
 # ------------------------------------------------------------------ treino e instrumento
@@ -126,31 +54,48 @@ def set_instrument(db: Session, user_id: int, month: SimMonth, instrument: str) 
     if instrument not in AR.INSTRUMENTS:
         raise FinanceError("instrumento desconhecido")
     p = profile(db, user_id, lock=True)
-    if p.instrument and p.instrument != instrument:
-        _bump(p, "music", skill_d=-8.0)                                  # trocar de instrumento zera parte da prática
-    p.instrument = instrument
+    p.instrument = instrument                                            # a habilidade do instrumento novo vem do treino específico nele
     db.flush()
     return p
 
 
-def train(db: Session, user_id: int, month: SimMonth, discipline: str) -> dict:
+def train(db: Session, user_id: int, month: SimMonth, discipline: str, instrument: str | None = None) -> dict:
+    """Aula. Em música dá para fazer aula GERAL (base para todos os instrumentos) ou de um INSTRUMENTO específico (currículo maior nele)."""
     require_open(month)
     if discipline not in AR.TRAIN:
         raise FinanceError("disciplina desconhecida")
     name, cost, hours, gain = AR.TRAIN[discipline]
     p = profile(db, user_id, lock=True)
     ref = month.ref_month
-    key = f"train:{discipline}:{ref:%Y-%m}"
+    spec = instrument if discipline == "music" and instrument and instrument != "geral" else None
+    if spec and spec not in AR.INSTRUMENTS:
+        raise FinanceError("instrumento desconhecido")
+    if spec:
+        name, cost, hours, gain = f"Aulas de {AR.INSTRUMENTS[spec][0]}", 520, 18, 4.2
+    elif discipline == "music":
+        name = "Aulas de música (teoria e prática geral)"
+    key = f"train:{discipline}:{spec or 'geral'}:{ref:%Y-%m}"
     if (p.data or {}).get(key):
-        raise ConflictError("você já treinou essa área neste mês")
+        raise ConflictError("você já fez essa aula neste mês")
     ls.spend_hours(_life(db, user_id), hours, name)
     _pay_cash(db, user_id, month, cost, name, "Educação")
-    cur = skill(p, discipline)
-    real = gain * (1.0 - cur / 140)                                      # quanto mais habilidoso, mais devagar evolui
-    _bump(p, discipline, skill_d=real)
-    p.data = {**(p.data or {}), key: 1}
+    if spec:
+        cur = float(inst_skills(p).get(spec, 0.0))
+        real = gain * (1.0 - cur / 120)
+        data = dict(p.data or {})
+        data["inst_skill"] = {**inst_skills(p), spec: round(min(100.0, cur + real), 2)}
+        p.data = {**data, key: 1}
+        _bump(p, "music", skill_d=1.0 * (1.0 - skill(p, "music") / 140))      # aula específica ensina um pouco da base também
+        if not p.instrument:
+            p.instrument = spec
+    else:
+        cur = skill(p, discipline)
+        real = gain * (1.0 - cur / 140)
+        _bump(p, discipline, skill_d=real)
+        p.data = {**(p.data or {}), key: 1}
     _resync(db, user_id, month)
-    return {"discipline": discipline, "skill": round(skill(p, discipline), 1), "gain": round(real, 2)}
+    return {"discipline": discipline, "instrument": spec, "skill": round(msk(p) if discipline == "music" else skill(p, discipline), 1), "gain": round(real, 2),
+            "message": f"{name}: +{real:.1f} de habilidade" + (f" em {AR.INSTRUMENTS[spec][0]}" if spec else "") + "."}
 
 
 # ------------------------------------------------------------------ ofertas (atuação, música, pintura)
@@ -187,7 +132,7 @@ def music_offers(db: Session, user_id: int, ref: date) -> list[dict]:
         band = AR.BAND_NAMES[int(hash01("mb", seed, key) * len(AR.BAND_NAMES))]
         out.append({"key": key, "discipline": "music", "kind": k, "title": f"{AR.INSTRUMENTS[p.instrument][0]} — {desc}", "employer": band, "monthly": monthly,
                     "pay": int(_pay((lo, hi), seed, key, fame(p, "music")) * demand ** 0.5 / 10) * 10, "months": n, "need_fame": 0, "need_skill": need_skill,
-                    "chance": round(AR.hire_chance(skill(p, "music"), fame(p, "music"), need_skill, 0, demand) * 100), "hours": 20 if monthly else 0})
+                    "chance": round(AR.hire_chance(msk(p), fame(p, "music"), need_skill, 0, demand) * 100), "hours": 20 if monthly else 0})
     return out + _callbacks(db, user_id, "music")
 
 
@@ -284,7 +229,7 @@ def create_band(db: Session, user_id: int, month: SimMonth, name: str, style: st
     name = name.strip()
     if not name:
         raise FinanceError("dê um nome à banda")
-    me = {"name": "Você", "instrument": p.instrument, "skill": round(skill(p, "music"), 1), "source": "YOU"}
+    me = {"name": "Você", "instrument": p.instrument, "skill": round(msk(p), 1), "source": "YOU"}
     b = _add(db, user_id, "BAND", name, month.ref_month, style=style, reputation=0.0, members=[me], gigs=0, songs=0, rehearsal=0)
     ls.log(db, user_id, month.ref_month, "BAND_CREATED", f"Você abriu a banda {name} ({AR.STYLES[style][0]})")
     _resync(db, user_id, month)
@@ -363,7 +308,7 @@ def create_song(db: Session, user_id: int, month: SimMonth, scope: str, style: s
     else:
         if not p.instrument:
             raise FinanceError("escolha o seu instrumento dominante primeiro")
-        band, q_base, rep = None, skill(p, "music"), fame(p, "music")
+        band, q_base, rep = None, msk(p), fame(p, "music")
     ls.spend_hours(_life(db, user_id), 12, "Compor uma música")
     n = len([w for w in items(db, user_id, "WORK") if w.data.get("work") == "SONG"])
     seed = _seed(db, user_id)
@@ -403,6 +348,13 @@ def decide(db: Session, user_id: int, month: SimMonth, decision_id: int, option:
     opt = next((o for o in dec.data["options"] if o["key"] == option), None)
     if opt is None:
         raise FinanceError("opção desconhecida")
+    if dec.data.get("work") == "EVENT":
+        res = events.resolve(db, user_id, month, dec, option)
+        dec.status = "DONE"
+        _upd(dec, chosen=option, result=res["message"])
+        ls.log(db, user_id, ref, "ARTIST_EVENT", res["message"])
+        _resync(db, user_id, month)
+        return {"message": res["message"], "status": "EVENT"}
     w = db.get(ArtistItem, dec.data["work_id"])
     p = profile(db, user_id, lock=True)
     seed = _seed(db, user_id)
@@ -514,7 +466,7 @@ def play_gig(db: Session, user_id: int, month: SimMonth, tier: str, scope: str) 
     else:
         if not p.instrument:
             raise FinanceError("escolha o seu instrumento dominante primeiro")
-        band, q, rep, n_members = None, skill(p, "music"), fame(p, "music"), 1
+        band, q, rep, n_members = None, msk(p), fame(p, "music"), 1
     ls.spend_hours(_life(db, user_id), 6, f"Oferecer show em {vname}")
     seed = _seed(db, user_id)
     key = f"gig:{tier}:{ref:%Y-%m}"
@@ -601,148 +553,6 @@ def paint(db: Session, user_id: int, month: SimMonth, theme: str, style: str, si
     return {"message": f"Quadro pronto: “{title}” (qualidade {q:.0f}). Decida como divulgá-lo.", "decision_id": dec.id, "work_id": w.id}
 
 
-# ------------------------------------------------------------------ influenciador
-def channels(db: Session, user_id: int) -> list[ArtistItem]:
-    return items(db, user_id, "CHANNEL", "ACTIVE")
-
-
-def create_channel(db: Session, user_id: int, month: SimMonth, platform: str, niche: str, name: str) -> ArtistItem:
-    require_open(month)
-    if platform not in AR.PLATFORMS or niche not in AR.NICHES:
-        raise FinanceError("plataforma ou nicho desconhecido")
-    name = name.strip()
-    if not name:
-        raise FinanceError("dê um nome ao canal")
-    if len(channels(db, user_id)) >= AR.MAX_CHANNELS:
-        raise ConflictError(f"no máximo {AR.MAX_CHANNELS} canais ao mesmo tempo")
-    if any(c.data["platform"] == platform for c in channels(db, user_id)):
-        raise ConflictError("você já tem um canal nessa plataforma")
-    p = profile(db, user_id, lock=True)
-    ch = _add(db, user_id, "CHANNEL", name, month.ref_month, platform=platform, niche=niche, subs=0, cadence=4, gear={k: 0 for k in AR.GEAR}, editor=False, thumbs=False,
-              ads=False, contador=False, agency=False, merch=False, community=20.0, views=0, income=0, collabs=0, history=[])
-    ls.log(db, user_id, month.ref_month, "CHANNEL_CREATED", f"Você criou o canal {name} ({AR.PLATFORMS[platform][0]}, {AR.NICHES[niche][0]})")
-    _bump(p, "influencer", skill_d=0.5)
-    _resync(db, user_id, month)
-    return ch
-
-
-def _channel(db: Session, user_id: int, cid: int) -> ArtistItem:
-    ch = _get(db, user_id, cid, "CHANNEL")
-    if ch.status != "ACTIVE":
-        raise ConflictError("canal encerrado")
-    return ch
-
-
-def buy_gear(db: Session, user_id: int, month: SimMonth, cid: int, category: str) -> dict:
-    require_open(month)
-    ch = _channel(db, user_id, cid)
-    if category not in AR.GEAR:
-        raise FinanceError("equipamento desconhecido")
-    gear = dict(ch.data["gear"])
-    lvl = int(gear.get(category, 0))
-    if lvl >= 5:
-        raise ConflictError("esse equipamento já está no nível máximo")
-    price = AR.GEAR[category][1][lvl]
-    _pay_cash(db, user_id, month, price, f"{AR.GEAR[category][0]}: {AR.GEAR_LEVEL[lvl + 1]}", "Lazer")
-    gear[category] = lvl + 1
-    _upd(ch, gear=gear)
-    ls.log(db, user_id, month.ref_month, "GEAR", f"Você comprou {AR.GEAR[category][0]} ({AR.GEAR_LEVEL[lvl + 1]}) para o canal {ch.name}")
-    _resync(db, user_id, month)
-    return {"message": f"{AR.GEAR[category][0]}: {AR.GEAR_LEVEL[lvl + 1]} (R$ {price}).", "gear": gear}
-
-
-def invest(db: Session, user_id: int, month: SimMonth, cid: int, kind: str) -> dict:
-    require_open(month)
-    ch = _channel(db, user_id, cid)
-    if kind not in AR.INVEST:
-        raise FinanceError("investimento desconhecido")
-    name, typ, cost, desc = AR.INVEST[kind]
-    d, p, ref = ch.data, profile(db, user_id, lock=True), month.ref_month
-    flag = {"editor": "editor", "thumbs": "thumbs", "ads": "ads", "contador": "contador", "agencia": "agency", "merch": "merch"}.get(kind)
-    if flag and d.get(flag):
-        raise ConflictError("você já tem isso (para encerrar, desligue-o)")
-    if kind == "agencia" and int(d["subs"]) < 10000:
-        raise ConflictError("a agência só aceita canais com pelo menos 10 mil inscritos")
-    if cost and typ in ("ONCE", "MONTHLY"):
-        _pay_cash(db, user_id, month, cost, name, "Lazer")
-    msg = f"{name}: contratado."
-    if kind == "curso":
-        _bump(p, "influencer", skill_d=6.0)
-        msg = "Você fez o curso: +6 de habilidade em criação de conteúdo."
-    elif kind == "colab":
-        got = int(hash01("collab", _seed(db, user_id), cid, ref.isoformat()) * (200 + int(d["subs"]) * 0.25))
-        _upd(ch, collabs=int(d.get("collabs", 0)) + got, community=min(100.0, float(d["community"]) + 2))
-        msg = f"A colaboração rendeu +{got} inscritos."
-        _upd(ch, subs=int(d["subs"]) + got)
-    elif kind == "evento":
-        _upd(ch, community=min(100.0, float(d["community"]) + 18))
-        msg = "O encontro fortaleceu a comunidade (mais fidelidade e venda de produtos)."
-    elif flag:
-        _upd(ch, **{flag: True})
-    ls.log(db, user_id, ref, "CHANNEL_INVEST", f"{ch.name}: {msg}")
-    _resync(db, user_id, month)
-    return {"message": msg}
-
-
-def stop_invest(db: Session, user_id: int, month: SimMonth, cid: int, kind: str) -> None:
-    require_open(month)
-    ch = _channel(db, user_id, cid)
-    flag = {"editor": "editor", "thumbs": "thumbs", "ads": "ads", "contador": "contador", "agencia": "agency"}.get(kind)
-    if not flag:
-        raise FinanceError("esse investimento não pode ser desligado")
-    _upd(ch, **{flag: False})
-    _resync(db, user_id, month)
-
-
-def set_cadence(db: Session, user_id: int, month: SimMonth, cid: int, cadence: int) -> None:
-    require_open(month)
-    ch = _channel(db, user_id, cid)
-    if cadence not in AR.CADENCE:
-        raise FinanceError(f"escolha entre {AR.CADENCE} vídeos por mês")
-    _upd(ch, cadence=cadence)
-    _resync(db, user_id, month)
-
-
-def close_channel(db: Session, user_id: int, month: SimMonth, cid: int) -> None:
-    require_open(month)
-    ch = _channel(db, user_id, cid)
-    ch.status = "CLOSED"
-    _resync(db, user_id, month)
-
-
-def _channel_month(db: Session, user_id: int, ch: ArtistItem, p: ArtistProfile, ref: date, seed: int) -> None:
-    d = ch.data
-    q = AR.channel_quality(skill(p, "influencer"), d["gear"], d.get("editor", False))
-    tr = AR.trend(seed, d["niche"], ref)
-    luck = hash01("luck", seed, ch.id, ref.isoformat())
-    views = AR.month_views(int(d["subs"]), q, int(d["cadence"]), d["niche"], d["platform"], tr, d.get("ads", False), d.get("thumbs", False), luck)
-    event = None
-    r = hash01("chev", seed, ch.id, ref.isoformat())
-    if r < 0.03 and d["cadence"] > 0:
-        views, event = views * 4, "Um vídeo viralizou!"
-    elif r > 0.992:
-        event = "Polêmica nas redes: perdeu inscritos."
-    gain = AR.sub_gain(views, q, d["niche"], d.get("ads", False))
-    subs = int(d["subs"]) + gain
-    if d["cadence"] == 0:
-        subs = int(subs * 0.985)
-    if event and event.startswith("Polêmica"):
-        subs = int(subs * 0.9)
-    ads_rev, shop = AR.channel_revenue(views, subs, d["platform"], d["niche"], d.get("merch", False), float(d.get("community", 20)))
-    spons = AR.sponsorship(subs, d["niche"], d.get("agency", False), seed, ch.id, ref)
-    gross = ads_rev + shop + spons
-    tax = gross * AR.TAX_RATE * (0.5 if d.get("contador") else 1.0)
-    agency = gross * 0.15 if d.get("agency") else 0.0
-    net = max(0.0, gross - tax - agency)
-    _income(db, user_id, ref, f"Canal {ch.name}: receita do mês", net)
-    hist = list(d.get("history", []))[-23:] + [{"month": ref.isoformat(), "subs": subs, "views": views, "net": round(net)}]
-    _upd(ch, subs=subs, views=views, income=round(net), community=max(5.0, min(100.0, float(d.get("community", 20)) + (0.8 if d["cadence"] >= 4 else -1.0))),
-         history=hist, last={"quality": round(q, 1), "trend": tr, "ads": ads_rev, "shop": shop, "sponsor": spons, "tax": round(tax), "agency": round(agency), "gross": gross, "event": event})
-    _bump(p, "influencer", skill_d=0.35 if d["cadence"] else 0.0, fame_d=min(0.4, gain / 8000))
-    if event:
-        ls.log(db, user_id, ref, "CHANNEL_EVENT", f"{ch.name}: {event}")
-
-
 # ------------------------------------------------------------------ fechamento do mês e orçamento
 def process_month(db: Session, lp, ref: date) -> None:
     user_id = lp.user_id
@@ -750,8 +560,7 @@ def process_month(db: Session, lp, ref: date) -> None:
     if p is None:
         return
     seed = _seed(db, user_id)
-    for ch in channels(db, user_id):
-        _channel_month(db, user_id, ch, p, ref, seed)
+    inf.process_month(db, user_id, p, ref, seed)
     for j in items(db, user_id, "JOB", "ACTIVE"):
         d = j.data
         if d["pay_type"] == "MONTHLY":
@@ -778,7 +587,7 @@ def process_month(db: Session, lp, ref: date) -> None:
             if m.get("source") != "YOU":
                 m["skill"] = round(min(100, m["skill"] + 0.25), 1)
             else:
-                m["skill"] = round(skill(p, "music"), 1)
+                m["skill"] = round(msk(p), 1)
         _upd(band, members=ms, reputation=round(max(0.0, rep - 0.5), 2), rehearsal=min(8, band.data.get("rehearsal", 0) + 0.5))
     for w in items(db, user_id, "WORK"):
         if w.data.get("royalty", 0) > 1 and w.data.get("months_left", 0) > 0 and w.status == "PUBLISHED":
@@ -787,6 +596,7 @@ def process_month(db: Session, lp, ref: date) -> None:
     for k in list((p.data or {})):                                     # limpa marcas de meses passados
         if k.startswith(("train:", "gig:")) and not k.endswith(f"{ref:%Y-%m}"):
             p.data = {kk: vv for kk, vv in p.data.items() if kk != k}
+    events.roll(db, user_id, p, ref, seed)
     db.flush()
 
 
@@ -803,12 +613,8 @@ def desired_items(db: Session, user_id: int, ref: date, want) -> None:
             want(f"life:artist:job:{j.id}", f"Artista: {j.name}", FlowKind.INCOME, "Renda extra", d["pay"])
         elif d["pay_type"] == "ONEOFF" and d["pay_month"] == ref.isoformat() and j.status != "QUIT":
             want(f"life:artist:job:{j.id}", f"Artista: {j.name}", FlowKind.INCOME, "Renda extra", d["pay"])
-    for ch in channels(db, user_id):
-        d = ch.data
-        cost = (AR.INVEST["editor"][2] if d.get("editor") else 0) + (AR.INVEST["thumbs"][2] if d.get("thumbs") else 0) + \
-               (AR.INVEST["ads"][2] if d.get("ads") else 0) + (AR.INVEST["contador"][2] if d.get("contador") else 0)
-        if cost:
-            want(f"life:artist:channelcost:{ch.id}", f"Custos do canal {ch.name}", FlowKind.EXPENSE, "Lazer", cost)
+    for a, cost in inf.monthly_costs(db, user_id):
+        want(f"life:artist:accountcost:{a.id}", f"Custos da conta {a.name}", FlowKind.EXPENSE, "Lazer", cost)
 
 
 # ------------------------------------------------------------------ visão geral
@@ -818,17 +624,8 @@ def overview(db: Session, user_id: int, ref: date) -> dict:
     lp = ls.get_profile(db, user_id)
     band = active_band(db, user_id)
     works = items(db, user_id, "WORK")
-    out_ch = []
-    for ch in channels(db, user_id):
-        d = ch.data
-        q = AR.channel_quality(skill(p, "influencer"), d["gear"], d.get("editor", False))
-        out_ch.append({"id": ch.id, "name": ch.name, "platform": d["platform"], "platform_name": AR.PLATFORMS[d["platform"]][0], "niche": d["niche"], "niche_name": AR.NICHES[d["niche"]][0],
-                       "subs": d["subs"], "views": d["views"], "income": d["income"], "cadence": d["cadence"], "gear": d["gear"], "quality": round(q, 1), "community": round(float(d["community"]), 1),
-                       "flags": {k: bool(d.get(k)) for k in ("editor", "thumbs", "ads", "contador", "agency", "merch")}, "monetized": d["subs"] >= AR.PLATFORMS[d["platform"]][1],
-                       "monetize_at": AR.PLATFORMS[d["platform"]][1], "trend": AR.trend(seed, d["niche"], ref), "history": d.get("history", []), "last": d.get("last"),
-                       "hours": int(d["cadence"] * AR.HOURS_PER_VIDEO * (0.6 if d.get("editor") else 1))})
     return {
-        "instrument": p.instrument, "skills": {k: round(skill(p, k), 1) for k in AR.DISCIPLINES}, "fame": {k: round(fame(p, k), 1) for k in AR.DISCIPLINES},
+        "instrument": p.instrument, "skills": {k: round(skill(p, k), 1) for k in AR.DISCIPLINES}, "inst_skills": inst_skills(p), "effective_music": round(msk(p), 1), "fame": {k: round(fame(p, k), 1) for k in AR.DISCIPLINES},
         "free_hours": ls.free_hours(lp) - lp.hours_used, "committed_hours": committed_hours(db, user_id),
         "offers": {"acting": acting_offers(db, user_id, ref), "music": music_offers(db, user_id, ref), "painting": commission_offers(db, user_id, ref)},
         "applied": [a.data["offer_key"] for a in items(db, user_id, "APP") if a.created_month == ref],
@@ -837,15 +634,15 @@ def overview(db: Session, user_id: int, ref: date) -> dict:
                   "quality": round(_band_quality(band, p), 1), "gigs": band.data.get("gigs", 0), "songs": band.data.get("songs", 0)} if band else None),
         "market_musicians": market_musicians(db, user_id, ref) if band else [], "friend_musicians": friend_musicians(db, user_id) if band else [],
         "works": [{"id": w.id, "name": w.name, "status": w.status, **{k: v for k, v in w.data.items()}} for w in works if w.name],
-        "decisions": [{"id": d.id, "title": d.name, "work": d.data["work"], "options": d.data["options"]} for d in items(db, user_id, "DECISION", "OPEN")],
-        "channels": out_ch, "payouts": [{"name": x.name, "month": x.data["month"], "amount": x.data["amount"]} for x in items(db, user_id, "PAYOUT") if x.data["month"] >= ref.isoformat()],
+        "decisions": [{"id": d.id, "title": d.name, "work": d.data["work"], "desc": d.data.get("desc", ""), "options": d.data["options"]} for d in items(db, user_id, "DECISION", "OPEN")],
+        "influencer": inf.overview(db, user_id, ref), "payouts": [{"name": x.name, "month": x.data["month"], "amount": x.data["amount"]} for x in items(db, user_id, "PAYOUT") if x.data["month"] >= ref.isoformat()],
         "catalog": {
             "instruments": [{"key": k, "name": v[0], "demand": v[1]} for k, v in AR.INSTRUMENTS.items()], "styles": [{"key": k, "name": v[0], "market": v[1]} for k, v in AR.STYLES.items()],
             "themes": [{"key": k, "name": v} for k, v in AR.THEMES.items()], "venues": [{"key": k, "name": v[0], "need_rep": v[1], "min": v[2], "max": v[3]} for k, v in AR.VENUES.items()],
             "paint_styles": [{"key": k, "name": v[0]} for k, v in AR.PAINT_STYLES.items()], "paint_sizes": [{"key": k, "name": v[0], "material": v[1], "hours": v[2], "base": v[3]} for k, v in AR.PAINT_SIZES.items()],
-            "paint_themes": [{"key": k, "name": v} for k, v in AR.PAINT_THEMES.items()], "platforms": [{"key": k, "name": v[0], "monetize_at": v[1], "cpm": v[2]} for k, v in AR.PLATFORMS.items()],
+            "paint_themes": [{"key": k, "name": v} for k, v in AR.PAINT_THEMES.items()], "platforms": [{"key": k, "name": v[0], "cpm": v[2], "rules": AR.PLATFORM_RULES[k]} for k, v in AR.PLATFORMS.items()],
             "niches": [{"key": k, "name": v[0], "cpm_mult": v[1], "competition": v[2]} for k, v in AR.NICHES.items()],
             "gear": [{"key": k, "name": v[0], "prices": v[1]} for k, v in AR.GEAR.items()], "gear_levels": list(AR.GEAR_LEVEL),
-            "invest": [{"key": k, "name": v[0], "type": v[1], "cost": v[2], "desc": v[3]} for k, v in AR.INVEST.items()], "cadence": list(AR.CADENCE),
+            "invest": [{"key": k, "name": v[0], "type": v[1], "cost": v[2], "desc": v[3]} for k, v in AR.INVEST.items()], "max_accounts": AR.MAX_ACCOUNTS,
             "train": {k: {"name": v[0], "cost": v[1], "hours": v[2]} for k, v in AR.TRAIN.items()}},
     }

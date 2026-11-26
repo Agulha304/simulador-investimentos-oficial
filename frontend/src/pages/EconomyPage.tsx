@@ -175,7 +175,7 @@ function Countries() {
   useEffect(() => { sim.economyCountries().then((r) => { setRows(r.countries); setEvents(r.events); }).catch((e) => setErr(errMsg(e))); }, []);
   if (err) return <div className="alert">{err}</div>;
   if (!rows) return <div className="muted">Carregando países…</div>;
-  const money = (v: string, d = 4) => `R$ ${Number(v).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: d })}`;
+  const money = (v: string, d = 4) => `R$ ${Number(v).toLocaleString("pt-BR", { minimumFractionDigits: Math.min(2, d), maximumFractionDigits: d })}`;
   return (
     <section className="card stack">
       <h2>🌐 Economia dos países</h2>

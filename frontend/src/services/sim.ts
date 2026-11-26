@@ -249,10 +249,22 @@ export interface CountryRow {
 export interface WorldEvent { country: string; country_name: string; flag: string; kind: string; label: string; start: string; end: string; active: boolean; intensity: number }
 
 export interface ArtistOffer { key: string; discipline: string; kind: string; title: string; employer: string; monthly: boolean; pay: number; months: number; need_fame: number; need_skill: number; chance: number; hours: number; callback_id?: number }
+export interface ArtistTier { key: string; label: string }
+export interface ArtistNext { key: string; label: string; missing: { need: string; have: number; goal: number }[] }
 export interface ArtistChannel {
-  id: number; name: string; platform: string; platform_name: string; niche: string; niche_name: string; subs: number; views: number; income: number; cadence: number;
-  gear: Record<string, number>; quality: number; community: number; flags: Record<string, boolean>; monetized: boolean; monetize_at: number; trend: number; hours: number;
-  history: { month: string; subs: number; views: number; net: number }[]; last: null | { quality: number; trend: number; ads: number; shop: number; sponsor: number; tax: number; agency: number; gross: number; event: string | null };
+  id: number; platform: string; platform_name: string; subs: number; views: number; income: number; posted: number; watch_h: number;
+  history: { month: string; subs: number; views: number; net: number; watch_h: number; posted: number }[];
+  last: null | { ads: number; fan: number; shop: number; tax: number; agency: number; gross: number; event: string | null; tier_label: string | null };
+  tier: ArtistTier | null; next: ArtistNext | null;
+}
+export interface ArtistSponsor { key: string; brand: string; category: string; fit: number; risk: number; pay: number; subs_effect_pct: number; community_effect: number; warning: string | null }
+export interface ArtistAccount {
+  id: number; name: string; niche: string; niche_name: string; gear: Record<string, number>; quality: number; community: number; trend: number; flags: Record<string, boolean>;
+  channels: ArtistChannel[]; sponsors: ArtistSponsor[]; hours_per_video: number;
+}
+export interface ArtistInfluencer {
+  accounts: ArtistAccount[]; topics: { key: string; name: string }[];
+  promotable: { painting: { id: number; name: string }[]; song: { id: number; name: string }[]; play: { id: number; name: string }[]; company: { id: number; name: string }[] };
 }
 export interface ArtistView {
   instrument: string | null; skills: Record<string, number>; fame: Record<string, number>; free_hours: number; committed_hours: number;
@@ -262,15 +274,15 @@ export interface ArtistView {
   market_musicians: { key: string; name: string; instrument: string; skill: number; ask: number }[];
   friend_musicians: { key: string; name: string; instrument: string; skill: number; affinity: number }[];
   works: { id: number; name: string; status: string; work: string; quality: number; scope?: string; style?: string; royalty?: number; size?: string }[];
-  decisions: { id: number; title: string; work: string; options: { key: string; label: string; cost: number; desc: string }[] }[];
-  channels: ArtistChannel[]; payouts: { name: string; month: string; amount: string }[];
+  decisions: { id: number; title: string; work: string; desc?: string; options: { key: string; label: string; cost: number; desc: string }[] }[];
+  influencer: ArtistInfluencer; inst_skills: Record<string, number>; effective_music: number; payouts: { name: string; month: string; amount: string }[];
   result?: { message?: string; hired?: boolean; created?: boolean; booked?: boolean; joined?: boolean; released?: boolean };
   catalog: {
     instruments: { key: string; name: string; demand: number }[]; styles: { key: string; name: string; market: number }[]; themes: { key: string; name: string }[];
     venues: { key: string; name: string; need_rep: number; min: number; max: number }[]; paint_styles: { key: string; name: string }[];
     paint_sizes: { key: string; name: string; material: number; hours: number; base: number }[]; paint_themes: { key: string; name: string }[];
-    platforms: { key: string; name: string; monetize_at: number; cpm: number }[]; niches: { key: string; name: string; cpm_mult: number; competition: number }[];
+    platforms: { key: string; name: string; cpm: number; rules: { key: string; label: string; subs?: number }[] }[]; max_accounts: number; niches: { key: string; name: string; cpm_mult: number; competition: number }[];
     gear: { key: string; name: string; prices: number[] }[]; gear_levels: string[]; invest: { key: string; name: string; type: string; cost: number; desc: string }[];
-    cadence: number[]; train: Record<string, { name: string; cost: number; hours: number }>;
+    train: Record<string, { name: string; cost: number; hours: number }>;
   };
 }

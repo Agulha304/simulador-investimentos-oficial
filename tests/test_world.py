@@ -233,3 +233,19 @@ def test_acquisition_merge_requires_same_segment_and_country(client, rich):
     r = client.post(f"{C}/acquisitions/negotiate", headers=rich, json={"target_key": other["key"], "offer": "100000", "mode": "MERGE", "buyer_company_id": mine["id"]})
     assert r.status_code == 400 and "mesmo segmento" in r.json()["detail"]
     assert client.post(f"{C}/acquisitions/negotiate", headers=rich, json={"target_key": other["key"], "offer": "100000", "mode": "MERGE"}).status_code == 400
+
+
+def test_countries_tab_reads_the_simulated_world_in_both_economy_modes(client, rich):
+    from tests.test_economy import start_world
+    r = client.get("/api/economy/countries", headers=rich)
+    assert r.status_code == 200, r.text
+    static = {c["code"]: c for c in r.json()["countries"]}
+    assert len(static) == len(cr.COUNTRIES) and all(c["rate"] and c["price_level"] > 0 for c in static.values())
+    start_world(client, rich, seed=11)                                                    # economia dinâmica: a mesma tela precisa continuar abrindo
+    r2 = client.get("/api/economy/countries", headers=rich)
+    assert r2.status_code == 200, r2.text
+    body = r2.json()
+    for c in body["countries"]:
+        assert c["inflation"] is not None and c["growth"] is not None and c["history"] is not None
+    assert {"events"} <= set(body) and isinstance(body["events"], list)
+    assert client.get("/api/economy", headers=rich).status_code == 200

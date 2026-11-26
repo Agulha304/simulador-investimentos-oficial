@@ -170,3 +170,210 @@ def draw_musician(seed, ref, i: int, instrument: str) -> dict:
     name = f"{FIRST[int(hash01('bm-f', seed, ref.isoformat(), instrument, i) * len(FIRST))]} {LAST[int(hash01('bm-l', seed, ref.isoformat(), instrument, i) * len(LAST))]}"
     return {"key": f"M{ref:%Y%m}-{instrument}-{i}", "name": name, "instrument": instrument, "skill": int(25 + 60 * hash01("bm-s", seed, ref.isoformat(), instrument, i) ** 1.1),
             "ask": int(8 + 14 * hash01("bm-a", seed, ref.isoformat(), instrument, i))}
+
+
+# ================================================================== v2: contas, plataformas reais, vídeos temáticos, publi e eventos
+# Metas de monetização REAIS (pesquisa: páginas de ajuda do YouTube e do Spotify, TikTok, Instagram/Meta e Twitch; valores de terceiros, que mudam
+# com o tempo): YouTube = parceria expandida 500 inscritos + 3 envios em 90 dias + 3.000 h de exibição (só apoio dos fãs) e programa completo 1.000
+# inscritos + 4.000 h (anúncios). TikTok Creator Rewards: 10 mil seguidores + 100 mil visualizações em 30 dias. Instagram não divide anúncios:
+# parcerias a partir de 1 mil, presentes 5 mil e assinaturas 10 mil seguidores. Twitch Afiliado: 50 seguidores, 8 h transmitidas em 7 dias e média de
+# 3 espectadores nos últimos 30 dias. Podcast (Spotify Partner Program): 3 episódios, 1.000 audições e 2.000 h ouvidas em 30 dias.
+PLATFORM_RULES = {
+    "youtube": [
+        {"key": "EXPANDED", "label": "Parceria expandida (apoio dos fãs)", "subs": 500, "watch_12m": 3000, "uploads_90d": 3, "ads": False, "fan": 0.5, "spons": True},
+        {"key": "FULL", "label": "Programa de Parcerias (anúncios + apoio)", "subs": 1000, "watch_12m": 4000, "uploads_90d": 0, "ads": True, "fan": 1.0, "spons": True}],
+    "instagram": [
+        {"key": "BRANDS", "label": "Marketplace de criadores (parcerias)", "subs": 1000, "ads": False, "fan": 0.0, "spons": True},
+        {"key": "GIFTS", "label": "Presentes e bônus", "subs": 5000, "ads": False, "fan": 0.4, "spons": True},
+        {"key": "SUBS", "label": "Assinaturas de fãs", "subs": 10000, "ads": False, "fan": 1.0, "spons": True}],
+    "tiktok": [{"key": "REWARDS", "label": "Creator Rewards Program", "subs": 10000, "views_30d": 100000, "ads": True, "fan": 0.4, "spons": True}],
+    "twitch": [{"key": "AFFILIATE", "label": "Afiliado (assinaturas e bits)", "subs": 50, "streams_30d": 7, "avg_viewers": 3, "ads": True, "fan": 1.2, "spons": True}],
+    "podcast": [{"key": "SPOTIFY", "label": "Spotify Partner Program", "episodes": 3, "views_30d": 1000, "listen_30d": 2000, "ads": True, "fan": 0.3, "spons": True}],
+}
+AVG_MIN = {"youtube": 4.5, "instagram": 0.4, "tiktok": 0.35, "twitch": 22.0, "podcast": 26.0}     # minutos assistidos por visualização
+FAN_RATE = {"youtube": 4.0, "instagram": 6.0, "tiktok": 1.2, "twitch": 9.0, "podcast": 3.0}      # R$ por mil seguidores/mês de apoio dos fãs
+MAX_ACCOUNTS = 4
+
+
+def tier_status(platform: str, subs: int, *, watch_12m: float = 0, uploads_90d: int = 0, views_30d: int = 0, streams_30d: int = 0,
+                avg_viewers: float = 0, episodes: int = 0, listen_30d: float = 0) -> dict:
+    """Melhor nível de monetização atingido + o que falta para o próximo (metas reais por plataforma)."""
+    got, nxt = None, None
+    for t in PLATFORM_RULES[platform]:
+        checks = [(subs >= t.get("subs", 0), f"{t.get('subs', 0):,} seguidores/inscritos".replace(",", "."), subs, t.get("subs", 0))]
+        if "watch_12m" in t:
+            checks.append((watch_12m >= t["watch_12m"], f"{t['watch_12m']:,} h de exibição em 12 meses".replace(",", "."), int(watch_12m), t["watch_12m"]))
+        if t.get("uploads_90d"):
+            checks.append((uploads_90d >= t["uploads_90d"], f"{t['uploads_90d']} vídeos nos últimos 90 dias", uploads_90d, t["uploads_90d"]))
+        if "views_30d" in t:
+            checks.append((views_30d >= t["views_30d"], f"{t['views_30d']:,} visualizações em 30 dias".replace(",", "."), views_30d, t["views_30d"]))
+        if "streams_30d" in t:
+            checks.append((streams_30d >= t["streams_30d"], f"{t['streams_30d']} transmissões em 30 dias", streams_30d, t["streams_30d"]))
+            checks.append((avg_viewers >= t["avg_viewers"], f"média de {t['avg_viewers']} espectadores", round(avg_viewers, 1), t["avg_viewers"]))
+        if "episodes" in t:
+            checks.append((episodes >= t["episodes"], f"{t['episodes']} episódios", episodes, t["episodes"]))
+            checks.append((listen_30d >= t["listen_30d"], f"{t['listen_30d']:,} h ouvidas em 30 dias".replace(",", "."), int(listen_30d), t["listen_30d"]))
+        if all(c[0] for c in checks):
+            got = t
+        elif nxt is None:
+            nxt = {"key": t["key"], "label": t["label"], "missing": [{"need": c[1], "have": c[2], "goal": c[3]} for c in checks if not c[0]]}
+    return {"tier": got, "next": nxt}
+
+
+def channel_money(platform: str, tier: dict | None, views: int, subs: int, niche: str, community: float, merch: bool) -> tuple[int, int, int]:
+    """(anúncios, apoio dos fãs, produtos) do mês, conforme o nível de monetização atingido."""
+    if tier is None:
+        return 0, 0, 0
+    ads = int(views / 1000 * PLATFORMS[platform][2] * NICHES[niche][1]) if tier.get("ads") else 0
+    fan = int(subs / 1000 * FAN_RATE[platform] * tier.get("fan", 0) * (0.6 + community / 120))
+    shop = int(subs * 0.0035 * (0.6 + community / 100)) * 30 if merch else 0
+    return ads, fan, shop
+
+
+# ------------------------------------------------------------------ vídeos temáticos: o que cada nicho "aceita" vender
+TOPICS = {"conteudo": "Conteúdo normal do canal", "painting": "Divulgar/vender um quadro", "song": "Divulgar uma música", "play": "Divulgar uma peça (teatro)",
+          "company": "Divulgar uma empresa/produto meu"}
+TOPIC_FIT = {  # nicho -> encaixe (0..1,3) por tipo de divulgação
+    "painting": {"beleza": .6, "vlog": .7, "educacao": .6, "humor": .3, "tecnologia": .15, "games": .15, "financas": .2, "culinaria": .3, "fitness": .15, "viagem": .5, "musica": .5, "negocios": .35},
+    "song": {"musica": 1.2, "vlog": .7, "humor": .6, "games": .4, "viagem": .5, "beleza": .5, "fitness": .5, "tecnologia": .2, "financas": .1, "culinaria": .3, "educacao": .4, "negocios": .2},
+    "play": {"vlog": .8, "humor": .9, "educacao": .7, "musica": .6, "beleza": .5, "viagem": .5, "games": .2, "tecnologia": .15, "financas": .15, "culinaria": .3, "fitness": .25, "negocios": .3},
+    "company": {"negocios": 1.2, "financas": 1.0, "tecnologia": .9, "culinaria": .9, "beleza": .9, "fitness": .8, "vlog": .7, "viagem": .7, "games": .4, "humor": .4, "educacao": .6, "musica": .3}}
+
+
+def topic_fit(niche: str, topic: str) -> float:
+    return 1.0 if topic == "conteudo" else TOPIC_FIT[topic].get(niche, 0.3)
+
+
+# ------------------------------------------------------------------ publi (patrocínios)
+SPONSORS = [  # (marca, categoria, nicho de encaixe, pagamento-base, risco para a audiência 0..1)
+    ("TechMais", "Loja de eletrônicos", "tecnologia", 1.0, 0.05), ("Banco Nuvem", "Banco digital", "financas", 1.2, 0.05), ("Sabor Express", "Aplicativo de delivery", "culinaria", 0.9, 0.05),
+    ("Fit Power", "Suplementos", "fitness", 1.0, 0.18), ("Bela Pele", "Cosméticos", "beleza", 1.0, 0.08), ("Game Zone", "Jogo mobile", "games", 1.1, 0.10),
+    ("Viaje Já", "Agência de viagens", "viagem", 1.0, 0.05), ("Aprenda+", "Curso online", "educacao", 0.9, 0.12), ("Casa & Cia", "Móveis e decoração", "vlog", 0.8, 0.04),
+    ("Bet Faz Fortuna", "Casa de apostas (bet)", "*", 3.0, 0.85), ("Moeda Turbo", "Corretora de criptomoedas", "financas", 2.2, 0.55),
+    ("Emagrece Já", "Chá 'milagroso' para emagrecer", "fitness", 2.0, 0.65), ("Rede Street", "Moda urbana", "humor", 0.8, 0.05), ("Som Livre", "Plataforma de música", "musica", 1.0, 0.04)]
+
+
+# ------------------------------------------------------------------ situações exclusivas (decisões que aparecem na tela)
+def _o(key, label, cost, *outs):
+    return {"key": key, "label": label, "cost": cost, "outcomes": list(outs)}
+
+
+def _x(prob, text, **fx):
+    return (prob, text, fx)
+
+
+# fx: money (R$ líquido; positivo entra no mês seguinte), money_k (R$ por mil inscritos somados), subs_pct (% sobre os inscritos de todos os canais),
+#     community, fame, skill, rep (reputação da banda), life ({atributo: delta})
+EVENTS = {
+    # ---------------- influenciador
+    "bet_publi": {"disc": "influencer", "need": {"subs": 3000}, "title": "Uma casa de apostas (bet) quer fazer publi com você",
+                  "desc": "A proposta paga muito bem, mas parte do seu público critica divulgação de apostas, e o assunto pode virar polêmica.",
+                  "options": [_o("aceitar", "Aceitar a publi", 0, _x(1.0, "Você fez a publi e recebeu muito bem, mas perdeu parte do público.", money=12000, money_k=900, subs_pct=-8, community=-15, life={"satisfaction": -3})),
+                              _o("recusar", "Recusar", 0, _x(1.0, "Você recusou e a comunidade elogiou a postura.", community=4, subs_pct=1))]},
+    "haters": {"disc": "influencer", "need": {"subs": 800}, "title": "Onda de ataques: tentam cancelar você",
+               "desc": "Um trecho de um vídeo seu foi tirado de contexto e viralizou. O que fazer?",
+               "options": [_o("responder", "Responder com um vídeo", 0, _x(0.5, "O vídeo de resposta viralizou a seu favor.", subs_pct=6, community=6), _x(0.5, "A resposta jogou lenha na fogueira.", subs_pct=-5, community=-6)),
+                           _o("desculpas", "Pedir desculpas", 0, _x(1.0, "O pedido de desculpas acalmou parte do público.", subs_pct=-2, community=5)),
+                           _o("ignorar", "Ignorar", 0, _x(0.6, "A polêmica passou rápido.", subs_pct=-1), _x(0.4, "O silêncio virou combustível para os ataques.", subs_pct=-5, community=-8))]},
+    "algoritmo": {"disc": "influencer", "need": {"subs": 500}, "title": "Mudança no algoritmo derruba o seu alcance",
+                  "desc": "As plataformas mudaram a recomendação e seus vídeos pararam de aparecer.",
+                  "options": [_o("adaptar", "Fazer um curso de adaptação (R$ 800)", 800, _x(0.7, "Você se adaptou e o alcance voltou.", subs_pct=4, skill=2), _x(0.3, "Você estudou, mas o alcance continuou baixo.", skill=1)),
+                              _o("ignorar", "Seguir como está", 0, _x(1.0, "O alcance caiu e levou inscritos junto.", subs_pct=-6))]},
+    "collab_famoso": {"disc": "influencer", "need": {"subs": 1500}, "title": "Um criador famoso chama você para uma colaboração",
+                      "desc": "Pode abrir portas para um público enorme, mas ele também escolhe o que vai ser mostrado.",
+                      "options": [_o("aceitar", "Aceitar", 0, _x(0.6, "A colaboração foi um sucesso e trouxe inscritos.", subs_pct=12, community=4, fame=3), _x(0.4, "A colaboração rendeu pouco.", subs_pct=2)),
+                                  _o("recusar", "Recusar", 0, _x(1.0, "Você preferiu crescer no seu ritmo.", community=1))]},
+    "copyright": {"disc": "influencer", "need": {"subs": 300}, "title": "Strike de direitos autorais em um vídeo",
+                  "desc": "Alguém denunciou uma música usada em um dos seus vídeos.",
+                  "options": [_o("contestar", "Contestar com advogado (R$ 600)", 600, _x(0.5, "A contestação foi aceita.", community=2), _x(0.5, "Você perdeu o vídeo e a receita dele.", subs_pct=-3, money=-1500)),
+                              _o("remover", "Remover o vídeo", 0, _x(1.0, "Você tirou o vídeo do ar.", subs_pct=-1))]},
+    "conta_invadida": {"disc": "influencer", "need": {"subs": 2000}, "title": "Sua conta foi invadida",
+                       "desc": "Hackers assumiram um dos seus canais e pedem resgate.",
+                       "options": [_o("suporte", "Acionar suporte premium (R$ 1.500)", 1500, _x(0.8, "Você recuperou a conta.", community=-2), _x(0.2, "Demorou semanas e você perdeu audiência.", subs_pct=-8)),
+                                   _o("negociar", "Negociar com os hackers", 0, _x(0.3, "Você recuperou a conta.", community=-4), _x(0.7, "Você perdeu a conta e uma parte do público.", subs_pct=-15, community=-10))]},
+    "burnout_criativo": {"disc": "influencer", "need": {"subs": 500}, "title": "Esgotamento criativo",
+                         "desc": "Você está sem ideias e cansado de postar.",
+                         "options": [_o("pausar", "Pausar um mês", 0, _x(1.0, "A pausa fez bem, mas o canal esfriou.", subs_pct=-3, community=-5, life={"wellbeing": 8, "health": 3})),
+                                     _o("insistir", "Insistir no ritmo", 0, _x(0.5, "Você segurou o ritmo.", community=1), _x(0.5, "O cansaço apareceu nos vídeos.", subs_pct=-5, life={"wellbeing": -10, "health": -4}))]},
+    "comprar_seguidores": {"disc": "influencer", "need": {"subs": 300}, "title": "Oferta: comprar 5 mil seguidores por R$ 1.200",
+                           "desc": "Um serviço promete números rápidos. As plataformas punem contas com seguidores falsos.",
+                           "options": [_o("comprar", "Comprar", 1200, _x(0.5, "Os números subiram sem ser notados.", subs_pct=10), _x(0.5, "A plataforma detectou: conta penalizada.", subs_pct=-30, community=-20, money=-800)),
+                                       _o("recusar", "Recusar", 0, _x(1.0, "Você seguiu no orgânico.", community=2))]},
+    "sorteio": {"disc": "influencer", "need": {"subs": 500}, "title": "Fazer um sorteio para a comunidade?",
+                "desc": "Um sorteio (R$ 2.000 em prêmios) costuma atrair gente nova.",
+                "options": [_o("fazer", "Fazer o sorteio", 2000, _x(0.7, "O sorteio bombou e trouxe seguidores.", subs_pct=10, community=6), _x(0.3, "Veio muita gente que só queria o prêmio.", subs_pct=3)),
+                            _o("nao", "Não fazer", 0, _x(1.0, "Você não fez.", community=0))]},
+    "tv_convite": {"disc": "influencer", "need": {"subs": 8000}, "title": "Convite para um programa de TV/podcast famoso",
+                   "desc": "Exposição enorme, mas ao vivo e sem edição.",
+                   "options": [_o("aceitar", "Aceitar", 0, _x(0.7, "Você brilhou e ganhou muitos inscritos.", subs_pct=8, fame=5), _x(0.3, "Você deu uma gafe que viralizou.", subs_pct=-4, community=-4)),
+                               _o("recusar", "Recusar", 0, _x(1.0, "Você ficou de fora.", community=0))]},
+    "exclusividade": {"disc": "influencer", "need": {"subs": 6000}, "title": "Marca pede exclusividade por 30 dias",
+                      "desc": "Você não poderia divulgar concorrentes, mas receberia um valor extra.",
+                      "options": [_o("aceitar", "Aceitar a exclusividade", 0, _x(1.0, "Você cumpriu o contrato e recebeu.", money=3000, money_k=300, subs_pct=-1)),
+                                  _o("recusar", "Recusar", 0, _x(1.0, "Você manteve a liberdade.", community=1))]},
+    "fake_news": {"disc": "influencer", "need": {"subs": 3000}, "title": "Notícia falsa sobre você viraliza",
+                  "desc": "Dizem que você aplicou golpe em seguidores.",
+                  "options": [_o("desmentir", "Desmentir em vídeo", 0, _x(0.6, "O desmentido funcionou.", subs_pct=2, community=3), _x(0.4, "O desmentido alimentou o boato.", subs_pct=-4, community=-4)),
+                              _o("processar", "Processar (R$ 3.000)", 3000, _x(0.5, "Você venceu e recebeu indenização.", money=5000, community=5), _x(0.5, "O processo foi longo e o boato ficou.", subs_pct=-2))]},
+    # ---------------- músico
+    "fa_na_rua": {"disc": "music", "need": {"fame": 2}, "title": "Um fã parou você na rua e pediu foto",
+                  "desc": "Ele conhece suas músicas e quer conversar.",
+                  "options": [_o("conversar", "Parar e conversar", 0, _x(1.0, "O fã adorou e divulgou você.", fame=1.5, life={"satisfaction": 3})),
+                              _o("seguir", "Seguir andando", 0, _x(1.0, "O fã ficou chateado.", fame=-0.3))]},
+    "tocar_na_rua": {"disc": "music", "need": {"instrument": True}, "title": "Estão pedindo para você tocar músicas na rua",
+                     "desc": "Um grupo na praça reconheceu você e pede para tocar algumas músicas (o chapéu passa).",
+                     "options": [_o("tocar", "Tocar na rua", 0, _x(0.8, "Você tocou, juntou gente e saiu com uns trocados.", money=260, fame=1.0, skill=0.4, life={"satisfaction": 3}), _x(0.2, "A guarda pediu para parar e multou você.", money=-150, life={"wellbeing": -2})),
+                                 _o("recusar", "Recusar", 0, _x(1.0, "Você seguiu o seu caminho.", fame=0))]},
+    "instrumento_quebrou": {"disc": "music", "need": {"instrument": True}, "title": "O instrumento quebrou antes de um show",
+                            "desc": "Faltam algumas horas para o show.",
+                            "options": [_o("consertar", "Consertar na hora (R$ 700)", 700, _x(1.0, "O instrumento foi consertado e o show saiu.", rep=1)),
+                                        _o("emprestado", "Usar um instrumento emprestado", 0, _x(0.6, "Deu certo, com sacrifício.", skill=-0.3), _x(0.4, "O instrumento desafinou e o show foi ruim.", rep=-4, fame=-1)),
+                                        _o("cancelar", "Cancelar o show", 0, _x(1.0, "O contratante ficou furioso.", rep=-6, fame=-2))]},
+    "convite_casamento": {"disc": "music", "need": {"instrument": True}, "title": "Convite para tocar em um casamento",
+                          "desc": "Um casal quer você na cerimônia e na festa (R$ 2.500).",
+                          "options": [_o("aceitar", "Aceitar", 0, _x(0.85, "A festa foi um sucesso e os convidados elogiaram.", money=2500, fame=1.5), _x(0.15, "Problemas de som atrapalharam a festa.", money=1200, fame=-0.5)),
+                                      _o("recusar", "Recusar", 0, _x(1.0, "Você recusou a data.", fame=0))]},
+    "banda_rival": {"disc": "music", "need": {"band": True}, "title": "Uma banda rival provoca vocês nas redes",
+                    "desc": "A provocação está rendendo comentários.",
+                    "options": [_o("responder", "Responder à altura", 0, _x(0.4, "A resposta viralizou a favor de vocês.", rep=6, fame=2), _x(0.6, "Virou barraco e queimou a imagem.", rep=-4, fame=-1)),
+                                _o("ignorar", "Ignorar", 0, _x(1.0, "A provocação morreu sozinha.", rep=0))]},
+    "olheiro": {"disc": "music", "need": {"fame": 8}, "title": "Um olheiro de gravadora assistiu a um show seu",
+                "desc": "Ele deixou o cartão e pediu para conversar.",
+                "options": [_o("jantar", "Convidar para jantar (R$ 400)", 400, _x(0.4, "Ele gostou e ofereceu um adiantamento.", money=8000, fame=6, rep=6), _x(0.6, "Foi simpático, mas nada saiu.", fame=1)),
+                            _o("ignorar", "Não procurar", 0, _x(1.0, "A oportunidade passou.", fame=0))]},
+    "plagio": {"disc": "music", "need": {"fame": 10}, "title": "Acusam você de plagiar uma música",
+               "desc": "Um compositor diz que uma melodia sua é cópia.",
+               "options": [_o("provar", "Reunir provas e responder (R$ 1.200)", 1200, _x(0.65, "Você provou a autoria e saiu fortalecido.", fame=2), _x(0.35, "Houve acordo com pagamento ao compositor.", money=-3000, fame=-2)),
+                           _o("acordo", "Fazer acordo na hora", 0, _x(1.0, "Você pagou para encerrar o caso.", money=-2500))]},
+    # ---------------- ator
+    "agente_papel": {"disc": "acting", "need": {"fame": 2}, "title": "Seu agente consegue um teste de última hora",
+                     "desc": "É amanhã e exige preparação.",
+                     "options": [_o("ir", "Ir ao teste", 0, _x(0.45, "Você foi aprovado(a) e recebeu o cachê.", money=2200, fame=2), _x(0.55, "Não passou, mas ganhou experiência.", skill=0.8)),
+                                 _o("recusar", "Recusar", 0, _x(1.0, "Você não foi.", fame=0))]},
+    "oficina_diretor": {"disc": "acting", "need": {"fame": 1}, "title": "Oficina com um diretor renomado",
+                        "desc": "Poucas vagas e muita concorrência (R$ 900).",
+                        "options": [_o("fazer", "Fazer a oficina", 900, _x(0.7, "Você aprendeu muito e fez contatos.", skill=4, fame=1.5), _x(0.3, "A oficina foi cansativa e rendeu pouco.", skill=1.5)),
+                                    _o("nao", "Não ir", 0, _x(1.0, "Você ficou de fora.", fame=0))]},
+    "peca_cancelada": {"disc": "acting", "need": {"fame": 3}, "title": "A peça em que você atua corre risco de ser cancelada",
+                       "desc": "A bilheteria está fraca.",
+                       "options": [_o("divulgar", "Ajudar a divulgar (nas suas redes)", 0, _x(0.55, "A peça se manteve e lotou.", fame=2, money=1500), _x(0.45, "Não adiantou.", fame=-0.5)),
+                                   _o("sair", "Pular do barco", 0, _x(1.0, "Você saiu da produção.", fame=-1, money=-600))]},
+    # ---------------- pintor
+    "colecionador": {"disc": "painting", "need": {"works": 1}, "title": "Um colecionador quer comprar um quadro seu",
+                     "desc": "Ele oferece um valor bom, mas quer exclusividade.",
+                     "options": [_o("aceitar", "Vender", 0, _x(0.8, "A venda foi fechada e ele divulgou seu nome.", money=4500, fame=2.5), _x(0.2, "Ele pediu desconto depois.", money=2500, fame=1)),
+                                 _o("recusar", "Recusar", 0, _x(1.0, "Você manteve a obra.", fame=0))]},
+    "critico_arte": {"disc": "painting", "need": {"works": 1}, "title": "Um crítico escreveu sobre a sua obra",
+                     "desc": "O texto sai amanhã.",
+                     "options": [_o("convidar", "Convidar para o ateliê (R$ 300)", 300, _x(0.6, "A crítica foi elogiosa.", fame=4, skill=0.5), _x(0.4, "A crítica foi dura.", fame=-1, skill=1)),
+                                 _o("ignorar", "Deixar sair", 0, _x(0.5, "Saiu uma nota positiva.", fame=2), _x(0.5, "Saiu uma nota fria.", fame=-0.5))]},
+    "exposicao_convite": {"disc": "painting", "need": {"works": 2}, "title": "Convite para uma exposição coletiva",
+                          "desc": "Estande e transporte custam R$ 1.200.",
+                          "options": [_o("expor", "Expor", 1200, _x(0.55, "Você vendeu obras e fez contatos.", money=3800, fame=3), _x(0.45, "Poucas vendas.", money=600, fame=1)),
+                                      _o("nao", "Não expor", 0, _x(1.0, "Você ficou de fora.", fame=0))]},
+    "falsificacao": {"disc": "painting", "need": {"fame": 5}, "title": "Descobrem cópias falsas de uma obra sua",
+                     "desc": "Estão vendendo reproduções como se fossem suas.",
+                     "options": [_o("denunciar", "Denunciar (R$ 900)", 900, _x(0.6, "As cópias foram retiradas e a notícia ajudou.", fame=2), _x(0.4, "O caso se arrastou.", fame=0)),
+                                 _o("ignorar", "Ignorar", 0, _x(1.0, "As cópias circularam.", fame=-1.5))]},
+}
+EVENT_P = 0.30      # chance mensal de surgir uma situação (se houver alguma elegível)

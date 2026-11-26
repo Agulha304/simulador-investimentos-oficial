@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Toast } from "./Toast";
 import { fmtBRL } from "../lib/format";
-import { sim, type ArtistChannel, type ArtistOffer, type ArtistView } from "../services/sim";
+import { sim, type ArtistAccount, type ArtistOffer, type ArtistView } from "../services/sim";
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : "Erro inesperado");
 type Sub = "acting" | "music" | "painting" | "influencer";
@@ -43,10 +43,10 @@ export function ArtistTab() {
         <div className="modal-back" role="dialog" aria-modal="true" aria-label="Decisão de divulgação">
           <div className="card modal">
             <h2>{dec.title}</h2>
-            <p className="muted small">Decida como divulgar. {dec.work === "SONG" ? "Gravadoras só aceitam músicas de qualidade e bandas com reputação." : "Galerias e leilões dependem da qualidade e da sua fama."}</p>
+            <p className="muted small">{dec.work === "EVENT" ? dec.desc : dec.work === "SONG" ? "Decida como divulgar. Gravadoras só aceitam músicas de qualidade e bandas com reputação." : "Decida como divulgar. Galerias e leilões dependem da qualidade e da sua fama."}</p>
             {dec.options.map((o) => (
               <div key={o.key} className="card stack" style={{ marginBottom: 8 }}>
-                <b>{o.label}{o.cost ? ` — ${fmtBRL(String(o.cost))}` : ""}</b><span className="muted small">{o.desc}</span>
+                <b>{o.label}{o.cost ? ` — ${fmtBRL(String(o.cost))}` : ""}</b>{o.desc ? <span className="muted small">{o.desc}</span> : null}
                 <div><button className="btn primary small" disabled={busy} onClick={() => void run(`/decisions/${dec.id}`, "POST", { option: o.key })}>Escolher</button></div>
               </div>))}
           </div>
@@ -59,8 +59,21 @@ type PV = { v: ArtistView; busy: boolean; run: R };
 
 function Train({ v, d, busy, run }: PV & { d: Sub }) {
   const t = v.catalog.train[d];
-  return <section className="card row between"><span><b>{t.name}</b> — {fmtBRL(String(t.cost))}/mês, {t.hours}h: melhora a sua habilidade.</span>
-    <button className="btn small" disabled={busy} onClick={() => void run("/train", "POST", { discipline: d })}>Treinar</button></section>;
+  const [inst, setInst] = useState("geral");
+  const spec = d === "music" && inst !== "geral";
+  return (
+    <section className="card stack">
+      <div className="row between">
+        <span><b>{spec ? `Aulas de ${v.catalog.instruments.find((i) => i.key === inst)?.name}` : d === "music" ? "Aulas de música (gerais)" : t.name}</b> — {fmtBRL(String(spec ? 520 : t.cost))}/mês, {spec ? 18 : t.hours}h: melhora a sua habilidade{spec ? " nesse instrumento (mais currículo nele)" : d === "music" ? " em música (vale um pouco para todos os instrumentos)" : ""}.</span>
+        <span className="row-gap">
+          {d === "music" && <select value={inst} onChange={(e) => setInst(e.target.value)} aria-label="Tipo de aula">
+            <option value="geral">Aula geral de música</option>{v.catalog.instruments.map((i) => <option key={i.key} value={i.key}>Aula de {i.name}{v.inst_skills[i.key] ? ` (hab. ${v.inst_skills[i.key]})` : ""}</option>)}</select>}
+          <button className="btn small" disabled={busy} onClick={() => void run("/train", "POST", { discipline: d, instrument: d === "music" ? inst : undefined })}>Treinar</button>
+        </span>
+      </div>
+      {d === "music" && <span className="muted small">Habilidade efetiva no seu instrumento: <b>{v.effective_music}</b> (aulas específicas do instrumento valem mais no currículo para vagas com ele).</span>}
+    </section>
+  );
 }
 
 function Offers({ v, d, busy, run, empty }: PV & { d: "acting" | "music" | "painting"; empty: string }) {
@@ -161,50 +174,88 @@ function Musician({ v, busy, run }: PV) {
 }
 
 function Influencer({ v, busy, run }: PV) {
-  const [platform, setPlatform] = useState("youtube"), [niche, setNiche] = useState("tecnologia"), [name, setName] = useState("");
+  const inf = v.influencer;
+  const [name, setName] = useState(""), [niche, setNiche] = useState("games");
+  const [plats, setPlats] = useState<string[]>(["youtube"]);
+  const toggle = (k: string) => setPlats((p) => (p.includes(k) ? p.filter((x) => x !== k) : [...p, k]));
   return (
     <>
       <section className="card stack">
-        <h3>📱 Criar um canal</h3>
+        <h3>📱 Criar uma conta de criador</h3>
+        <p className="muted small" style={{ margin: 0 }}>Uma conta é um tema/nicho (ex.: games, tecnologia) e pode ter canais em várias plataformas. Você pode ter até {v.catalog.max_accounts} contas, cada uma com seu equipamento, público e investimentos.</p>
         <div className="row-gap" style={{ flexWrap: "wrap" }}>
-          <input placeholder="Nome do canal" value={name} onChange={(e) => setName(e.target.value)} />
-          <select value={platform} onChange={(e) => setPlatform(e.target.value)}>{v.catalog.platforms.map((p) => <option key={p.key} value={p.key}>{p.name} (monetiza com {n0(p.monetize_at)} inscritos)</option>)}</select>
+          <input placeholder="Nome da conta" value={name} onChange={(e) => setName(e.target.value)} />
           <select value={niche} onChange={(e) => setNiche(e.target.value)}>{v.catalog.niches.map((p) => <option key={p.key} value={p.key}>{p.name} (concorrência {p.competition.toFixed(1)})</option>)}</select>
-          <button className="btn primary small" disabled={busy || !name.trim()} onClick={() => void run("/channels", "POST", { platform, niche, name })}>Criar canal</button>
         </div>
+        <div className="row-gap" style={{ flexWrap: "wrap" }}>{v.catalog.platforms.map((p) => (
+          <label key={p.key} className="check"><input type="checkbox" checked={plats.includes(p.key)} onChange={() => toggle(p.key)} />{p.name}</label>))}</div>
+        <div><button className="btn primary small" disabled={busy || !name.trim() || plats.length === 0} onClick={() => void run("/accounts", "POST", { name, niche, platforms: plats })}>Criar conta</button></div>
       </section>
-      {v.channels.map((c) => <Channel key={c.id} c={c} v={v} busy={busy} run={run} />)}
+      {inf.accounts.map((a) => <Account key={a.id} a={a} v={v} busy={busy} run={run} />)}
     </>
   );
 }
 
-function Channel({ c, v, busy, run }: PV & { c: ArtistChannel }) {
+function Account({ a, v, busy, run }: PV & { a: ArtistAccount }) {
+  const inf = v.influencer;
+  const [sel, setSel] = useState<string[]>(a.channels.map((c) => c.platform));
+  const [topic, setTopic] = useState("conteudo");
+  const [ref, setRef] = useState<number | "">("");
+  const used = new Set(a.channels.map((c) => c.platform));
+  const refs = topic === "painting" ? inf.promotable.painting : topic === "song" ? inf.promotable.song : topic === "play" ? inf.promotable.play : topic === "company" ? inf.promotable.company : [];
+  const chosen = sel.filter((p) => used.has(p));
   return (
     <section className="card stack">
-      <div className="row between"><h3>{c.name} · {c.platform_name} · {c.niche_name}</h3>
-        <button className="btn danger small" disabled={busy} onClick={() => window.confirm("Encerrar o canal?") && void run(`/channels/${c.id}`, "DELETE")}>Encerrar</button></div>
+      <div className="row between"><h3>{a.name} · {a.niche_name}</h3>
+        <button className="btn danger small" disabled={busy} onClick={() => window.confirm("Encerrar a conta e todos os canais?") && void run(`/accounts/${a.id}`, "DELETE")}>Encerrar conta</button></div>
       <div className="stats-grid">
-        <div className="card"><span className="muted small">Inscritos</span><b className="num">{n0(c.subs)}</b></div>
-        <div className="card"><span className="muted small">Visualizações no mês</span><b className="num">{n0(c.views)}</b></div>
-        <div className="card"><span className="muted small">Receita líquida do mês</span><b className="num">{fmtBRL(String(c.income))}</b></div>
-        <div className="card"><span className="muted small">Qualidade · comunidade</span><b className="num">{c.quality} · {c.community}</b></div>
-        <div className="card"><span className="muted small">Tendência do nicho</span><b className="num">{c.trend.toFixed(2)}×</b></div>
-        <div className="card"><span className="muted small">Monetização</span><b className="num">{c.monetized ? "ativa" : `a partir de ${n0(c.monetize_at)}`}</b></div>
+        <div className="card"><span className="muted small">Qualidade dos vídeos</span><b className="num">{a.quality}</b></div>
+        <div className="card"><span className="muted small">Comunidade</span><b className="num">{a.community}</b></div>
+        <div className="card"><span className="muted small">Tendência do nicho</span><b className="num">{a.trend.toFixed(2)}×</b></div>
       </div>
-      {c.last?.event && <div className="notice">{c.last.event}</div>}
+      <b className="small">Canais desta conta</b>
+      <div className="table-wrap"><table>
+        <thead><tr><th>Plataforma</th><th className="r">Inscritos</th><th className="r">Views (mês)</th><th className="r">Receita</th><th>Monetização</th><th></th></tr></thead>
+        <tbody>{a.channels.map((c) => (
+          <tr key={c.id}><td>{c.platform_name}{c.posted ? ` · ${c.posted} vídeo(s) no mês` : ""}</td><td className="r num">{n0(c.subs)}</td><td className="r num">{n0(c.views)}</td><td className="r num">{fmtBRL(String(c.income))}</td>
+            <td>{c.tier ? <span className="chip up">{c.tier.label}</span> : c.next ? <span className="muted small">Meta: {c.next.label} — falta {c.next.missing.map((m) => `${m.need} (${n0(Math.round(m.have))}/${n0(m.goal)})`).join("; ")}</span> : null}</td>
+            <td><button className="link-btn" disabled={busy} onClick={() => window.confirm("Encerrar este canal?") && void run(`/channels/${c.id}`, "DELETE")}>encerrar</button></td></tr>))}</tbody>
+      </table></div>
       <div className="row-gap" style={{ flexWrap: "wrap" }}>
-        <label>Vídeos por mês<select value={c.cadence} onChange={(e) => void run(`/channels/${c.id}/cadence`, "PUT", { cadence: Number(e.target.value) })}>{v.catalog.cadence.map((x) => <option key={x} value={x}>{x}</option>)}</select></label>
-        <span className="muted small">Consome {c.hours}h/mês do seu tempo livre.</span>
+        <span className="muted small">Adicionar canal:</span>
+        {v.catalog.platforms.filter((p) => !used.has(p.key)).map((p) => <button key={p.key} className="btn small ghost" disabled={busy} onClick={() => void run(`/accounts/${a.id}/channels`, "POST", { platform: p.key })}>+ {p.name}</button>)}
       </div>
-      <b className="small">Equipamento</b>
-      <div className="goods-grid">{v.catalog.gear.map((g) => { const lvl = c.gear[g.key] ?? 0; return (
+      <h4>🎬 Criar um vídeo</h4>
+      <div className="row-gap" style={{ flexWrap: "wrap" }}>
+        <span className="muted small">Postar em:</span>
+        {a.channels.map((c) => <label key={c.id} className="check"><input type="checkbox" checked={sel.includes(c.platform)} onChange={() => setSel((s) => (s.includes(c.platform) ? s.filter((x) => x !== c.platform) : [...s, c.platform]))} />{c.platform_name}</label>)}
+        <button type="button" className="link-btn" onClick={() => setSel(a.channels.map((c) => c.platform))}>todas</button>
+      </div>
+      <div className="row-gap" style={{ flexWrap: "wrap" }}>
+        <label>Tema<select value={topic} onChange={(e) => { setTopic(e.target.value); setRef(""); }}>{inf.topics.map((t) => <option key={t.key} value={t.key}>{t.name}</option>)}</select></label>
+        {topic !== "conteudo" && <label>O que divulgar<select value={ref} onChange={(e) => setRef(Number(e.target.value))}><option value="">Escolha…</option>{refs.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}</select></label>}
+        <button className="btn primary small" disabled={busy || chosen.length === 0 || (topic !== "conteudo" && !ref)}
+          onClick={() => void run(`/accounts/${a.id}/video`, "POST", { platforms: chosen, topic, ref_id: topic === "conteudo" ? undefined : Number(ref) })}>Gravar e publicar ({a.hours_per_video + Math.round(1.5 * Math.max(0, chosen.length - 1))}h)</button>
+      </div>
+      <span className="muted small">Vídeos temáticos podem vender o que você divulga e atrair inscritos, mas se o assunto não combina com o nicho do canal ele pode vender pouco e afastar parte do público. Quanto mais vídeos no mês, mais visualizações.</span>
+      {a.sponsors.length > 0 && <>
+        <h4>🤝 Propostas de publi</h4>
+        <div className="cols-2">{a.sponsors.map((o) => (
+          <div key={o.key} className="card stack">
+            <div className="row between"><b>{o.brand}</b><span className="chip">{fmtBRL(String(o.pay))}</span></div>
+            <span className="muted small">{o.category} · encaixe com o seu nicho {Math.round(o.fit * 100)}% · efeito esperado no público {o.subs_effect_pct > 0 ? "+" : ""}{o.subs_effect_pct}%</span>
+            {o.warning && <span className="small" style={{ color: "#ffd23f" }}>⚠ {o.warning}</span>}
+            <div><button className="btn small primary" disabled={busy} onClick={() => void run(`/accounts/${a.id}/sponsor`, "POST", { offer_key: o.key })}>Aceitar publi (8h)</button></div>
+          </div>))}</div></>}
+      <b className="small">Equipamento (vale para todos os canais da conta)</b>
+      <div className="goods-grid">{v.catalog.gear.map((g) => { const lvl = a.gear[g.key] ?? 0; return (
         <div key={g.key} className="card good-card"><b>{g.name}</b><span className="muted small">{v.catalog.gear_levels[lvl]}</span>
-          <button className="btn small" disabled={busy || lvl >= 5} onClick={() => void run(`/channels/${c.id}/gear`, "POST", { category: g.key })}>{lvl >= 5 ? "Máximo" : `Melhorar — ${fmtBRL(String(g.prices[lvl]))}`}</button></div>); })}</div>
-      <b className="small">Investimentos no canal</b>
-      <div className="goods-grid">{v.catalog.invest.map((i) => { const flag = { editor: "editor", thumbs: "thumbs", ads: "ads", contador: "contador", agencia: "agency", merch: "merch" }[i.key] as string | undefined; const on = flag ? c.flags[flag] : false; return (
+          <button className="btn small" disabled={busy || lvl >= 5} onClick={() => void run(`/accounts/${a.id}/gear`, "POST", { category: g.key })}>{lvl >= 5 ? "Máximo" : `Melhorar — ${fmtBRL(String(g.prices[lvl]))}`}</button></div>); })}</div>
+      <b className="small">Investimentos na conta</b>
+      <div className="goods-grid">{v.catalog.invest.map((i) => { const on = a.flags[i.key] ?? false; return (
         <div key={i.key} className="card good-card"><b>{i.name}</b><span className="muted small">{i.desc}</span>
-          {on && i.type !== "ONCE" ? <button className="btn ghost small" disabled={busy} onClick={() => void run(`/channels/${c.id}/invest/${i.key}`, "DELETE")}>Desligar</button>
-            : <button className="btn small" disabled={busy || (on && i.type === "ONCE")} onClick={() => void run(`/channels/${c.id}/invest`, "POST", { kind: i.key })}>{on ? "Ativo" : i.type === "ONCE" ? `Fazer — ${fmtBRL(String(i.cost))}` : i.type === "COMMISSION" ? "Contratar" : `Contratar — ${fmtBRL(String(i.cost))}/mês`}</button>}</div>); })}</div>
+          {on && i.type !== "ONCE" && i.key !== "merch" ? <button className="btn ghost small" disabled={busy} onClick={() => void run(`/accounts/${a.id}/invest/${i.key}`, "DELETE")}>Desligar</button>
+            : <button className="btn small" disabled={busy || (on && (i.type === "ONCE" || i.key === "merch"))} onClick={() => void run(`/accounts/${a.id}/invest`, "POST", { kind: i.key })}>{on ? "Ativo" : i.type === "ONCE" ? `Fazer — ${fmtBRL(String(i.cost))}` : i.type === "COMMISSION" ? "Contratar" : `Contratar — ${fmtBRL(String(i.cost))}/mês`}</button>}</div>); })}</div>
     </section>
   );
 }

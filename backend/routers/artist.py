@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field
 
 from backend.dependencies import CurrentUser, DbSession
 from backend.routers.budget import _run
+from backend.services import artist_influencer as inf
 from backend.services import artist_service as svc
 from backend.services import budget_service as bs
 
@@ -16,6 +17,7 @@ class InstrumentIn(BaseModel):
 
 class TrainIn(BaseModel):
     discipline: str
+    instrument: str | None = None      # música: "geral" (ou vazio) ou a chave de um instrumento
 
 
 class ApplyIn(BaseModel):
@@ -54,10 +56,14 @@ class PaintIn(BaseModel):
     size: str
 
 
-class ChannelIn(BaseModel):
-    platform: str
-    niche: str
+class AccountIn(BaseModel):
     name: str = Field(min_length=1, max_length=60)
+    niche: str
+    platforms: list[str] = Field(min_length=1)
+
+
+class PlatformIn(BaseModel):
+    platform: str
 
 
 class GearIn(BaseModel):
@@ -68,8 +74,14 @@ class InvestIn(BaseModel):
     kind: str
 
 
-class CadenceIn(BaseModel):
-    cadence: int
+class VideoIn(BaseModel):
+    platforms: list[str] = Field(min_length=1)
+    topic: str = "conteudo"
+    ref_id: int | None = None
+
+
+class SponsorIn(BaseModel):
+    offer_key: str
 
 
 class DecideIn(BaseModel):
@@ -101,7 +113,7 @@ def instrument(body: InstrumentIn, user: CurrentUser, db: DbSession):
 
 @router.post("/train")
 def train(body: TrainIn, user: CurrentUser, db: DbSession):
-    return _act(db, user, lambda m: svc.train(db, user.id, m, body.discipline))
+    return _act(db, user, lambda m: svc.train(db, user.id, m, body.discipline, body.instrument))
 
 
 @router.post("/apply")
@@ -154,31 +166,48 @@ def decide(decision_id: int, body: DecideIn, user: CurrentUser, db: DbSession):
     return _act(db, user, lambda m: svc.decide(db, user.id, m, decision_id, body.option))
 
 
-@router.post("/channels")
-def channel(body: ChannelIn, user: CurrentUser, db: DbSession):
-    return _act(db, user, lambda m: ({"channel_id": svc.create_channel(db, user.id, m, body.platform, body.niche, body.name).id}))
+@router.post("/accounts")
+def account(body: AccountIn, user: CurrentUser, db: DbSession):
+    """Cria uma conta de criador (um nicho/tema) com canais nas plataformas escolhidas."""
+    return _act(db, user, lambda m: {"account_id": inf.create_account(db, user.id, m, body.name, body.niche, body.platforms).id})
 
 
-@router.post("/channels/{cid}/gear")
-def gear(cid: int, body: GearIn, user: CurrentUser, db: DbSession):
-    return _act(db, user, lambda m: svc.buy_gear(db, user.id, m, cid, body.category))
+@router.post("/accounts/{aid}/channels")
+def add_channel(aid: int, body: PlatformIn, user: CurrentUser, db: DbSession):
+    return _act(db, user, lambda m: {"channel_id": inf.add_channel(db, user.id, m, aid, body.platform).id})
 
 
-@router.post("/channels/{cid}/invest")
-def invest(cid: int, body: InvestIn, user: CurrentUser, db: DbSession):
-    return _act(db, user, lambda m: svc.invest(db, user.id, m, cid, body.kind))
-
-
-@router.delete("/channels/{cid}/invest/{kind}")
-def stop_invest(cid: int, kind: str, user: CurrentUser, db: DbSession):
-    return _act(db, user, lambda m: (svc.stop_invest(db, user.id, m, cid, kind), {})[1])
-
-
-@router.put("/channels/{cid}/cadence")
-def cadence(cid: int, body: CadenceIn, user: CurrentUser, db: DbSession):
-    return _act(db, user, lambda m: (svc.set_cadence(db, user.id, m, cid, body.cadence), {})[1])
+@router.delete("/accounts/{aid}")
+def close_account(aid: int, user: CurrentUser, db: DbSession):
+    return _act(db, user, lambda m: (inf.close_account(db, user.id, m, aid), {})[1])
 
 
 @router.delete("/channels/{cid}")
 def close_channel(cid: int, user: CurrentUser, db: DbSession):
-    return _act(db, user, lambda m: (svc.close_channel(db, user.id, m, cid), {})[1])
+    return _act(db, user, lambda m: (inf.close_channel(db, user.id, m, cid), {})[1])
+
+
+@router.post("/accounts/{aid}/gear")
+def gear(aid: int, body: GearIn, user: CurrentUser, db: DbSession):
+    return _act(db, user, lambda m: inf.buy_gear(db, user.id, m, aid, body.category))
+
+
+@router.post("/accounts/{aid}/invest")
+def invest(aid: int, body: InvestIn, user: CurrentUser, db: DbSession):
+    return _act(db, user, lambda m: inf.invest(db, user.id, m, aid, body.kind))
+
+
+@router.delete("/accounts/{aid}/invest/{kind}")
+def stop_invest(aid: int, kind: str, user: CurrentUser, db: DbSession):
+    return _act(db, user, lambda m: (inf.stop_invest(db, user.id, m, aid, kind), {})[1])
+
+
+@router.post("/accounts/{aid}/video")
+def video(aid: int, body: VideoIn, user: CurrentUser, db: DbSession):
+    """Cria um vídeo e publica em uma, algumas ou todas as plataformas da conta (temático ou normal)."""
+    return _act(db, user, lambda m: inf.post_video(db, user.id, m, aid, body.platforms, body.topic, body.ref_id))
+
+
+@router.post("/accounts/{aid}/sponsor")
+def sponsor(aid: int, body: SponsorIn, user: CurrentUser, db: DbSession):
+    return _act(db, user, lambda m: inf.accept_sponsor(db, user.id, m, aid, body.offer_key))
