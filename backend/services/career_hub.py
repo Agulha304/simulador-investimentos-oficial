@@ -119,7 +119,8 @@ def recalc_hours(db: Session, user_id: int) -> None:
     p = ls.get_profile(db, user_id, create=False)
     if p is None:
         return
-    total = sum(j.hours for j in jobs(db, user_id) if j.end_month is None)
+    from backend.services import artist_service
+    total = sum(j.hours for j in jobs(db, user_id) if j.end_month is None) + artist_service.committed_hours(db, user_id)
     total += sum(e.hours for e in db.scalars(select(Education).where(Education.user_id == user_id, Education.kind == "COURSE", Education.status == "ACTIVE")))
     p.career_hours = total
     db.flush()
@@ -202,7 +203,7 @@ def offers(db: Session, user_id: int, month: SimMonth, field: str, country: str 
         hard = (xr.ABROAD_HARD if country != "BR" else 0.0) + (xr.REMOTE_HARD if remote else 0.0)
         o = {"key": key, "field": field, "field_label": f["label"], "level": level, "level_name": H.LEVEL_NAME[level], "need": H.LEVEL_NEED[level],
              "title": titles[int(hash01("title", user_id, key) * len(titles))], "employer": H.EMPLOYERS[int(hash01("emp", user_id, key) * len(H.EMPLOYERS))],
-             "clt": _clt_pack(net, level), "pj": {"net": H.pj_net(net)}, "chance": H.approval_chance(score, level, hard),
+             "clt": _clt_pack(net, level), "pj": {"net": H.pj_net(net), "hours": H.pj_hours(field, level, user_id, key)}, "chance": H.approval_chance(score, level, hard),
              "country": country, "country_name": c.name, "flag": c.flag, "work_mode": "REMOTE" if remote else "ONSITE", "needs_move": needs_move}
         if country != "BR":
             brl_eq = net * c.wage_index * (1 - c.income_tax / 100) / (1 - 0.12)      # mesmo cargo, salário do país já líquido do imposto de lá
@@ -272,7 +273,7 @@ def accept(db: Session, user_id: int, month: SimMonth, app_id: int, kind: str, r
         replace = replace or next((j for j in current if j.kind == "CLT"), None)           # só existe um CLT por vez: trocar de emprego
     remaining = [j for j in current if replace is None or j.id != replace.id]
     extra = bool(remaining)
-    hours = H.PJ_EXTRA_HOURS if (kind == "PJ" and extra) else 0
+    hours = int(o.get("pj", {}).get("hours") or H.PJ_EXTRA_HOURS) if (kind == "PJ" and extra) else 0
     if hours and ls.free_hours(p) < hours:
         raise ConflictError(f"um trabalho PJ extra consome {hours}h livres por mês e você só tem {ls.free_hours(p)}h")
     net = Decimal(str(o["intl"]["net_brl"] if kind == "INT" else o["clt"]["net"] if kind == "CLT" else o["pj"]["net"]))

@@ -215,7 +215,7 @@ def desired_items(db: Session, user_id: int, ref: date, want) -> None:
         return
     for k, v in (p.one_offs or {}).items():                       # despesas pontuais (ex.: passagem de volta) do mês
         if v.get("month") == ref.isoformat():
-            want(k, v["name"], ls.FlowKind.EXPENSE, v.get("cat", "Moradia"), D(v["amount"]))
+            want(k, v["name"], ls.FlowKind.INCOME if v.get("kind") == "INCOME" else ls.FlowKind.EXPENSE, v.get("cat", "Moradia"), D(v["amount"]))
     if p.country == "BR":
         return
     ex = active_exchange(db, user_id)

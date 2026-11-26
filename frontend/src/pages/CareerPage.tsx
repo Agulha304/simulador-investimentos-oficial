@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
 import { StatCard } from "../components/StatCard";
+import { ArtistTab } from "../components/ArtistTab";
 import { Toast } from "../components/Toast";
 import { fmtBRL, fmtMonth } from "../lib/format";
 import { sim, type CareerHub, type Gig, type HubApplication, type HubJob, type JobOffer } from "../services/sim";
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : "Erro inesperado");
 const WORK: Record<string, string> = { REDUCED: "Trabalhar menos (menos renda, mais tempo livre)", NORMAL: "Jornada normal", INTENSE: "Trabalhar mais (mais renda, menos tempo livre)" };
-type Tab = "now" | "search" | "freela" | "resume";
+type Tab = "now" | "search" | "freela" | "resume" | "artist";
 
 export function CareerPage() {
   const [c, setC] = useState<CareerHub | null>(null);
@@ -26,12 +27,13 @@ export function CareerPage() {
       {err && <div className="alert">{err}</div>}
       {note && <Toast text={note} onClose={() => setNote(null)} />}
       <div className="seg compact tabs">
-        {([["now", "Minha carreira"], ["search", "Procurar emprego"], ["freela", "Freelas"], ["resume", "Currículo"]] as [Tab, string][]).map(([k, l]) => <button key={k} className={tab === k ? "on" : ""} onClick={() => setTab(k)}>{l}</button>)}
+        {([["now", "Minha carreira"], ["search", "Procurar emprego"], ["freela", "Freelas"], ["resume", "Currículo"], ["artist", "🎭 Artista"]] as [Tab, string][]).map(([k, l]) => <button key={k} className={tab === k ? "on" : ""} onClick={() => setTab(k)}>{l}</button>)}
       </div>
       {tab === "now" && <Now c={c} busy={busy} act={act} />}
       {tab === "search" && <Search c={c} busy={busy} act={act} />}
       {tab === "freela" && <Freela c={c} busy={busy} act={act} />}
       {tab === "resume" && <Resume c={c} busy={busy} act={act} />}
+      {tab === "artist" && <ArtistTab />}
     </div>
   );
 }
@@ -119,7 +121,7 @@ function Search({ c, busy, act }: P) {
           <div className="row-gap"><span className="chip">{o.flag ?? "🇧🇷"} {o.country_name ?? "Brasil"}</span><span className="chip">{o.work_mode === "REMOTE" ? "🏠 Remoto" : "🏢 Presencial"}</span></div>
           {o.needs_move && <span className="small" style={{ color: "#ffd23f" }}>Vaga presencial: exige morar em {o.country_name} (veja a aba Mundo). Remotas não exigem mudança.</span>}
           {o.intl ? <span className="small">Salário: <b>{o.intl.symbol} {o.intl.net_local.toLocaleString("pt-BR")}</b>/mês já descontado o imposto de lá ({o.intl.income_tax}%) ≈ <b>{fmtBRL(o.intl.net_brl)}</b> hoje (câmbio R$ {Number(o.intl.rate).toFixed(4)}) — varia com o câmbio todo mês.</span>
-            : <span className="small">CLT: <b>{fmtBRL(String(o.clt.net))}</b> líquido (+13º, férias, FGTS{o.clt.vr ? `, VR ${fmtBRL(String(o.clt.vr))}` : ""}{o.clt.health_plan ? ", plano de saúde" : ""})<br />PJ: <b>{fmtBRL(String(o.pj.net))}</b> no bolso, sem benefícios</span>}
+            : <span className="small">CLT: <b>{fmtBRL(String(o.clt.net))}</b> líquido (+13º, férias, FGTS{o.clt.vr ? `, VR ${fmtBRL(String(o.clt.vr))}` : ""}{o.clt.health_plan ? ", plano de saúde" : ""})<br />PJ: <b>{fmtBRL(String(o.pj.net))}</b> no bolso, sem benefícios · como extra, pede <b>{o.pj.hours ?? c.rules.pj_extra_hours}h/mês</b> (~{Math.round((o.pj.hours ?? c.rules.pj_extra_hours) / 4.3)}h por semana)</span>}
           <div className="meter-bar"><i style={{ width: `${o.chance}%`, background: o.chance >= 60 ? "#3ee59a" : o.chance >= 30 ? "#ffd23f" : "#ff6482" }} /></div>
           <span className="small">Chance de aprovação: <b>{o.chance}%</b></span>
           <div><button className="btn primary small" disabled={busy || !!o.applied || c.applications_left <= 0 || !!o.needs_move} onClick={() => void apply(o)}>{o.applied ? (o.applied === "REJECTED" ? "Reprovado(a)" : "Candidatura feita") : "Candidatar-me"}</button></div>

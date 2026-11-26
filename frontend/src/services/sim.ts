@@ -128,7 +128,7 @@ export interface BudgetImpact {
 }
 
 export interface HubJob { id: number; title: string; employer: string; field: string; field_label: string; kind: "CLT" | "PJ"; level_name: string; net: string; hired_net: string; since: string; until: string | null; status: "ACTIVE" | "PENDING" | "ENDED"; in_resume: boolean; hours: number; perks: string[]; end_reason: string | null; can_raise?: boolean; raise_note?: string | null; raise_ready_in?: number }
-export interface JobOffer extends JobOfferWorld { key: string; field: string; field_label: string; level: number; level_name: string; need: number; title: string; employer: string; chance: number; applied: string | null; clt: { net: number; gross: number; vr: number; health_plan: boolean; fgts_month: number }; pj: { net: number } }
+export interface JobOffer extends JobOfferWorld { key: string; field: string; field_label: string; level: number; level_name: string; need: number; title: string; employer: string; chance: number; applied: string | null; clt: { net: number; gross: number; vr: number; health_plan: boolean; fgts_month: number }; pj: { net: number; hours?: number } }
 export interface JobOfferWorld { country?: string; country_name?: string; flag?: string; work_mode?: "REMOTE" | "ONSITE"; needs_move?: boolean;
   intl?: { currency: string; symbol: string; net_local: number; net_brl: string; income_tax: number; rate: string } }
 export interface HubApplication { id: number; title: string; employer: string; status: "APPROVED" | "REJECTED" | "ACCEPTED"; chance: number; offer: JobOffer; can_accept: boolean }
@@ -193,6 +193,9 @@ export const sim = {
   lifeCareerChange: (field: string) => request<Life>("/life/career/change", post({ field })),
   lifeDegree: (field: string, uni = "aberta") => request<Life & { admission?: { admitted: boolean; chance: number; uni: string } | null }>("/life/degree", post({ field, uni })),
   lifeUniversities: (field?: string) => request<{ universities: University[] }>(`/life/universities${field ? `?field=${field}` : ""}`),
+  artist: () => request<ArtistView>("/artist"),
+  artistDo: (path: string, method: "POST" | "PUT" | "DELETE" = "POST", body?: unknown) =>
+    request<ArtistView>(`/artist${path}`, method === "DELETE" ? { method } : { method, body: JSON.stringify(body ?? {}) }),
   lifeAbroad: () => request<Abroad>("/life/abroad"),
   lifeExchange: (program_key: string) => request<Abroad>("/life/exchange", post({ program_key })),
   lifeExchangeCancel: () => request<Abroad>("/life/exchange", { method: "DELETE" }),
@@ -244,3 +247,30 @@ export interface CountryRow {
   living_brl: string; history: { month: string; rate: string }[]; growth?: number; interest?: number; confidence?: number; demand?: number; price_level?: number; crisis?: string | null;
 }
 export interface WorldEvent { country: string; country_name: string; flag: string; kind: string; label: string; start: string; end: string; active: boolean; intensity: number }
+
+export interface ArtistOffer { key: string; discipline: string; kind: string; title: string; employer: string; monthly: boolean; pay: number; months: number; need_fame: number; need_skill: number; chance: number; hours: number; callback_id?: number }
+export interface ArtistChannel {
+  id: number; name: string; platform: string; platform_name: string; niche: string; niche_name: string; subs: number; views: number; income: number; cadence: number;
+  gear: Record<string, number>; quality: number; community: number; flags: Record<string, boolean>; monetized: boolean; monetize_at: number; trend: number; hours: number;
+  history: { month: string; subs: number; views: number; net: number }[]; last: null | { quality: number; trend: number; ads: number; shop: number; sponsor: number; tax: number; agency: number; gross: number; event: string | null };
+}
+export interface ArtistView {
+  instrument: string | null; skills: Record<string, number>; fame: Record<string, number>; free_hours: number; committed_hours: number;
+  offers: { acting: ArtistOffer[]; music: ArtistOffer[]; painting: ArtistOffer[] }; applied: string[];
+  jobs: { id: number; title: string; status: string; discipline: string; employer: string; pay: number; pay_type: string; start: string; end: string; months: number }[];
+  band: null | { id: number; name: string; style: string; style_name: string; reputation: number; quality: number; gigs: number; songs: number; members: { name: string; instrument: string; skill: number; source: string }[] };
+  market_musicians: { key: string; name: string; instrument: string; skill: number; ask: number }[];
+  friend_musicians: { key: string; name: string; instrument: string; skill: number; affinity: number }[];
+  works: { id: number; name: string; status: string; work: string; quality: number; scope?: string; style?: string; royalty?: number; size?: string }[];
+  decisions: { id: number; title: string; work: string; options: { key: string; label: string; cost: number; desc: string }[] }[];
+  channels: ArtistChannel[]; payouts: { name: string; month: string; amount: string }[];
+  result?: { message?: string; hired?: boolean; created?: boolean; booked?: boolean; joined?: boolean; released?: boolean };
+  catalog: {
+    instruments: { key: string; name: string; demand: number }[]; styles: { key: string; name: string; market: number }[]; themes: { key: string; name: string }[];
+    venues: { key: string; name: string; need_rep: number; min: number; max: number }[]; paint_styles: { key: string; name: string }[];
+    paint_sizes: { key: string; name: string; material: number; hours: number; base: number }[]; paint_themes: { key: string; name: string }[];
+    platforms: { key: string; name: string; monetize_at: number; cpm: number }[]; niches: { key: string; name: string; cpm_mult: number; competition: number }[];
+    gear: { key: string; name: string; prices: number[] }[]; gear_levels: string[]; invest: { key: string; name: string; type: string; cost: number; desc: string }[];
+    cadence: number[]; train: Record<string, { name: string; cost: number; hours: number }>;
+  };
+}

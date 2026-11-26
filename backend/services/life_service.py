@@ -1100,6 +1100,13 @@ def move(db: Session, user_id: int, month: SimMonth, *, kind: str, monthly_cost:
 
 
 # ------------------------------------------------------------------ orçamento: itens gerados pela vida pessoal
+def add_one_off(p: LifeProfile, key: str, name: str, amount, cat: str, ref: date, kind: str = "EXPENSE") -> None:
+    """Agenda uma despesa/receita pontual no orçamento do mês `ref` (vira item `life:*`). Mantém só os últimos 18 meses."""
+    keep = {k: v for k, v in (p.one_offs or {}).items() if v.get("month", "") >= budget_service.shift_month(ref, -18).isoformat()}
+    keep[key] = {"name": name, "amount": str(quantize_money(Decimal(str(amount)))), "cat": cat, "month": ref.isoformat(), "kind": kind}
+    p.one_offs = keep
+
+
 def _want_builder(db: Session, user_id: int, ref: date):
     desired: dict[str, dict] = {}
 
@@ -1149,8 +1156,9 @@ def sync_month(db: Session, user_id: int, month: SimMonth) -> None:
     from backend.services import career_hub
     career_hub.ensure_jobs(db, user_id, month)
     career_hub.desired_items(db, user_id, ref, want)
-    from backend.services import abroad_service
+    from backend.services import abroad_service, artist_service
     abroad_service.desired_items(db, user_id, ref, want)
+    artist_service.desired_items(db, user_id, ref, want)
 
     shared_total = ZERO
     if p.housing_kind != "EXISTING" and p.housing_cost > 0:
@@ -1274,8 +1282,9 @@ def process_month(db: Session, user_id: int, month: SimMonth) -> None:
             p.satisfaction = _clamp(p.satisfaction + 8)
             log(db, user_id, ref, "GRADUATED", f"Você se formou em {f['degree']} ({uni_rules.get(p.degree_uni or uni_rules.OPEN_KEY).short})! Agora pode mudar de área e ganhar mais.")
             p.degree_field, p.degree_uni, p.degree_progress, p.degree_total = None, None, 0, 0
-    from backend.services import abroad_service, career_hub
+    from backend.services import abroad_service, artist_service, career_hub
     abroad_service.process_month(db, p, ref)
+    artist_service.process_month(db, p, ref)
     career_hub.process_month(db, p, ref)
     _world_mood(db, p, ref)
     if p.degree_field and R.hash01("classmate", p.user_id, ref.isoformat()) < 0.30:           # na faculdade você conhece gente nova

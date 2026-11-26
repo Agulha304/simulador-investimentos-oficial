@@ -11,7 +11,12 @@ CLT_GROSS_FACTOR = 0.80                              # líquido ≈ 80% do bruto
 FGTS_RATE = 0.08
 PJ_PREMIUM = 1.25                                    # PJ cobra ~25% a mais que o líquido CLT...
 PJ_TAX = 0.06                                        # ...e paga imposto do próprio bolso (sem 13º, férias, FGTS e benefícios)
-PJ_EXTRA_HOURS = 30                                  # horas/mês que um PJ extra consome do seu tempo livre
+PJ_EXTRA_HOURS = 60                                  # referência mínima (padrão) de horas/mês que um PJ extra consome do tempo livre
+PJ_MIN_HOURS = 48                                    # nenhum PJ extra pede menos que ~11 h/semana
+PJ_MAX_HOURS = 140                                   # e os mais puxados chegam a ~32 h/semana
+PJ_LEVEL_HOURS = (56, 72, 92, 112)                   # base por nível da vaga (entrada, júnior, pleno, sênior): mais responsabilidade = mais horas
+PJ_FIELD_FACTOR = {"saude": 1.25, "direito": 1.15, "tecnologia": 1.05, "engenharia": 1.10, "financas": 1.05, "industria": 1.10, "logistica": 1.10,
+                   "agro": 1.10, "gastronomia": 1.15, "seguranca": 1.10, "educacao": 0.90, "artes": 0.90, "comercio": 1.00, "ciencia": 1.00}
 APPLY_HOURS = 6
 MAX_APPLICATIONS = 4
 START_HOURS_WARN = 0
@@ -143,6 +148,12 @@ GIG_TITLES = {
     "industria": ("Conserto de máquina", "Instalação elétrica", "Soldagem de portão"),
     "ciencia": ("Análise de amostras", "Revisão de artigo científico", "Aulas de ciências"),
 }
+
+
+def pj_hours(field: str, level: int, user_id: int, key: str) -> int:
+    """Horas/mês que um PJ EXTRA consome: cresce com o nível e muda por área e por contrato (nunca abaixo de ~11 h/semana)."""
+    base = PJ_LEVEL_HOURS[level] * PJ_FIELD_FACTOR.get(field, 1.0) * (0.85 + 0.35 * hash01("pj-hours", user_id, key))
+    return int(max(PJ_MIN_HOURS, min(PJ_MAX_HOURS, round(base / 4) * 4)))
 
 
 def clt_gross(net: float) -> float:
